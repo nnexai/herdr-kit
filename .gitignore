@@ -2,3 +2,5 @@
 /dist/
 /evidence/
 *.error
+/mods/**/*.d.ts
+/mods/**/jsconfig.json
