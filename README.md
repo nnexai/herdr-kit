@@ -120,8 +120,12 @@ policy, not a same-user process sandbox. No secret-store commands ship today.
 Unit checks are the two commands above; native acceptance additionally needs
 `herdr-app check` and a real window/screenshot in an isolated app home/core.
 Never test update/recovery experiments against a personal running installation.
-Linux native verification is performed during delivery. macOS code paths are
-provided, but native macOS verification requires a macOS machine.
+Initial Linux delivery passed 12 Rust behavior tests and 6 JS model tests, plus
+native `herdr-app check` and real OMP usage in an isolated Herdr App 0.1.15 /
+Core 0.1.20 window. The source-update smoke built a committed 0.1.1 executable
+from an installed 0.1.0 source, verified rollback to 0.1.0, automatic maintenance
+back to the new revision, and preservation of modified managed files and
+unrelated configuration. Native macOS verification remains unperformed.
 
 The usage parser/scheduling and view calculations adapt MIT-licensed Cockpit
 by Konni Hartmann. Repository packaging follows Herdr's documented layout/mod
