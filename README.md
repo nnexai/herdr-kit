@@ -76,10 +76,12 @@ installation.
 
 ## Usage statusbar
 
-The named layout preserves the existing Herdr workbench/status and adds a
-28px usage strip. Click it or open its revision-named mod using Herdr's mod
-command to view subscription details. Escape/Close dismisses the native dialog.
-Narrow strips summarize providers instead of shrinking the text.
+The named layout preserves the existing 28px Herdr statusbar and replaces its
+bottom-right command-palette hint with a compact `Limits Claude 71% +2` readout.
+Machine, branch and agent indicators stay on the left; no extra row is added.
+Click the readout to view all providers, windows, credits and estimates in the
+native details dialog. Escape/Close dismisses it. Narrow bars omit the provider
+name instead of shrinking the text. The command-palette shortcut still works.
 
 Rust runs `omp usage --json --redact --no-extensions`, then keeps only anonymous
 allowlisted quotas for Codex, Claude and Copilot. OMP owns authentication and

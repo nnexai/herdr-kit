@@ -1,6 +1,6 @@
-import { View, div } from 'gpui-kit';
+import { View, div, svg } from 'gpui-kit';
 import { h_flex, v_flex, Button, ScrollHandle } from 'gpui-base';
-import { agents, theme, props, shared, setShared, exec, openOverlay, closeOverlay, nextCommand } from 'herdr';
+import { agents, spaces, theme, props, shared, setShared, exec, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { BINARY, DATA_DIR, MOD_NAME } from './runtime.js';
 import { decodeSnapshot, views, summary, bestSegment, usedFraction, value, label, credits, pace, staleLimit, span, reset, errorText, formatTime, formatDateTime } from './model.js';
 
@@ -56,22 +56,48 @@ export default class Usage extends View {
     if (maintaining) return; maintaining = true;
     cx.spawn(async () => { try { await exec(BINARY,[...args(),'update','maintain'],{timeout:600000}); } catch (_) {} finally { maintaining = false; } });
   }
-  strip(snapshot,offline,t,now) {
-    const all = views(snapshot,now,offline), visible = all.filter(v => v.provider.state !== 'not_signed_in');
+  statusbar(snapshot,offline,t,now) {
+    const all = views(snapshot,now,offline);
+    const visible = all.filter(v => v.provider.state !== 'not_signed_in');
+    const narrow = this.width < 500;
+    const worst = summary(all);
+    const selected = worst && (bestSegment(worst.segments,true) || bestSegment(worst.segments));
     const description = fullLabel(all,offline);
-    let content;
-    if (!snapshot) content = this.failed ? 'Limits unavailable' : 'Limits …';
-    else if (this.width < 88) content = 'Limits';
-    else if (this.width < 220) { const v = summary(all), s = v && (bestSegment(v.segments,true) || bestSegment(v.segments)); content = `Limits ${s ? value(s.limit)+(s.stale?' ~':'') : '—'}${visible.length > 1 ? ` +${visible.length-1}` : ''}`; }
-    else if (this.width < 520) { const v = summary(all), s = v && (bestSegment(v.segments,true) || bestSegment(v.segments)); content = v ? `${v.name} ${s ? segmentText(s,true) : '—'}${visible.length > 1 ? ` +${visible.length-1}` : ''}` : 'Limits —'; }
-    const root = Button.new('usage-strip').track_focus(this.handle).tab_index(0).size_full().px(14).items_center().bg(t.chrome).border_t(1).border_color(this.handle.is_focused() ? t.accent : t.border).text_size(11.8).text_color(t.foreground).tooltip(description).accessibility_label(description).on_click(() => this.open());
-    if (content !== undefined) return root.child(content);
-    return root.child(h_flex().gap(16).items_center().children(visible.map(v => {
-      const segments = this.width < 900 ? [bestSegment(v.segments,true) || bestSegment(v.segments)].filter(Boolean) : v.segments;
-      const group = h_flex().gap(6).items_center().child(div().font_semibold().child(v.name));
-      if (!segments.length) return group.child(div().text_color(t.muted).child(v.provider.state === 'unsupported' ? 'n/a' : v.provider.state === 'pending' ? '…' : '—'));
-      return group.children(segments.map(s => h_flex().gap(4).items_center().child(div().text_color(t.muted).child(label(s.limit))).child(meter(s,t,28)).child(div().child(value(s.limit)+(s.stale?' ~':''))).when(this.width >= 900 && !!credits(s.limit), el => el.child(div().text_color(t.muted).child(credits(s.limit)))).when(this.width >= 900 && !!s.pace?.runsOutMs, el => el.child(div().text_color(t.muted).child(`out ${span(s.pace.runsOutMs)}`)))));
-    })));
+    const readout = Button.new('usage-readout').track_focus(this.handle).tab_index(0)
+      .w(narrow ? 120 : 200).h(26).px(6).items_center()
+      .bg(t.chrome).rounded(3).border(1)
+      .border_color(this.handle.is_focused() ? t.accent : t.chrome)
+      .hover(s => s.bg(t.hover).text_color(t.foreground))
+      .text_size(11.8).text_color(t.dim).tooltip(description)
+      .accessibility_label(description).on_click(() => this.open());
+    if (!snapshot) {
+      readout.child(this.failed ? 'Limits unavailable' : 'Limits …');
+    } else if (!visible.length) {
+      readout.child('Limits');
+    } else {
+      const amount = selected ? value(selected.limit)+(selected.stale ? ' ~' : '') : worst?.provider.state === 'unsupported' ? 'n/a' : '—';
+      readout.child(h_flex().gap(5).items_center()
+        .child('Limits')
+        .when(!narrow && Boolean(worst),el => el.child(div().text_color(t.muted).child(worst.name)))
+        .child(div().text_color(selected?.used > .8 ? segmentColor(selected,t) : t.dim).child(amount))
+        .when(visible.length > 1,el => el.child(`+${visible.length-1}`)));
+    }
+    const space = spaces().find(s => s.active);
+    const list = agents();
+    const needs = list.filter(a => a.status === 'blocked').length;
+    const statusLabel = (icon,text) => h_flex().gap(6).items_center()
+      .child(svg(`mods/${MOD_NAME}/${icon}.svg`).size(13))
+      .child(div().min_w(0).truncate().child(text));
+    const left = h_flex().flex_1().min_w(0).gap(16).items_center().overflow_hidden()
+      .child(statusLabel(space?.machine ? 'server' : 'monitor',space?.machine ?? 'This computer'))
+      .when(Boolean(space?.branch),el => el.child(div().max_w(160).min_w(0).child(statusLabel('branch',space.branch))))
+      .child(h_flex().gap(6).items_center()
+        .child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
+        .when(needs > 0,el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
+      .child(div().flex_1());
+    return h_flex().size_full().px(14).gap(16).items_center().bg(t.chrome)
+      .border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
+      .child(left).child(readout);
   }
   detailLimit(l, account, p, offline, t, now) {
     const stale = offline || p.stale || p.error !== null || staleLimit(l,account.fetched_at_ms,now), used = usedFraction(l), estimate = pace(l,now,stale), r = reset(l.resets_at_ms,now), c = credits(l,true);
@@ -106,6 +132,6 @@ export default class Usage extends View {
   }
   render() {
     const snapshot = readShared(), offline = !validated || this.failed, t = theme(), now = Date.now();
-    return div().id('usage-root').size_full().on_size_change((size,cx) => { if (this.width !== size.width) { this.width=size.width; cx.notify(); } }).child(this.details ? this.detail(snapshot,offline,t,now) : this.strip(snapshot,offline,t,now));
+    return div().id('usage-root').size_full().on_size_change((size,cx) => { if (this.width !== size.width) { this.width=size.width; cx.notify(); } }).child(this.details ? this.detail(snapshot,offline,t,now) : this.statusbar(snapshot,offline,t,now));
   }
 }

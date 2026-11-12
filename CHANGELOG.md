@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Integrate usage into the existing 28px statusbar, replacing the bottom-right
+  command-palette hint with a compact readout; remove the separate usage row.
+
 ## 0.1.0
 
 - One extensible Rust CLI and native GPUI Herdr layout/mod suite.

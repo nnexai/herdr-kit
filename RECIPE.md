@@ -1,6 +1,6 @@
 # Herdr Kit
 
-A native Herdr workbench with a quiet bottom subscription-usage strip, backed
+A native Herdr workbench with a compact bottom-right subscription readout, backed
 by one extensible Rust command-line tool. Usage and local-repository suite
 updates are the initial capabilities.
 
@@ -9,10 +9,11 @@ updates are the initial capabilities.
 ## What you see
 
 Keep the stock Herdr Spaces/Agents sidebar, tab bar, terminal panes, Files and
-Changes panels and existing statusbar. Add a 28px strip below the existing
-statusbar, with Codex/Claude/Copilot usage. Use the current theme, 14px horizontal
-inset and normal Herdr UI font. Narrow widths summarize rather than shrinking
-text. Click for a native subscription-details dialog with all anonymous
+Changes panels. In the existing 28px statusbar, preserve machine, branch and
+agent indicators on the left and replace the command-palette hint on the right
+with `Limits Claude 71% +2`. Add no extra row. Use the current theme, existing
+14px horizontal inset and normal Herdr UI font. Narrow bars omit the provider
+name. Click for a native subscription-details dialog with all anonymous
 accounts, source timestamps, windows, meters, AIC, resets and conditional
 exhaustion estimates. Unknown/unlimited/zero/unavailable/stale remain distinct.
 

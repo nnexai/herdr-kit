@@ -174,19 +174,9 @@
             "px": 28
           },
           "content": {
-            "mod": "workspace-status"
-          }
-        },
-        {
-          "id": "herdr-kit-usage",
-          "type": "block",
-          "size": {
-            "px": 28
-          },
-          "content": {
             "mod": "herdr-kit-usage",
             "props": {
-              "view": "strip"
+              "view": "statusbar"
             }
           }
         }
