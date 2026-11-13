@@ -18,6 +18,15 @@ never claims or modifies a consumer layout. The installer returns exact resolved
 mod generations, roots and selected package revisions. `--revision` accepts a
 full lowercase commit ID; dirty source is never built.
 
+Main's `b362454` Mission Log/conversation change is incorporated on the branch.
+`kit-coord-ui` is its own asset package requiring only kit-coord. Its mod carries
+no backend and does not select usage or the suite layout. Deterministic declared
+dependency closure selects the matching coordinator generation; activation
+refuses mismatched dependency pins. `runtime_package`/`runtime_mod` bind the
+coordinator executable and registered mod command target without JS-wide
+replacement or cross-mod imports. Independent consumer layouts mount both
+the launcher and the coordinator status/command owner; installation mounts none.
+
 Selected revisions and complete previous selections replace the old one-current
 assumption. Existing `current_revision`/`previous_revision` output remains useful
 for the suite; `components`, `previous_components` and `resolved_mods` make package

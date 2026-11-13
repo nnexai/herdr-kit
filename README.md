@@ -97,7 +97,9 @@ cargo build --locked --release -p kit-manager
 
 The JSON response returns `components` and `resolved_mods`; the external layout
 owner chooses when to reference that exact generation. `kit-coord`, `kit-usage`,
-`kit-manager` and layout assets (`herdr-kit`) are separately selected. In this
+`kit-coord-ui`, `kit-manager` and layout assets (`herdr-kit`) are separately
+selected. `kit-coord-ui` requires only kit-coord, never kit-usage; selecting it
+includes its declared coordinator dependency at the same pinned revision. In this
 transitional P1 release, capability selections still supply the **direct legacy**
 `herdr-kit` executable and retain their existing mod bases. This is packaging
 independence, not the final standalone `kit-coord`/`kit-usage` acceptance proof.
@@ -188,6 +190,46 @@ installed mod names include the release revision, use the current coordinator
 folder name in `keys.json`, for example:
 `"global": { "ctrl-alt-n": "herdr-kit-coord-<revision>.restart" }`.
 Update that binding when the installed revision changes.
+
+### Mission Log
+
+The separate `kit-coord-ui` mod adds **Mission log** to the sidebar. It opens
+the Rail conversation view without replacing Board/Timeline or the raw
+coordinator terminal. Its menu reuses the coordinator's Clear context,
+Restart and Show actions. No key bindings are installed.
+The package manager stamps its coordinator command binding in runtime metadata,
+not by rewriting JS literals. In another layout, mount the kit-coord status view
+as well as the Mission log launcher so the coordinator's existing registered
+handlers are shown. Updating either member of that pinned UI/dependency pair
+requires selecting both together; a mismatched generation is refused.
+
+The rail interleaves real coordinator replies with placed tasks, delegate
+reports, progress, decisions and questions. Question pills only fill the
+composer; Enter or Send delivers the draft. Working state and elapsed time
+come from the coordinator's actual hc turn, and the step is its latest tool
+operation—not a simulated sequence. Send stays disabled during a turn.
+The narrow working placeholder is deliberately short. Reduce motion in the
+menu disables the orbit, shimmer and question pulse; the OS animation
+preference is read once when the view opens when no override is set.
+
+```sh
+herdr-kit coord conversation --json
+herdr-kit coord say --text 'A message for the coordinator'
+```
+
+`say` is person-only and always targets the recorded coordinator, never a
+delegate. It sends the text unchanged through supported `hc send`, under the
+same terminal lock as watcher delivery. `--question QID` records an answer
+only after confirmed delivery. Use `coord task send` for delegates.
+
+`conversation` projects the exact current coordinator OMP session's active
+branch. It excludes thinking, tool results, intermediate tool-use replies,
+the startup brief and operational input. It reads the recorded session,
+not terminal screen text, and reports missing, ambiguous or malformed
+sources explicitly. After Clear context, prior-session replies remain in
+OMP history rather than being copied into the new session's conversation.
+The mod itself reads only coordinator CLI JSON. If kit-coord or the
+coordinator is unavailable, it keeps the draft and shows a clear state.
 
 State lives under `<data-dir>/coord/`, including the append-only journal,
 configuration, roles and task files. Use `--role coord-design` on

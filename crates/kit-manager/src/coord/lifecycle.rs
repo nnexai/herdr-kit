@@ -143,7 +143,7 @@ fn space(ctx: &Ctx, j: &Journal) -> Result<(String, bool)> {
 fn managed(term: &super::adapter::Term, role: &str) -> bool {
     term.managed() && term.label("coord.role") == Some(role)
 }
-fn same_coordinator(t: &super::adapter::Term, rec: &super::state::CoordRec) -> bool {
+pub(super) fn same_coordinator(t: &super::adapter::Term, rec: &super::state::CoordRec) -> bool {
     t.live()
         && managed(t, "coordinator")
         && rec

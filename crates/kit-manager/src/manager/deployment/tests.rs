@@ -57,7 +57,13 @@ fn selected(ids: &[&str], rev: &str) -> BTreeMap<String, String> {
         .map(|id| (id.to_string(), rev.to_owned()))
         .collect()
 }
-const BUNDLE: &[&str] = &["kit-manager", "kit-coord", "kit-usage", "herdr-kit"];
+const BUNDLE: &[&str] = &[
+    "kit-manager",
+    "kit-coord",
+    "kit-coord-ui",
+    "kit-usage",
+    "herdr-kit",
+];
 fn empty_state(home: &Path) -> State {
     fs::create_dir_all(home).unwrap();
     State {
@@ -125,7 +131,7 @@ fn legacy_journal_recovery_then_component_upgrade_and_reverse_rollback() {
 
 #[test]
 fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
-    for prefix in 0..=8 {
+    for prefix in 0..=9 {
         let temp = tempfile::tempdir().unwrap();
         let lock = Locked::open(&temp.path().join("data")).unwrap();
         let home = temp.path().join("app");
@@ -190,14 +196,14 @@ fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
                 }
             }
         }
-        assert_eq!(count, 6);
-        if prefix < 6 {
+        assert_eq!(count, 7);
+        if prefix < 7 {
             assert!(!lock.data.join("kit-coord/active.json").exists());
         }
-        if prefix == 7 {
+        if prefix == 8 {
             state::store_history(&lock.data, &transaction.state).unwrap();
         }
-        if prefix == 8 {
+        if prefix == 9 {
             lock.save(&transaction.state).unwrap();
         }
         lock.recover().unwrap();
@@ -525,4 +531,42 @@ fn legacy_journal_advancement_retains_new_package_rollback_assets() {
     assert_eq!(restored.selection, selected(BUNDLE, &a));
     assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), a);
     assert_eq!(back.previous_selection.unwrap(), selected(BUNDLE, &a));
+}
+
+#[test]
+fn chat_package_requires_matching_coordinator_without_usage() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let home = temp.path().join("app");
+    let a = "a".repeat(40);
+    let b = "b".repeat(40);
+    let mut state = empty_state(&home);
+    component_release(&lock, &mut state, &a);
+    component_release(&lock, &mut state, &b);
+    let mut mismatched = selected(&["kit-coord-ui"], &b);
+    mismatched.extend(selected(&["kit-coord"], &a));
+    let error = lock
+        .prepare(&State::default(), state.clone(), mismatched, None)
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("dependent component pins"),
+        "{error}"
+    );
+    assert!(!mod_path(&home, "kit-coord-ui", &b).exists());
+    let installed = lock
+        .activate(
+            lock.prepare(
+                &State::default(),
+                state,
+                selected(&["kit-coord", "kit-coord-ui"], &a),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    lock.verify_active(&installed).unwrap();
+    assert!(mod_path(&home, "kit-coord-ui", &a).exists());
+    assert!(!mod_path(&home, "herdr-kit-usage", &a).exists());
+    assert!(!layout(&home).exists());
 }

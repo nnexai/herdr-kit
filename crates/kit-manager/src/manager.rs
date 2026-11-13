@@ -20,7 +20,7 @@ use packages::*;
 
 const DAY: u64 = 86_400;
 const BACKOFF: u64 = 3_600;
-const LEGACY_MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord"];
+const LEGACY_MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord", "kit-coord-ui"];
 const LEGACY_MOD: &str = "herdr-kit-usage";
 
 #[derive(Clone, Default, Serialize, Deserialize)]

@@ -16,6 +16,12 @@ pub(super) struct Package {
     pub mods: Vec<String>,
     #[serde(default)]
     pub layout: Option<String>,
+    #[serde(default)]
+    pub requires: Vec<String>,
+    #[serde(default)]
+    pub runtime_package: Option<String>,
+    #[serde(default)]
+    pub runtime_mod: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,9 +57,15 @@ impl Catalog {
                 if let Some(binary) = &mut package.binary {
                     binary.cargo_package = "herdr-kit".into();
                 }
+            }
+            old.packages.retain(|_, package| {
                 package
                     .mods
-                    .retain(|base| source.join("mods").join(base).is_dir());
+                    .iter()
+                    .all(|base| source.join("mods").join(base).is_dir())
+            });
+            for packages in old.bundles.values_mut() {
+                packages.retain(|id| old.packages.contains_key(id));
             }
             old
         };
@@ -69,12 +81,43 @@ impl Catalog {
                 identifier(&binary.cargo_package)?;
             }
             ensure!(
-                package.mods.is_empty() || package.binary.is_some(),
-                "mod package requires its own executable binding"
+                package.mods.is_empty()
+                    || package.binary.is_some()
+                    || package.runtime_package.is_some(),
+                "mod package requires an executable binding"
             );
             for base in &package.mods {
                 identifier(base)?;
                 ensure!(mods.insert(base), "mod has multiple package owners");
+            }
+            for required in &package.requires {
+                ensure!(
+                    catalog.packages.contains_key(required),
+                    "unknown required component: {required}"
+                );
+            }
+            if let Some(required) = &package.runtime_package {
+                let dependency = catalog
+                    .packages
+                    .get(required)
+                    .context("unknown runtime package")?;
+                ensure!(
+                    package.binary.is_none()
+                        && package.requires.contains(required)
+                        && dependency.binary.is_some(),
+                    "invalid runtime dependency"
+                );
+                if let Some(base) = &package.runtime_mod {
+                    ensure!(
+                        dependency.mods.contains(base),
+                        "runtime mod is not owned by its dependency"
+                    );
+                }
+            } else {
+                ensure!(
+                    package.runtime_mod.is_none(),
+                    "runtime mod requires its dependency package"
+                );
             }
             if let Some(layout) = &package.layout {
                 ensure!(
@@ -103,10 +146,36 @@ impl Catalog {
         selected.sort();
         selected.dedup();
         ensure!(!selected.is_empty(), "empty component selection");
+        let mut result = Vec::with_capacity(selected.len());
+        let mut visited = std::collections::BTreeSet::new();
+        let mut visiting = std::collections::BTreeSet::new();
         for id in &selected {
-            ensure!(self.packages.contains_key(id), "unknown component: {id}");
+            self.visit(id, &mut visited, &mut visiting, &mut result)?;
         }
-        Ok(selected)
+        Ok(result)
+    }
+    fn visit<'a>(
+        &'a self,
+        id: &'a str,
+        visited: &mut std::collections::BTreeSet<&'a str>,
+        visiting: &mut std::collections::BTreeSet<&'a str>,
+        result: &mut Vec<String>,
+    ) -> Result<()> {
+        if visited.contains(id) {
+            return Ok(());
+        }
+        let package = self
+            .packages
+            .get(id)
+            .with_context(|| format!("unknown component: {id}"))?;
+        ensure!(visiting.insert(id), "component dependency cycle");
+        for required in &package.requires {
+            self.visit(required, visited, visiting, result)?;
+        }
+        visiting.remove(id);
+        visited.insert(id);
+        result.push(id.to_owned());
+        Ok(())
     }
 }
 

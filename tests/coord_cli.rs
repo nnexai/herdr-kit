@@ -209,3 +209,158 @@ fn worktree_release_clean_and_dirty() {
         }
     }
 }
+
+fn rail_fixture() -> (Harness, Value, PathBuf) {
+    let h = Harness::new();
+    let dir = h.root().join("data/coord/sessions/coordinator-1");
+    fs::create_dir_all(&dir).unwrap();
+    let journal = h.root().join("data/coord/journal");
+    fs::create_dir_all(&journal).unwrap();
+    let entry = json!({"v":1,"seq":1,"ts_ms":1,"actor":"cli","kind":"coord.session_started","ws":null,"task":null,
+        "data":{"role":"coord-main","model":"fixture","terminal":"c1","pid":42,"created_ms":123,
+        "space":"sp","session":{"mode":"dir","id":"session-id","dir":dir},"release":"fixture","reason":"start","brief":"/brief"}});
+    fs::write(journal.join("1970-01.jsonl"),format!("{entry}\n")).unwrap();
+    let mut term: Value = serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+    term["address"]=json!("c1"); term["state"]=json!("live"); term["pid"]=json!(42);
+    term["created_ms"]=json!(123); term["turn"]=json!(2); term["reported"]=json!(true);
+    term["status"]=json!({"state":"idle","app":"omp","kind":null,"msg":null});
+    term["status_ms"]=json!(555); term["labels"]=json!({"coord.managed":"1","coord.role":"coordinator"});
+    h.queue("hc","get",&term); h.queue("hc","send",&json!({"turn":3,"started":true,"status":"working"}));
+    (h, term, dir)
+}
+
+fn rail_error(output: Output, code: &str, exit: i32) {
+    assert_eq!(output.status.code(), Some(exit), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&output.stderr).unwrap()["error"]["code"],code);
+}
+
+#[test]
+fn rail_send_validates_delivery_identity_and_question() {
+    let (h, mut term, _) = rail_fixture();
+    let mut delegate = term.clone();
+    delegate["labels"]=json!({"coord.managed":"1","coord.role":"delegate","coord.task":"ws-aaaaaa-t1"});
+    h.queue("hc","get",&delegate);
+    rail_error(h.command(&["say","--text","hi"]).env("HC_TERMINAL_ID","t9").output().unwrap(),"forbidden_caller",3);
+    h.queue("hc","get",&term);
+    rail_error(h.run(&["say","--text","\u{1b}x"]),"invalid_text",3);
+    rail_error(h.run(&["say","--text"," \n"]),"empty_message",3);
+    rail_error(h.run(&["say","--text","hi","--question","q99"]),"unknown_question",3);
+    term["status"]["state"]=json!("working"); h.queue("hc","get",&term);
+    rail_error(h.run(&["say","--text","hi"]),"agent_not_ready",4);
+    term["status"]["state"]=json!("idle"); term["pid"]=json!(43); h.queue("hc","get",&term);
+    rail_error(h.run(&["say","--text","hi"]),"coordinator_changed",4);
+    assert!(!h.calls("hc").contains("\tsend\t"));
+    term["pid"]=json!(42); h.queue("hc","get",&term);
+    let question=h.ok(&["ask","Choose","--option","yes"]); let qid=question["qid"].as_str().unwrap();
+    let board=h.ok(&["board","--json"]);
+    assert!(board.to_string().contains(&format!("\"qid\":\"{qid}\"")));
+    let before=h.journal().len();
+    h.queued("hc","send",1,&json!({"error":"failed"}),1);
+    rail_error(h.run(&["say","--text","a  b\n\tc","--question",qid]),"operation_failed",1);
+    assert_eq!(h.journal().len(),before);
+    let sent=h.ok(&["say","--text","a  b\n\tc","--question",qid]);
+    assert_eq!(sent["state"],"sent"); assert_eq!(sent["answered"],true);
+    let entries=h.journal();
+    assert_eq!(entries[before]["kind"],"coord.sent");
+    assert_eq!(entries[before]["data"]["text"],"a  b\n\tc");
+    assert_eq!(entries[before+1]["kind"],"question.answered");
+    assert_eq!(entries[before+1]["data"]["text"],"a  b\n\tc");
+    assert!(h.calls("hc").contains("\tsend\t--json\tc1\ta  b\n\tc\n"));
+    rail_error(h.run(&["say","--text","again","--question",qid]),"question_answered",3);
+}
+
+#[test]
+fn rail_conversation_projects_active_branch_and_real_status() {
+    let (h, mut term, dir) = rail_fixture();
+    term["status"]["state"]=json!("working"); h.queue("hc","get",&term);
+    let path=dir.join("2026_session-id.jsonl");
+    let lines = [
+        json!({"type":"session","id":"session-id"}),
+        json!({"type":"message","id":"u0","parentId":null,"message":{"role":"user","timestamp":1,"content":[{"type":"text","text":"brief"}]}}),
+        json!({"type":"message","id":"old","parentId":"u0","message":{"role":"user","timestamp":2,"content":"old branch"}}),
+        json!({"type":"message","id":"u1","parentId":"u0","message":{"role":"user","timestamp":3,"content":[{"type":"text","text":"hello"}]}}),
+        json!({"type":"message","id":"a1","parentId":"u1","message":{"role":"assistant","timestamp":4,"stopReason":"toolUse","content":[{"type":"thinking","thinking":"secret"},{"type":"text","text":"interim"},{"type":"toolCall","name":"bash","arguments":{"command":"herdr-kit coord task start --ws private"}}]}}),
+        json!({"type":"message","id":"t1","parentId":"a1","message":{"role":"toolResult","content":[{"type":"text","text":"private"}]}}),
+        json!({"type":"message","id":"a2","parentId":"t1","message":{"role":"assistant","timestamp":5,"stopReason":"stop","content":[{"type":"thinking","thinking":"secret"},{"type":"text","text":"answer"}]}}),
+        json!({"type":"message","id":"u2","parentId":"a2","message":{"role":"user","timestamp":6,"content":"inbox: 2 new"}}),
+        json!({"type":"message","id":"u3","parentId":"u2","message":{"role":"user","timestamp":7,"content":"<hc from=worker>hidden"}}),
+        json!({"type":"message","id":"u4","parentId":"u3","message":{"role":"user","timestamp":8,"content":"next"}}),
+        json!({"type":"message","id":"a3","parentId":"u4","message":{"role":"assistant","timestamp":9,"stopReason":"toolUse","content":[{"type":"toolCall","name":"bash","arguments":{"command":"herdr-kit coord task start --ws secret"}}]}}),
+    ];
+    fs::write(&path,format!("{}\n{{\"type\":",lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"))).unwrap();
+    let result=h.ok(&["conversation","--json"]); assert_eq!(result["source"]["state"],"ready");
+    assert_eq!(result["coordinator"]["working_since_ms"],555);
+    assert_eq!(result["coordinator"]["step"]["label"],"coord task start");
+    assert_eq!(result["turn"]["steps"],1);
+    let messages=result["messages"].as_array().unwrap();
+    assert_eq!(messages.iter().map(|m|m["text"].as_str().unwrap()).collect::<Vec<_>>(),vec!["hello","answer","next"]);
+    assert!(!result.to_string().contains("secret"));
+    term["status"]["state"]=json!("idle"); h.queue("hc","get",&term);
+    assert!(h.ok(&["conversation"])["coordinator"]["working_since_ms"].is_null());
+    fs::write(&path,"{\"type\":\"session\",\"id\":\"wrong\"}\n").unwrap();
+    assert_eq!(h.ok(&["conversation"])["source"]["state"],"mismatch");
+    fs::write(&path,"{\"type\":\"session\",\"id\":\"session-id\"}\nnot-json\n").unwrap();
+    assert_eq!(h.ok(&["conversation"])["source"]["state"],"malformed");
+    let empty=Harness::new(); assert_eq!(empty.ok(&["conversation"])["source"]["state"],"not_running");
+}
+
+#[test]
+fn rail_projection_matches_sent_and_reports_unsafe_or_ambiguous_source() {
+    use std::os::unix::fs::symlink;
+    let (h, _, dir)=rail_fixture();
+    let sent=h.ok(&["say","--text","exact message"]);
+    let nudge=h.ok(&["say","--text","inbox: 2 new"]);
+    let wrapped=h.ok(&["say","--text","<hc from=worker>hello"]);
+    let brief_text="## Commands\n`kit` is: example\n## Startup read\nhello";
+    let brief=h.ok(&["say","--text",brief_text]);
+    let lines=[
+        json!({"type":"session","id":"session-id"}),
+        json!({"type":"message","id":"u0","parentId":null,"message":{"role":"user","timestamp":10,"content":"brief"}}),
+        json!({"type":"message","id":"u1","parentId":"u0","timestamp":"2026-01-01T00:00:00.123Z","message":{"role":"user","content":"exact message"}}),
+        json!({"type":"message","id":"u2","parentId":"u1","message":{"role":"user","content":"inbox: 2 new"}}),
+        json!({"type":"message","id":"u3","parentId":"u2","message":{"role":"user","content":"<hc from=worker>hello"}}),
+        json!({"type":"message","id":"u4","parentId":"u3","message":{"role":"user","content":brief_text}}),
+        json!({"type":"message","id":"u5","parentId":"u4","message":{"role":"user","content":"inbox: 3 new"}}),
+        json!({"type":"message","id":"u6","parentId":"u5","message":{"role":"user","content":"<hc from=worker>operational"}}),
+    ];
+    fs::write(dir.join("2026_session-id.jsonl"),format!("{}\n",lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"))).unwrap();
+    let result=h.ok(&["conversation"]); let m=&result["messages"][0];
+    assert_eq!(m["via"],"ui"); assert_eq!(m["sent_seq"],sent["seq"]);
+    assert_eq!(m["ts_ms"],1767225600123u64);
+    let messages=result["messages"].as_array().unwrap();
+    assert_eq!(messages.len(),4);
+    for (message, expected, seq) in [
+        (&messages[1], "inbox: 2 new", &nudge["seq"]),
+        (&messages[2], "<hc from=worker>hello", &wrapped["seq"]),
+        (&messages[3], brief_text, &brief["seq"]),
+    ] {
+        assert_eq!(message["text"],expected);
+        assert_eq!(message["via"],"ui");
+        assert_eq!(&message["sent_seq"],seq);
+    }
+
+    // Remove the recorded id to exercise the ambiguous-discovery refusal.
+    let journal=h.root().join("data/coord/journal/1970-01.jsonl");
+    let mut start: Value=serde_json::from_str(fs::read_to_string(&journal).unwrap().lines().next().unwrap()).unwrap();
+    start["data"]["session"]["id"]=Value::Null;
+    fs::write(&journal,format!("{start}\n")).unwrap();
+    let _=fs::remove_file(h.root().join("data/coord/state.json"));
+    fs::write(dir.join("another.jsonl"),"{}\n").unwrap();
+    assert_eq!(h.ok(&["conversation"])["source"]["state"],"ambiguous");
+    fs::remove_file(dir.join("another.jsonl")).unwrap();
+    fs::remove_dir_all(&dir).unwrap();
+    let external=h.root().join("outside"); fs::create_dir_all(&external).unwrap(); symlink(&external,&dir).unwrap();
+    assert_eq!(h.ok(&["conversation"])["source"]["state"],"unreadable");
+}
+
+#[test]
+fn rail_send_obeys_terminal_lock_and_size_bound() {
+    use fs2::FileExt;
+    let (h, _, _) = rail_fixture();
+    let lockdir=h.root().join("data/coord/locks"); fs::create_dir_all(&lockdir).unwrap();
+    let lock=fs::OpenOptions::new().write(true).create(true).open(lockdir.join("6331")).unwrap();
+    lock.lock_exclusive().unwrap();
+    rail_error(h.run(&["say","--text","message"]),"terminal_busy",4);
+    rail_error(h.run(&["say","--text",&"x".repeat(16_385)]),"message_too_long",3);
+    assert!(!h.calls("hc").contains("\tsend\t"));
+}

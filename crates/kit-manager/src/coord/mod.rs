@@ -5,6 +5,7 @@ pub mod brief;
 pub mod caller;
 pub mod cli;
 pub mod config;
+pub mod conversation;
 pub mod error;
 pub mod fold;
 pub mod git;
@@ -140,6 +141,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
     let read_only = matches!(
         &cmd,
         C::Status { .. }
+            | C::Conversation { .. }
             | C::Board { .. }
             | C::Log { .. }
             | C::Explain { .. }
@@ -163,7 +165,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
         true
     } else {
         match &cmd {
-            C::Up { .. } | C::Down | C::Restart { .. } | C::Rate { .. } | C::Config { .. } => {
+            C::Up { .. } | C::Down | C::Restart { .. } | C::Rate { .. } | C::Config { .. } | C::Say { .. } => {
                 person
             }
             C::Handoff { .. } => coordinator,
@@ -187,6 +189,8 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
         C::Up { if_enabled } => lifecycle::up(&ctx, if_enabled)?,
         C::Down => lifecycle::down(&ctx)?,
         C::Status { .. } => lifecycle::status(&ctx)?,
+        C::Say { text, question } => conversation::say(&ctx, &caller, &text, question.as_deref())?,
+        C::Conversation { limit, .. } => conversation::conversation(&ctx, usize::from(limit))?,
         C::Restart { force } => lifecycle::restart(&ctx, &caller, force)?,
         C::Handoff { note } => lifecycle::handoff(&ctx, &caller, note.as_deref())?,
         C::Watch => watch::run(ctx).await?,

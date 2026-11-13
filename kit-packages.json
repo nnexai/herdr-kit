@@ -9,6 +9,12 @@
       "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
       "mods": ["herdr-kit-coord"]
     },
+    "kit-coord-ui": {
+      "requires": ["kit-coord"],
+      "runtime_package": "kit-coord",
+      "runtime_mod": "herdr-kit-coord",
+      "mods": ["kit-coord-ui"]
+    },
     "kit-usage": {
       "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
       "mods": ["herdr-kit-usage"]
@@ -19,6 +25,6 @@
     }
   },
   "bundles": {
-    "herdr-kit": ["kit-manager", "kit-coord", "kit-usage", "herdr-kit"]
+    "herdr-kit": ["kit-manager", "kit-coord", "kit-coord-ui", "kit-usage", "herdr-kit"]
   }
 }

@@ -18,6 +18,13 @@
   populated Board/Timeline/Limits, missing-mod isolation, zero-space source
   carrier lifecycle/command behavior, and person-owned cutover prerequisites.
 
+- Add the standalone `kit-coord-ui` Rail / Mission Log: a native coordinator
+  conversation with truthful turn state, elapsed time, question draft pills,
+  existing lifecycle/focus actions and reduced motion. Keep Board/Timeline
+  and the raw terminal available; fix the narrow working placeholder.
+- Add person-only `coord say` and branch-aware `coord conversation` using
+  the recorded OMP session, with exact-text delivery and explicit source states.
+
 - Add `coord-design`, selecting the person's OMP `@design` model role for
   UI/UX and visual design. Route design work there instead of `coord-deep`,
   and document custom role/model selection, resume, escalation and statistics.

@@ -740,6 +740,7 @@ pub fn apply(s: &mut State, e: &Entry) {
         Kind::ReconcileFinding { .. }
         | Kind::ScoutResult { .. }
         | Kind::Correction { .. }
+        | Kind::CoordSent { .. }
         | Kind::Unknown => {}
     }
 }

@@ -85,6 +85,9 @@ impl Locked {
                     .get(rev)
                     .and_then(|r| r.get(id))
                     .context("missing package receipt")?;
+                for required in &receipt.definition.requires {
+                    ensure!(state.selection.get(required) == Some(rev), "dependent component pins must be updated together: {id} requires {required}");
+                }
                 self.verify_package(rev, receipt)?;
                 Ok((id.as_str(), rev.as_str(), receipt))
             })
@@ -651,14 +654,27 @@ impl Locked {
                 let binary = definition
                     .binary
                     .as_ref()
+                    .or_else(|| {
+                        definition
+                            .runtime_package
+                            .as_ref()
+                            .and_then(|id| catalog.packages.get(id))
+                            .and_then(|package| package.binary.as_ref())
+                    })
                     .context("missing mod executable")?;
-                let runtime = format!(
+                let mut runtime = format!(
                     "export const BINARY = {};\nexport const DATA_DIR = {};\nexport const RELEASE = {};\nexport const MOD_NAME = {};\n",
                     serde_json::to_string(&final_dir.join(&binary.name))?,
                     serde_json::to_string(&self.data)?,
                     serde_json::to_string(rev)?,
                     serde_json::to_string(&name(base, rev))?
                 );
+                if let Some(base) = &definition.runtime_mod {
+                    runtime.push_str(&format!(
+                        "export const DEPENDENCY_MOD = {};\n",
+                        serde_json::to_string(&name(base, rev))?
+                    ));
+                }
                 fs::write(dir.join("runtime.js"), runtime)?;
                 let mut diagnostic = tempfile::tempfile()?;
                 let check = bounded(
