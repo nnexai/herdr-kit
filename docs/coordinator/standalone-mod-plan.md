@@ -1,10 +1,17 @@
-# Standalone coordinator mod and `kit-coord`: feasibility and cutover plan
+# herdr-kit modular monorepo: feasibility, package design and cutover
 
 Status: decision proposal only; no extraction or deployment authorized.
 Evidence baseline: main at `8afa371dc185deeb27027c00b270b5a39971cf17` (2026-11-13).
 Source references below refer to that baseline, not to future file locations.
 “Observed” means source/history or the explicitly listed local commands; “Proposed”
 means a design decision, not an implemented or verified capability.
+
+Scope expanded after the initial coordinator-only proposal: split the whole
+repository into independently usable capability packages, with the herdr-kit
+layout composing them. **Primary acceptance: another person's layout includes
+kit-coord with no kit-usage, herdr-kit layout, or installed suite updater.**
+The original coordinator safety/path findings still apply. All target package,
+command and distribution examples below are proposals, not existing commands.
 
 ## 1. Current shape and couplings
 
@@ -113,252 +120,436 @@ home exited 1 (“does not exist”); this proves an installer can detect absenc
 was attempted but its server exited; boundary claims above use direct source reads.
 No new binary, updater execution or native UI migration was tested in this plan.
 
-## 2. Target shape and alternatives
+### Whole-repository inventory and proposed ownership
 
-### Recommendation: one repository, separate binary package, reusable native mod
-
-**Proposed:** keep herdr-kit as the layout/updater/usage suite. Add a Cargo workspace
-member `crates/kit-coord`, producing `kit-coord`; move the engine subtree and its
-roles/testdata into that crate, with its own CLI main and integration tests. Keeping
-an internal `coord` module initially avoids gratuitous import renames; do not add a
-public library/shared-framework crate without a consumer. Remove coord code and
-its output/error types from the suite binary. Both executables may use ordinary
-Cargo dependencies; neither depends on the other's implementation.
-
-Keep the existing mod identifier/directory `mods/herdr-kit-coord`: it is already
-separate, and “standalone” concerns its executable/runtime dependencies, not a
-cosmetic rename. It becomes a reusable mod executing **only kit-coord**. Other
-layouts may reference it by folder name using the same `content.mod` shape as the
-herdr-kit layout. No imports from usage or suite internals. A source/package user
-can build `cargo build --locked --release -p kit-coord`, install that binary and
-copy the mod with its documented runtime binding without installing the herdr-kit
-layout or usage collector. Do not add a second self-updater or require Herdr to
-resolve Cargo packages. Keep OMP roles/model selection and resume behavior intact;
-no new harness support belongs in this extraction.
-
-| Approach | Benefits | Costs / decision |
+| Current component | Proposed package / destination | Boundary and evidence |
 |---|---|---|
-| Same-repo independent crate + mod, suite-managed distribution | Atomic source change, one lockfile/trust root, existing receipt/rollback mechanism; independently runnable backend and layout-reusable UI | Two binaries to stage/verify; release adapter needed. **Choose this.** |
-| Separate coordinator repository and independent updater | Independent releases and governance | New source trust/pinning, cross-repo compatibility matrix, two activation/rollback owners and potentially competing watchers. No demonstrated need yet; reject for this cutover. |
-| Keep the single executable, rename/repackage only the JS | Smallest cosmetic diff | UI is already a mod; leaves the actual engine, prompt, hook and release couplings untouched. Reject: it does not deliver kit-coord. |
+| `src/coord/` including every engine module, built-in roles and testdata | `kit-coord`: `crates/kit-coord/src/coord/` plus its CLI main | All coordinator behavior stays together; no usage dependency. Components and outward symbols are enumerated above. |
+| `mods/herdr-kit-coord/`: main, store, model, Board, Timeline, status, four icons, manifest/runtime | `kit-coord`: `mods/kit-coord/` | A real standalone package contains both CLI and native mod. Rename the mod base once, update generated MOD_NAME/assets/overlay references atomically; no old-name alias. Current imports/self-opening overlay are in `mods/herdr-kit-coord/main.js:1-9,45-50`. |
+| `src/usage.rs`, `src/usage/{parse,cache,source,tests}.rs` | `kit-usage`: `crates/kit-usage/` | Own anonymous schema, projection, scheduling, OMP subprocess, private cache and collector lock. There are no production `crate::coord` or manager imports in this subtree (`src/usage.rs:1-10,143-176`; `src/usage/source.rs:37-60`). |
+| `mods/herdr-kit-usage/{main,model,runtime}.js`, mod.json | `kit-usage`: `mods/kit-usage/` | Own Limits readout/details, formatting and shared usage snapshot. Remove suite maintenance, currently `mods/herdr-kit-usage/main.js:27,55-58`. Keep snapshot version 1 and all distinct unavailable/stale/zero/unlimited states (`src/usage.rs:55-93,264-317`). |
+| Machine/branch/agent indicators and branch/server/monitor icons currently in the usage mod | Layout's small `mods/herdr-kit-bar/` integration view; retain tiny local chrome helpers/icons where needed for kit-usage's standalone full-bar view | These are host/workbench chrome, not quota collection (`mods/herdr-kit-usage/main.js:85-99`). Do not manufacture a shared runtime mod just to share three tiny icons/host labels. |
+| `src/manager.rs` and suite install/source/status/update CLI | Optional `kit-manager` Rust package in `crates/kit-manager/`, retaining executable name `herdr-kit` | Manager owns trusted source, selected-package builds, receipts, activation/recovery, drift refusal, rollback and optional maintenance. It is not owned by a layout or a capability. Keeping the existing installer executable name avoids unrelated installer renaming; final CLI has no coord/usage subcommands. |
+| `src/main.rs` CLI dispatch, common Output/error handling | Three entry points: kit-coord, kit-usage, manager's herdr-kit | Coordinator keeps its text/JSON/error contract; usage and manager return their own results. Do not retain a dependency on coord::Output for unrelated commands (`src/main.rs:73-117`). |
+| `src/paths.rs` platform data root | Tiny private helper in each binary that needs it; identical compatibility semantics | Only 28 lines today (`src/paths.rs:1-28`). Copy this small policy with shared fixture cases; no mandatory kit-core library. Each explicit package env is separate; manager invokes packages with an explicit root. |
+| `layouts/herdr-kit.json` | `herdr-kit` layout asset package, not another Rust capability | Composition plus a lock/manifest for selected packages. Existing stock references workspace-chrome/spaces/agents/tabs/pane/files/changes remain Herdr-owned, not vendored kit packages (`layouts/herdr-kit.json:30-81,89-98,124-127,150-162`). |
+| Usage-mod suite-maintenance timer; main.rs post-activation hook | Timer moves to layout integration or explicit manager invocation; hook stays manager-side as a bounded kit-coord subprocess adapter | No kit-usage code may update other components. The manager invokes the hook only when coord is selected/activated; no direct crate dependency (`src/main.rs:97-115`; `src/coord/lifecycle.rs:738-783`). |
+| `tests/coord_cli.rs`, coord JS/store tests, `tests/fake/cli.sh`, coordinator captures | kit-coord tests/fixtures; only genuine installer cases stay with kit-manager | Update binary/env/argv assumptions (`tests/coord_cli.rs:4-17`); keep role examples/spec beside their capability. |
+| `tests/usage.test.js`, `src/usage/tests.rs` | kit-usage tests | Anonymous projection, caching/lease, symlink/output bounds and JS quota calculations remain capability-owned (`src/usage/tests.rs:11-37,41-101`; `tests/usage.test.js:3-38`). |
+| Manager layout/runtime tests | Separate manager deployment tests and layout composition contracts | Current mixed tests are at `src/manager.rs:546-664`; test real owned-artifact behavior, not cross-package source text. |
+| Cargo.toml/Cargo.lock, package.json | Workspace build/test metadata, one lockfile; per-package narrow test entry points | Today Cargo is one package and Node just runs all pure tests (`Cargo.toml:1-22`; `package.json:1`). Shared third-party dependencies are not a reason to invent kit-core. |
+| README, RECIPE, CHANGELOG, LICENSE, preview, docs/coordinator* | Root catalog/build/release policy plus package-specific usage/design docs; preview belongs to layout | Update the single-binary policy and examples at each capability cutover (`README.md:3-6,167-179`; `RECIPE.md:46-65`). Keep historical evidence distinguishable from active instructions. |
+| Generated d.ts/jsconfig; target/dist/evidence; installed journal/config/layouts | Not distributable source packages or kit-core | Host-generated contracts and build/evidence artifacts stay ignored. Existing live state remains where it is; installation ownership does not imply ownership of user data/settings. |
 
-### Install, pin and update contract
+Usage-specific boundaries are already strong: OMP executable discovery is private
+to usage (`src/usage/source.rs:5-14`), collection is bounded/redacted
+(`:37-60`), and its cache uses pinned-directory no-follow/owner checks
+(`src/usage/cache.rs:17-47,51-73`), unlike manager's deployment path handling.
+Do not unify these different security policies into a generic “safe filesystem”.
+The explicit usage override currently comes from `src/main.rs:53-62`; the CLI
+passes `<root>/usage` to the collector (`src/main.rs:99-102`).
 
-**Proposed:** preserve one trusted source updater and one suite revision pin for
-now. Standalone execution does not imply independent suite update cadence. Build
-both workspace binaries from the same committed archive/lockfile; release contents
-include herdr-kit, kit-coord, both mods and the compiled layout. Generate per-mod
-runtime bindings: usage gets the immutable herdr-kit, coord the immutable kit-coord.
-The stable `<root>/bin/kit-coord` is for people, prompts and watcher replacement;
-there is no PATH/shell configuration edit.
+An additional disposable CLI probe used a fake OMP executable, not real credentials:
+two usage reads yielded schema 1, Copilot available, used=4, exactly one source
+invocation, no projected fixture identity and no coordinator directory.
+`evidence/coord-standalone/usage-independence.json` records this. Temporary source
+script/data were removed. This establishes the current collector's independence,
+not proof that the proposed extracted package or native combined bar exists.
 
-Do not make kit-coord parse the manager's private State struct. Introduce a small,
-versioned **deployment descriptor**, `<root>/kit-coord/active.json`, outside the
-unchanged journal tree. It contains coordinator build revision and absolute
-immutable executable path. Manager owns its publication/hash receipt; a documented
-standalone package installation uses the same descriptor shape, never simultaneously
-with suite ownership. This is a deployment contract, not another coordinator journal.
-Embed the build revision in kit-coord when built from the archived source; its
-running identity must not be inferred solely from a mutable current pointer.
-An unmanaged checkout can use development identity without a descriptor.
+## 2. Target packages, dependencies and distribution
 
-Extend activation/recovery's owned-artifact set to both stable binaries and the
-descriptor. Stage and verify the complete release and mod generations first; install
-both stable binaries and the layout before publishing the descriptor as the
-coordinator-ready signal. Record enough old/new hashes in the activation journal to
-recover every interruption. The watcher compares its running build to the desired
-descriptor and execs that verified immutable kit-coord with `--data-dir R watch`,
-not `herdr-kit coord watch`. Preserve the singleton lock/visible terminal semantics.
-Rollback publishes the retained coordinator descriptor/assets together; no state
-format change is required. A missing/invalid target must produce degraded health
-and retain the running watcher rather than exec a nonexistent file in a loop.
+### Decisions and rejected alternatives
 
-Move the updater hook to a narrow suite-owned subprocess adapter: invoke the
-activated kit-coord's `up --if-enabled`, retaining timeout and caller attribution,
-with disabled/skipped/failed distinctions. No Rust dependency on the coord crate.
-The suite still owns *when* activation invokes it; kit-coord owns authorization,
-autostart and lifecycle. Standalone use needs no suite hook to function.
+**Recommend `kit-usage`**, with the user-facing label **Limits** unchanged.
+“Usage” matches `omp usage`, the current module/protocol, and the actual scope:
+consumption, remaining allowance, credits, reset windows and estimates, not just
+hard limits (`src/usage.rs:55-93`; `RECIPE.md:14-17`). `kit-limits` would be a
+reasonable narrower product name, but buys little and suggests enforcement the
+tool does not perform. Do not create both names or aliases.
 
-### Graceful absence and Herdr constraints
+**Do not create kit-core initially.** The only proven shared Rust policy is the
+small platform data-root helper. Both capabilities have different state, errors,
+locks and subprocess/security needs. Share Cargo dependency versions, documented
+deployment/readout schemas and fixture cases, not a mandatory runtime service or
+catch-all crate. Small private path/JSON-publication helpers are preferable to
+cross-package lifecycle coupling. Reconsider a **private library only** if a
+second real consumer needs the same nontrivial implementation and invariants.
+It must contain no coord/usage logic, updater policy, auth, daemon, UI lifecycle
+or global state; it would be a leaf dependency, never a mod everyone must install.
+Nothing in this plan requires shipping or downloading kit-core.
 
-* **Binary absent/bad protocol:** existing exec error handling and unavailable/
-  stale UI provide the starting point (`store.js:56-64,114-120`). Change diagnostics
-  to kit-coord, retain the last good board as stale, disable destructive/lifecycle
-  actions until a healthy compatible response, and offer retry. Never fall back to
-  `herdr-kit coord`, download code, create actors or spin on failures. Usage and
-  terminal navigation continue. The suite activation hook reports missing component
-  as skipped/unavailable, not “started”. Managed artifact loss still triggers
-  updater drift refusal; graceful UI does not mean silently repairing drift.
-* **Mod intentionally not installed:** compile the layout without its coordinator
-  node; leave the usage/terminal surfaces intact. Parse/transform the layout JSON,
-  not a blind mod-name string substitution. A full suite installation treats its
-  selected coordinator artifacts as required and refuses partial activation.
-* **Mod unexpectedly removed after activation:** do not claim a native fallback
-  based on the nonexistent-path check. A disposable native fixture must establish
-  whether only the coord block fails while the rest remains usable. If the host
-  invalidates the whole layout, require an install-time fallback integration before
-  release (or decline the graceful-absence claim). No fabricated `optional` or
-  `fallback` field: none is documented for general `content.mod`.
-* **Status composition:** extraction must retain the 28px bar, 80px coordinator
-  budget, flexible ellipsized left content and correct normal/narrow Limits text.
-  Current code has separate blocks, not the desired eventual single responsive
-  composition. If composed together, the usage view may read only the cached
-  coordinator status and dispatch existing registered coord commands; lifecycle
-  stays in the coord mod/CLI, with no cross-mod imports or layout-state writes.
-  Do not smuggle a statusbar redesign into this extraction. The mod works without
-  the usage bar; usage works without it. Keep the shared-status schema/key stable
-  during the boundary move, and avoid generation-rewriting protocol key literals.
+| Option | Benefits | Decision / cost |
+|---|---|---|
+| Same-repo kit-coord + kit-usage + optional kit-manager + layout assets; no kit-core | Independent reuse, one source trust root/lockfile, local coordinated changes, narrow ownership | **Choose.** More package receipts/activation tests; no runtime package coupling. |
+| Same packages, kit-core first | One place for shared helpers | Reject speculative foundation: only a tiny path policy is proven common; security/state policies differ. An empty framework delays the actual other-layout use case. |
+| Separate repositories/updaters | Independent governance/releases | Reject now: extra trust roots, compatibility/release machinery and competing update ownership without a demonstrated need. |
+| Keep one executable and rename only the JS | Small diff | Reject: both UIs are already separate mods; leaves backend/update dependencies and fails the primary acceptance. |
 
-**Observed API basis:** layout already references external mod folders; the local
-installed guide documents `content.mod`/props and `place:none`
-(`~/.config/herdr-app/AGENTS.md:222-243,800-826`). Host exec, overlays, shared state,
-commands and folder watches are in the generated contract
-(`mods/herdr-kit-coord/gpui-kit.d.ts:22215-22219,22544-22576,22601-22626`; ignored,
-regenerated by Herdr, not a repository dependency to commit). No known API blocker
-to a standalone mod/binary. The layout format is **composition**, not a dependency
-installer/version resolver. Native discovery and unexpected-mod-loss behavior are
-acceptance gates, not proven guarantees. Do not add command-palette integration
-or keybindings; reuse the mod's existing commands.
+Proposed source tree: `crates/{kit-coord,kit-usage,kit-manager}/`,
+`mods/{kit-coord,kit-usage,herdr-kit-bar}/`, `layouts/herdr-kit.json` and explicit
+package/bundle manifests. kit-manager still produces `herdr-kit` for source,
+install/status/update operations; kit-coord produces `kit-coord`; kit-usage
+produces `kit-usage`. Final manager code contains no embedded capability engines.
+The layout asset package has no Rust binary. Publish/build capabilities separately
+without requiring a layout install; the full suite is just one selected bundle.
 
-## 3. Migration and clean cutover
+### Acyclic dependency graph
 
-### Persistence and command contract
+Arrows mean “uses/selects”, not “starts a service”. There is no reverse dependency
+from a capability to a consumer layout, updater or the other capability.
+Manager edges are artifact/deployment contracts, **not Rust imports of engines**.
+The optional install tool is deliberately outside the runtime graph.
 
-**Proposed:** keep `--data-dir R` meaning the existing parent root, with actual
-coordinator files at `R/coord`; preserve the current Linux/macOS default parent
-paths exactly. The old brand in a storage pathname is compatibility, not a runtime
-dependency. Do not rename/copy/rebase journals, role overrides, briefs, results,
-home, sessions or lock files. All journal-embedded absolute paths and IDs remain
-valid. Keep journal format 1, fold version 5, config fields and JSON read models
-unchanged for this extraction. Replay a fresh cache from the same journal and
-compare meaningful state/seq/cursor; do not delete a person's cache to “migrate”.
+```mermaid
+graph TD
+  Other["Another layout"] --> CoordMod["kit-coord mod"]
+  Layout["herdr-kit layout + bar glue"] --> CoordMod
+  Layout --> UsageMod["kit-usage mod"]
+  CoordMod --> CoordCLI["kit-coord CLI"]
+  UsageMod --> UsageCLI["kit-usage CLI"]
+  CoordCLI --> Herdr["Herdr host / hc / OMP"]
+  UsageCLI --> OMP["OMP usage"]
+  Manager["Optional kit-manager: herdr-kit CLI"] -. deploys selected artifacts .-> CoordMod
+  Manager -. deploys selected artifacts .-> CoordCLI
+  Manager -. deploys selected artifacts .-> UsageMod
+  Manager -. deploys selected artifacts .-> UsageCLI
+  Manager -. optional bundle .-> Layout
+```
 
-Use only `kit-coord <operation>` after cutover, with no extra `coord` namespace.
-`kit-coord --data-dir R report … --result R/coord/results/TASK.md` is the delegate
-contract. Rename executable override envs to `KIT_COORD_HC` and
-`KIT_COORD_HERDR_APP`, and the explicit root env to `KIT_COORD_DATA_DIR`; update
-all launch/test/docs consumers atomically, without accepting the old env names as
-aliases. Default path compatibility does not depend on the old suite env. Suite
-calls pass R explicitly. Preserve `HC_TERMINAL_ID` and `coord.*` ownership labels.
+Neither kit-coord nor kit-usage depends on kit-manager at run time, nor on each
+other at build time or run time. A shared protocol **producer** does not depend
+on its optional layout **consumer**. There are no imports between mod directories.
+Shared third-party crates and host APIs are ordinary leaf dependencies.
 
-Regenerate the command from one kit-coord argv builder, shell-quoted only for
-human/prompt text. Remove the hard-coded suffix from all footer, nudge, coordinator
-command/truncation strings, role bodies and documentation copies listed in section
-1; update lifecycle watch argv, store argv, error text, tests and recipes. Retain
-the useful `kit` explanatory shorthand only if it expands to the complete
-kit-coord command, never “kit coord”. New and resumed/follow-up delegates get the
-new footer (`src/coord/place.rs:474-480,809-814` already centralizes these cases).
-User role overrides remain untouched: preflight identifies outdated command text
-and asks the person to update their own override before it is used. Do not rewrite
-custom instructions automatically or mutate old saved briefs/transcripts.
+### Distribution: coordinator in somebody else's layout
 
-### Why a drained transition, not a compatibility shim
+**Proposed canonical flow**, explicitly not today's CLI:
 
-An already-running old watcher has a compiled-in `bin/herdr-kit coord watch`
-replacement path, and already-running agents have the old command in context.
-Changing a prompt file or adding kit-coord to disk cannot rewrite those processes.
-An immediate hot replacement would let the old watcher exec a command removed from
-the new herdr-kit, while an old delegate could lose its reporting path. This is a
-concrete migration hazard, not an API limitation.
+1. Select a full committed Git revision and package `kit-coord`. An optional
+   one-shot manager install uses
+   `herdr-kit install --component kit-coord --revision <full-commit> --source REPO --app-home APP_HOME --data-dir R`.
+   It installs **only** kit-coord assets: no usage, herdr-kit layout/bar, key or
+   setting changes; it does not switch the consumer's layout or start actors.
+2. Install immutable `R/releases/<commit>/kit-coord` and
+   `APP_HOME/mods/kit-coord-<commit>/`; generate its local runtime with absolute
+   BINARY, explicit DATA_DIR=R, RELEASE and matching MOD_NAME. The mod carries all
+   its own JS/icons; no suite files or cross-directory imports. A stable
+   `R/bin/kit-coord` supports prompts/people. No PATH/shell changes are required.
+3. Return the exact resolved module name to the integrator. Their layout uses
+   `{"content":{"mod":"kit-coord-<full-commit>","props":{"view":"statusbar"}}}`
+   in an appropriately sized block. Its status view owns polling/command receipt;
+   click opens its own Board/Timeline. The generated package-specific metadata
+   and docs explain off/start behavior before any person enables autostart.
+4. Keep that layout pin until its owner chooses to upgrade it. Installing a newer
+   generation does **not** text-rewrite another person's layout. No floating
+   “latest” folder or module-name alias. The external layout's own manifest/lock
+   is authoritative for its pin; a bundled herdr-kit layout has its own lock.
 
-**Choose a short, person-owned quiescent cutover:** finish/record current work,
-settle all active delegates, persist coordinator instructions/open threads, drain
-the inbox, then use the old person's `coord down` (which disables autostart and
-stops coordinator/watcher). Leave workstreams, resources and saved sessions intact;
-no user spaces or core are closed. Activate the new release and explicitly run
-kit-coord up as the person. A new coordinator session reads the same journal; old
-sessions remain historical and delegate sessions resume with a new footer. This
-preserves durable continuity, **not uninterrupted process uptime**. If zero
-interruption is required, this plan is no-go until the person approves a separate
-handoff mechanism: old processes cannot be made compatible by a clean rename.
+Mod and CLI must be a matching generation, not independently floating versions.
+Use full Git revision pins initially, with package identity plus protocol versions;
+human package versions may remain aligned. Bundle defaults can pin all packages
+to one source revision; independent consumers can choose different package pins
+whose readout/deployment protocol is supported. Do not introduce a registry,
+remote downloader/signing claim, compatibility solver or separate self-updaters.
+Keep committed-source builds, locked dependencies and hash/drift refusal.
 
-Do not keep an old command shim/alias or indefinitely dual-run coordinators. An
-old immutable release remains solely a rollback artifact. Reverse cutover must
-also quiesce new sessions before rollback, then start the old command; resume
-follow-ups regenerate the old footer. Never replay stale commands into terminals.
-The person may authorize this transition later; a delegate cannot execute it or
-bypass the person-only start/restart guard.
+**With no installed updater:** the external layout owner is the update owner.
+Provide a documented component source/export artifact and deterministic runtime
+template. They may build only `cargo build --locked --release -p kit-coord`,
+install the CLI/mod generation with their own installer, and supply its explicit
+runtime/data paths; or run kit-manager once from source to stage/install it and
+not retain an updater executable/service. Neither mode installs the herdr-kit
+layout. If they choose the former, they own pin/hash validation, atomic publication
+of any active descriptor and rollback; there is no automatic update or silent
+fallback to herdr-kit. A fixed manually installed component without an active
+deployment descriptor stays on its embedded revision; it does not discover suite
+manager state. Upgrades can be a quiescent replacement if its owner does not
+implement managed descriptor publication.
 
-### Updater bootstrap and drift
+**With kit-manager:** update only its selected owned set. Per-package receipts,
+current/previous selections and deployment descriptors replace the assumption of
+one current binary. It may stage a newer external-layout pin and return new
+references, but must not activate a mismatched CLI/UI generation or edit an
+unowned layout. The consumer's installer coordinates reference activation and
+descriptor publication, or the person performs the documented paused transition.
+Reject two owners updating the same installed package/root; transfer ownership
+explicitly, never adopt collisions or overwrite drift. Separate app homes/roots
+are the clean choice for independently pinned simultaneous consumers; the same
+coord data root intentionally means the same singleton coordinator, not one per
+layout. Do not dual-run different coordinator generations against one journal.
 
-The **installed old updater** builds/copies only herdr-kit and binds the coord mod
-to it (`src/manager.rs:365-377`). Its `update apply` cannot safely perform the first
-extraction even if the new source builds. Use the newly built, verified manager's
-`install --source … --app-home …`, still through the trusted source channel, not
-an in-place copy into the live bin directory.
+### Update ownership, release readiness and the hook
 
-Before extraction commits can become auto-maintenance's source HEAD, the person
-must freeze the configured source on a trusted local snapshot repository at the
-current committed revision via the existing `source --repo` operation. This is a
-temporary release-control snapshot, **not** the proposed separate product repo.
-`source` resets the due timer but unchanged frozen HEAD is safe
-(`src/manager.rs:450-456,474-483`). Wait out any in-flight manager operation; verify
-the configured source and active hashes. Build/test the extraction elsewhere in
-the source checkout; at the authorized window, the new manager's install registers
-the intended main checkout and activates its committed HEAD. This avoids automatic
-old-manager staging before delegates are drained. Do not change updater state JSON
-by hand, add an authorization bypass, or rely on “maintenance probably is not due”.
+The updater is the optional **kit-manager package**, not kit-core, not part of
+kit-usage and not intrinsic to the layout JSON. The herdr-kit bundle includes it
+for convenience and a tiny layout-owned maintenance invocation, retaining the
+current daily scheduling/backoff/lock semantics. An external-layout-only install
+defaults to **explicit owner updates**, with no maintenance timer unless that
+owner deliberately opts into the manager. No mod installs code on its own.
 
-Drift remains a stop condition: changed layout, mod, binary, descriptor or release
-must be explained/preserved, not overwritten. Recovery must accept old single-bin
-receipts/activation journals while adding the new owned files, and rollback must
-know which artifacts existed in each generation. Retained old mod generations are
-not stale code aliases and are not deleted as part of extraction.
+Remove the usage-mod timer only when its replacement is present in a deployable
+suite release. Keep the final manager executable/stable path `bin/herdr-kit`;
+remove `coord` and `usage` subcommands at their respective clean cutovers.
+The updater's own trusted atomic replacement remains the only live suite install
+mechanism. Code must never overwrite a running installed binary in place.
 
-## 4. Dependency-ordered implementation and acceptance plan
+Preserve a small versioned coordinator deployment descriptor at
+`R/kit-coord/active.json`, outside its unchanged journal tree. Minimum contract:
+schema version, selected coordinator revision and absolute immutable executable.
+Package receipts also bind its resolved mod generation. Embed each executable's
+actual build revision; do not infer the running binary solely from a mutable
+pointer. The coordinator reads this public descriptor, not kit-manager's private
+State. Missing/invalid desired targets must yield degraded health while retaining
+the running watcher, not a repeated failed exec.
 
-Sizes are engineering-day ranges for one implementer familiar with this code,
-including focused verification; mostly moves, but activation is the high-risk work.
-They are estimates, not delivery promises. The baseline move surface is about
-16,000 lines including engine, coord JS and tests (local `wc -l`), not 16,000 lines
-of new behavior. No phase below was implemented by this assessment.
+Generalize manager activation journal/hash ownership to the selected binaries,
+mods, descriptors and **only the layouts it owns**. Stage/verify immutable assets
+first, install stable binaries and selected mod/layout references, then publish
+the coordinator-ready descriptor. Record all old/new hashes for idempotent crash
+recovery; rollback publishes a complete prior selected set. Preserve old one-bin
+receipts/activation journals as readable migration/rollback inputs. Do not delete
+retained mod generations or treat user layout state as owned deployment state.
 
-| Phase / depends on | Work | Acceptance check | Rough size |
-|---|---|---|---|
-| P0: approve contracts and freeze release intake | Accept same-repo structure, old paths, one pin, brief pause, no aliases. Arrange person-owned frozen source before extraction lands. Establish disposable native mod-present/mod-absent baseline and documented host limits. | No live changes by a delegate. Native fixture proves missing coord cannot take down usage/terminals, or an explicit blocker is resolved before proceeding. Record expected board/status/inbox and protocol contracts from fixtures. | 0.5–1 day |
-| P1: crate + commands; after P0 | Move engine/roles/testdata and CLI integration tests into kit-coord; remove coord from herdr-kit and detach its Output/errors. Centralize kit-coord argv/default paths/envs; migrate every renderer and caller. Preserve permissions and wire/state formats. | Build both packages with the locked workspace. Run moved coordinator behavior/integration tests, especially forbidden callers, report attribution, replay, placement/resume and graceful restart race. A throwaway CLI flow creates work, renders first/follow-up briefs, reports via the new executable, reads/acks inbox; herdr-kit help has no coord. Custom data root and spaced paths stay isolated. | 1–1.5 days |
-| P2: two-binary activation; after P1 | Add descriptor and embedded build revision; extend receipts, staging, bootstrap paths, recovery and rollback. Generate per-component runtimes. Replace direct activation dependency with the bounded kit-coord subprocess hook; watcher reads deployment contract, not manager internals. | Private committed-source install stages both bins and matching mods. Crash-point fixtures cover every owned-artifact publication; recovery is idempotent. Release changes replace exactly one visible watcher without terminal duplication. Missing target stays degraded without exec loop; skipped/forbidden_caller stays skipped; real failures remain failed. Old receipts/rollback remain readable and modified owned bytes are preserved on refusal. | 1–2 days |
-| P3: reusable mod/layout integration; after P2 | Remove suite-command knowledge from coord JS/default runtime; keep self-overlay/assets/protocol key generation-safe. Compile optional coordinator node structurally, no dangling selected dependency. Keep existing interaction semantics and bar constraints; document standalone mod/binary installation. | JS model/store tests use kit-coord and exercise missing binary/stale data. `herdr-app check` plus a real disposable native window shows Board + Timeline, start/off/failed states, clear-context pending/confirmation and focus/navigation. Reuse mod from a second fixture layout without usage. Verify normal/narrow bar with seeded real quota-shaped data; native mod removal cannot disable unrelated surfaces. | 0.5–1 day |
-| P4: full migration rehearsal; after P3 | Exercise old install → quiesce → new-manager install → kit-coord up, then reverse rollback; use representative journal/overrides/briefs/results/session refs, never live state. Update README policy, recipe, spec/implementation plan and role copies; remove obsolete command references in active guidance. | Existing journal bytes preserved as an append-only prefix; IDs, seq/cursor, questions, instructions, threads, task/result/session paths survive. One healthy new coordinator and watcher; no spurious session_ended for the live replacement. A resumed delegate receives/uses a new report footer. Suite maintain/apply after migration and rollback both select complete matching artifacts; no shims required. | 1 day |
-| P5: separately authorized person rollout; after P4 | Confirm frozen intake and no pending launches/reports, drain the real coordinator, person runs down, invoke the verified new source updater, person starts kit-coord, restore normal source intake. | Post-install status verifies both binary/descriptor receipts and source, no drift, one watcher and healthy coordinator, same durable workstreams/inbox state; Board/Timeline/usage visible. No core restart, terminal typing, user-space closure, keys/settings edits or direct binary overwrite. Record a rollback command/runbook before proceeding. | 0.5 day |
+Watcher replacement becomes descriptor target + `--data-dir R watch`, never
+`herdr-kit coord watch`; preserve the exclusive singleton lock/visible terminal.
+It reacts to the **selected coordinator revision**, not arbitrary usage/manager
+state. A usage-only selected-package update must not restart it. A bundle update
+that deliberately advances every package's source revision still advances coord
+and may request a handoff: changing the package boundary does not eliminate that
+release-change cost.
 
-Total indicative size: **4.5–7 days**, dominated by activation and transition proof,
-not by rewriting the coordinator. Stop at a failing phase gate rather than deploy
-a partial extraction. Run affected checks once after each settled implementation
-slice; no need for a broad baseline suite for this documentation-only decision.
+The manager's narrow bounded activation adapter executes selected kit-coord
+`up --if-enabled` only when appropriate; preserve caller environment, disabled,
+skipped/forbidden_caller and real failed states. No direct Rust engine dependency.
+An absent/unselected coord package is skipped, not an update failure or an
+assertion that a coordinator was started. Standalone kit-coord works without
+ever invoking this hook; existing mod/CLI autostart rules remain its own.
 
-### Highest-risk failures and controls
+### Standalone and combined behavior
 
-| Risk | Required control |
+| Installation / surface | Required behavior |
 |---|---|
-| Old watcher execs a removed coord command | Drain/stop before first activation; do not rely on its release-change restart. Thereafter descriptor + kit-coord-only replacement, singleton lock and native fixture proof. |
-| Fresh coordinator incorrectly marked ended | Carry the hc recheck and regression from 8afa371 unchanged; migration fixture must observe healthy replacement after queued old terminal events. |
-| Hook starts from a forbidden caller or bypasses guard | Preserve caller environment, person-only matrix, skipped refusal and real failure distinction; never retry as an impersonated person. Explicit person up is required after the drained transition. |
-| Update source advances before new installer is ready | Frozen trusted source before landing extraction; first activation by the new manager, never old update apply. No opportunistic live deployment by an implementation delegate. |
-| Partial activation / rollback loses new binary ownership | Extend journal/receipts for both binaries + descriptor; immutable artifacts first, descriptor readiness last; crash/recovery and old-release rollback fixture. |
-| Runtime absent, mod missing, stale cache says running | Bounded exec failures, explicit unavailable/stale state, no auto-start on stale/unvalidated state; optional-node compilation and native absent-mod gate. Never mask drift or claim repair succeeded without status proof. |
-| Persisted old prompts or custom roles keep using old CLI | Quiescent boundary, fresh coordinator, regenerated delegate follow-ups, explicit custom-role preflight. Historical briefs/transcripts remain evidence, not editable migration targets. |
-| Updater text replacement mutates shared keys / future pin divergence | Structural component bindings and a stable literal protocol key. One source revision until independent versioning has a real consumer; no floating latest dependency. |
+| kit-coord alone in another layout — **primary** | Its 80px status view polls/caches, accepts registered commands and opens Board/Timeline using only its own binary/assets. Off is meaningful and person-startable; no usage import, quota subprocess, updater, suite layout or hidden helper is required. Watcher/coordinator remain visible Herdr terminals with existing guards. |
+| kit-usage alone | Its readout/details and optional standalone full-statusbar view use only kit-usage + OMP. No coordinator probe, repair/autostart, watcher or suite maintenance. “Limits” stays the label; not signed in/missing OMP/stale remain explicit. Current privacy/cache pacing and local-machine semantics are preserved. |
+| Both capabilities in a third-party layout | The layout may place their independent views side by side. No install-order dependency or command routing through one capability to the other; matching per-component pins and caller identity are sufficient. |
+| herdr-kit bundle, both enabled | Layout integration owns one responsive 28px bar: flexible ellipsized left chrome, then the 80px coord item, then Limits flush right with a normal gap. Normal Limits includes provider; below 500px it omits provider, not the value. One view measures the real row width. Capability lifecycle remains in each mod/CLI, not the bar. |
+| herdr-kit without coord | Omit its slot/source binding; usage and host chrome fill the row normally, with no dead 80px gap, missing import or coord calls. |
+| herdr-kit without usage | Omit Limits/source binding; coord remains right-aligned and independent; no OMP collector runs. With neither capability, render only workbench chrome. |
+| No kit-manager | All chosen capabilities still work; no background update checks. The layout/package owner performs explicit updates. Missing updater must not make a working readout “failed”. |
+
+For the single combined view, a **layout-owned** `herdr-kit-bar` reads bounded
+presentation snapshots published by the active capability mods and dispatches
+their existing registered commands. It imports neither mod's source and owns no
+collector/watcher lifecycle. Each producer can publish full/compact readout text,
+accessible label, icon identity, update time and command in a small documented
+schema; validate the binding against the selected generation. The layout owns
+bindings to these snapshots, so neither producer knows about the other. The bar's
+coord icons live in its own directory, not a cross-mod import. Formatting remains
+producer-owned; small host-chrome rendering duplication is cheaper than kit-core.
+Keep current cached protocol keys/JSON models compatible during moves; give
+presentation keys stable literals, never blanket-rewrite them with mod generations.
+
+The producer lifecycle copies must actually be mounted/initialized for polling
+and commands, even when the bar renders their summaries. A source-only view in a
+shown layout block is an implementation candidate, **not proven host behavior**.
+Herdr starts a copy only the first time it shows; hidden copies then keep timers,
+and commands reach shown copies only
+(`~/.config/herdr-app/AGENTS.md:821-826`). P4 must prove the carrier's visibility,
+zero-space rendering and command routing in a real native fixture before this
+combined form ships. Do not assume a never-shown hidden node initializes, add an
+invisible daemon, or move lifecycle into the bar to work around the host. Retain
+the prior working visible composition until that native acceptance passes; the
+whole final phase is gated, not a knowingly degraded new release.
+
+### Absence and host API constraints
+
+* Missing/bad kit-coord binary: show unavailable/stale data, retain last good
+  board, disable lifecycle/destructive actions until healthy validated status,
+  allow retry. Never fall back to herdr-kit coord, impersonate a person, download
+  code or spin on errors. Existing exec catch paths are the starting point
+  (`mods/herdr-kit-coord/store.js:56-64,114-120`).
+* Missing kit-usage binary/OMP: unavailable or explicitly stale cached quotas,
+  never fake zero or signed-in data. No coordinator impact. Preserve private
+  bounded source handling and collect.lock semantics.
+* Intentionally omitted mod: compile the owned layout without its node/source/
+  presentation bindings by structural JSON generation. A selected required
+  package missing artifacts is an install refusal, never partial activation.
+* Unexpected removal of an installed mod: native fixture must prove other
+  surfaces survive. Do not infer this from `check` rejecting a nonexistent path.
+  There is no documented general `content.mod.optional`/fallback field. If native
+  isolation fails, an integration fallback/host fix is a release blocker; do not
+  publish the guarantee. Managed drift refusal remains independent of graceful UI.
+
+The existing layout format composes folder-named mods; it is not a dependency
+installer/version resolver. Host APIs already provide exec, overlays, shared state
+and `<mod>.<command>` delivery (`mods/herdr-kit-coord/gpui-kit.d.ts:22215-22219,22283-22286,22544-22576,22601-22626`;
+ignored generated contract, never commit it). No known blocker to the primary
+standalone status view. General missing-mod isolation and combined carrier
+mounting/command delivery are unproven native gates. Do not add keybindings or a
+command-palette feature; reuse the existing actions.
+
+## 3. State, commands and clean migration
+
+### Keep data independent of package installation
+
+Keep `--data-dir R` meaning the existing parent root; preserve Linux/macOS default
+parent paths. Existing coordinator data remains `R/coord` and usage data remains
+`R/usage`. Branding in a legacy storage path is compatibility, not a dependency
+on the herdr-kit executable/layout. Never rename, copy or rebase the coordinator
+journal, role overrides, briefs/results/home/sessions/locks or embedded absolute
+paths and IDs. Keep journal format 1, fold version 5 and read schemas. Preserve
+usage persisted schema 2, public schema 1, `snapshot.json`, `collect.lock` and
+private ownership/mode/no-follow policies; do not make its cache a core service.
+
+Use package-specific explicit envs: KIT_COORD_DATA_DIR/KIT_COORD_HC/
+KIT_COORD_HERDR_APP and KIT_USAGE_DATA_DIR/KIT_USAGE_OMP_EXECUTABLE. Manager retains
+its HERDR_KIT_DATA_DIR contract and passes explicit roots to components.
+Default-path compatibility does not require old capability env aliases.
+User overrides are identified at preflight and deliberately migrated; do not
+silently accept both command namespaces/env sets indefinitely.
+
+Only `kit-coord <operation>` and `kit-usage snapshot …` remain for capabilities.
+Remove the legacy `coord`/`usage` namespaces from manager when the corresponding
+vertical phase migrates **all** callers. `kit-coord --data-dir R report …
+--result R/coord/results/TASK.md` is the report contract. Keep HC_TERMINAL_ID and
+coord.* ownership labels; no permission relaxation for new executable names.
+Each package main owns its own error/output contract instead of coord::Output.
+
+Regenerate coordinator commands through one argv builder, shell-quoting only for
+text. The absolute installed command comes from Ctx::cli_argv, while the suffix
+and prompt vocabulary are in brief.rs and role bodies (section 1). Update all
+first/follow-up/resume footers, reminders, startup read/truncation, role copies,
+watch argv, mod store, hook and examples atomically. Retain `kit` shorthand only
+if it expands to the complete kit-coord command, never “kit coord”. Custom role
+overrides remain the person's files; flag obsolete command text before use,
+never rewrite saved historical briefs/transcripts. Move roles and fixture paths
+with each package, retaining OMP model-role selection and session model on resume.
+
+Usage cutover changes source discovery/env producer, CLI argv and runtime together.
+Readouts/details keep the same data/privacy meaning; maintenance moves out only
+with a working replacement. No usage process should learn coordinator commands
+or updater ownership.
+
+### Coordinator continuity requires a planned boundary
+
+The old watcher compiled in `bin/herdr-kit coord watch`; old agents have the old
+report command in context. A new file/package cannot rewrite those live processes.
+Choose a short **person-owned drained cutover** for the coord phase: finish/record
+current work, settle active delegates, persist instructions/open threads and drain
+the inbox; person runs old coord down, which disables autostart and stops both
+coordinator and watcher. Leave workstreams, resources and saved sessions intact.
+Activate the complete new package/bundle, then person runs kit-coord up. The new
+coordinator reads the same durable journal; resumed delegates get a new footer.
+No core restart, user-space closure or terminal typing.
+
+This is durable continuity, **not uninterrupted process uptime**. If zero pause
+is required, approval of a separate explicit handoff mechanism is needed; no
+claim that a hot rename is safe. Do not keep a CLI shim/alias or dual-run old/new
+coordinators. Retained immutable releases are rollback artifacts, not active
+compatibility commands. Reverse rollback also quiesces new sessions before the
+old CLI is reactivated. Delegates/coordinator may not run person-only lifecycle
+commands or bypass the refusal. Later usage/layout-only changes should not
+require this namespace migration again.
+
+### Bootstrap, updater drift and external-layout pins
+
+The installed old builder knows one executable and old mod bases
+(`src/manager.rs:365-377`). It cannot safely discover this extraction from a new
+commit using its old packaging logic. Before each incompatible source cutover,
+the person freezes trusted source intake on a local snapshot at the known working
+commit via existing `source --repo`; unchanged frozen HEAD remains safe even when
+the due timer resets (`src/manager.rs:450-456,474-483`). Wait out any manager work.
+This is temporary release control, not a second product repo. Do not rely on
+maintenance “probably not being due” or edit state JSON by hand.
+
+Use the newly built, verified manager's trusted-source install for the first new
+artifact format, not old update apply or direct writes into live bin. Subsequent
+phases use the already-capable manager but still obey selected pins and explicit
+cutover approval. The manager's own binary retains its installed name/path so
+this split does not add a second installer rename.
+
+For another layout, updating package bits is not permission to edit its layout,
+change its pin or transfer its ownership. Owner-controlled activation must bind
+matching mod/runtime/CLI/data root; staged versions can coexist, live writers on
+one coord root cannot. A manual consumer without the manager must follow the same
+quiescence rule for the initial legacy command transition and its own later
+incompatible upgrades. No updater is secretly required for normal operation.
+
+Drift of any owned binary/mod/descriptor/layout/release is a stop condition,
+not overwritten “repair”. Preserve user settings, keys, clones and click/layout
+state; do not rewrite external layouts or unrelated state. Backward-readable
+receipts and complete selected-set rollback are part of the migration, not
+follow-up work.
+
+## 4. Dependency-ordered phases, each deployable
+
+**Order: packaging/ownership first, coordinator vertical slice, usage vertical
+slice, then composition. Not kit-core first.** A phase is not “move Rust now,
+fix installers later”: it lands its binary, mod/runtime, updater changes, callers,
+docs and acceptance together. Main retains a working installable herdr-kit at
+every boundary; the old direct implementation exists only until its own clean
+replacement phase, never as a forwarding alias.
+
+Sizes below are rough engineering days for one familiar implementer including
+focused proof, not promises. The coordinator move alone is about 16,000 lines
+including tests/JS, mostly existing code; avoid equating moves with new behavior.
+
+| Phase / dependencies | Deployable result and work | Its acceptance gate | Size |
+|---|---|---|---|
+| P0: contracts and baseline | Approve no-core decision, package names, state/descriptor schemas, ownership and pause. Arrange person-owned frozen source intake before incompatible commits. Record native missing-mod/source-carrier constraints without live changes. | Existing suite remains untouched/working. Disposable baseline captures Board/Timeline/usage and the native absence behavior; enumerate actual blockers rather than inventing layout fields. | 0.5–1d |
+| P1: workspace + optional package manager; after P0 | Move current executable into kit-manager's workspace package while retaining binary name herdr-kit and direct legacy capability implementation until each later slice. Generalize selected-artifact manifests/receipts/recovery/runtime injection and component-only installs; existing bundle still builds the same working capabilities. No kit-core. | A committed-source private install/update/rollback of the existing bundle still works. Old receipts/journal readable, edited/unowned bytes preserved, explicit selected set honored, no layout-switch/settings/core effects. Unit crash-point proof for added owned-artifact fields. | 1–2d |
+| P2: complete kit-coord extraction; after P1 | New crate/CLI + kit-coord mod, one-time mod-base rename, roles/footers/store/watch/hook/descriptor and manager packaging together; remove legacy manager coord engine/namespace/output dependency. Usage remains working on legacy CLI. | **Primary scenario:** fresh disposable app home + another layout + only kit-coord, with no usage, herdr-kit layout/bar or installed manager. Real native status/Board/Timeline/clear-context and authorized start/report/resume work; CLI permissions, inbox/seq/state preserved. Rehearse old→drained→new and reverse rollback; one healthy visible watcher/coordinator, no false session_ended. Full bundle still installable. | 2–3d |
+| P3: complete kit-usage extraction; after P2 | New crate/CLI + kit-usage mod; migrate OMP override, cache, runtime and all usage callers, remove legacy manager usage engine/namespace. Move suite maintenance to a minimal layout-owned integration owner in the same release, retaining today's otherwise working composition. | Usage-only private install with no coord/manager/layout: bounded fake OMP proof of anonymous schema, pacing/cache/symlink safety; real native readout/details including missing source. Combined bundle still works and updates. Usage-only selected update leaves coord descriptor/watcher unchanged; no coord dir/commands from usage. | 1–2d |
+| P4: composition-only herdr-kit; after P3 | Layout lock/manifest and its small bar/maintenance glue consume independent packages; remove capability logic from suite code. One real-width status view, producer-mounted lifecycle, no cross-mod imports or mandatory core. Minimal standalone statusbars remain independently usable. | Native fixture proves source copies initialize/receive commands and bar owns no lifecycle; normal/narrow seeded Limits, 80px coord, ellipsized left, flush-right pair, no overlap/state writes. Exercise both, each alone and neither; removing/missing optional artifacts cannot break unrelated surfaces. Two unrelated consumer layouts retain independent pins and no unowned edits. | 1–2d |
+| P5: release/migration matrix and authorized rollout; after P4 | Package source/export/runtime instructions, root catalog and package docs/roles; complete legacy→P1→P2→P3→P4 install/update/recovery/rollback rehearsal, then separately approved person-owned live transition. | No aliases/stale active instructions, existing journal prefix/paths/IDs/inbox survive, CLI/UI pins match, manager optional, one writer per coord root. Record install receipts/health/native proof and rollback runbook. Live activation only by trusted source updater and explicit person lifecycle authorization. | 1–1.5d |
+
+Indicative total: **6.5–11.5 days**, with native/activation complexity driving the
+range. P1–P4 each needs its own complete private install/update/rollback proof
+before being considered deployable; do not merge an intermediate broken package
+move. Phases can be released independently, not all held until P5. P5 adds the
+cross-version matrix/final rollout, not deferred basic functionality. This plan
+authorizes none of those changes/installations.
+
+### High-risk failures and controls
+
+| Risk | Control and observable proof |
+|---|---|
+| Old watcher execs removed coord namespace / delegate loses report path | Person-drained initial P2 boundary; generated new footer and descriptor replacement verified. No permanent aliases or caller bypass. |
+| Fresh live coordinator falsely marked ended | Carry hc recheck/regression from 8afa371; prove queued old observations cannot end the healthy replacement. |
+| Hook incorrectly starts from forbidden caller | Keep caller environment and person-only authorization; skipped refusal distinct from actual failure; never retry as another caller. |
+| Old manager auto-stages new unknown component layout | Frozen known-working source before incompatible landing; new manager installs the new committed format. No opportunistic live deployment. |
+| Partial multi-package activation or rollback drift | Immutable staging, explicit selected set, per-artifact old/new receipt hashes, readiness descriptor last; crash recovery and old-version rollback matrix. |
+| Usage becomes updater or coordinator prerequisite | Delete its maintenance/coord knowledge; standalone install/exec/native proof with both other packages absent. Optional manager owns only selected artifacts. |
+| Combined bar moves lifecycle or assumes hidden init | Source mount/nextCommand native gate, single row width, readonly summaries and existing actions. Keep previous working composition until complete gate passes. |
+| External layout pin silently changes | Never edit unowned layout; return resolved generation mapping; owner coordinates matching UI/binary activation, or keep previous pin. |
+| Stale shared data masks missing binary/mod | Mark stale/unavailable, validate selected generation/schema, no autostart from stale state; native isolation proof and updater drift refusal. |
+| kit-core becomes an accidental mandatory service | No core package now. Admit a later leaf library only for demonstrated shared nontrivial implementation, with no capability/lifecycle policy. |
+| Global name replacement changes protocol keys | Structural manifest/runtime/layout generation, stable schema key literals, per-package matching assets; no blind JS-wide renaming. |
 
 ## 5. Verdict
 
-**Go for the same-repo extraction if the person wants independent reuse and accepts
-one planned coordinator pause; no-go for an unannounced hot rename.** The mod
-boundary already exists and the engine has only three production outward symbol
-uses. The work buys a genuine reusable coordinator command/UI, a smaller suite CLI,
-and explicit ownership of lifecycle versus layout/updater/usage. It also makes a
-later repository split possible without paying that distribution cost now.
+**Go: a modular monorepo is justified by the concrete other-layout kit-coord use
+case.** Recommend kit-coord, kit-usage (UI label Limits), optional kit-manager
+(existing herdr-kit installer executable), and the herdr-kit layout asset/glue
+package. **No kit-core yet.** Source/package boundaries become independent;
+neither capability imports/requires the other or an installed suite updater.
 
-It does **not** buy a different orchestration model, independent suite auto-update
-cadence, smaller total system complexity, or a new inbox. Cost is a second binary,
-a small deployment contract, more activation/recovery coverage, full prompt/caller
-migration and a deliberately managed first cutover. Keeping everything in one
-executable remains cheaper if no other layout or caller will use the coordinator;
-renaming only the mod would have almost no benefit because it is already separate.
+What it buys: another layout can install/pin just the coordinator, usage can also
+stand alone, and the workbench becomes composition rather than an implicit
+runtime/install dependency. One repository retains coordinated review, locked
+builds and a trusted optional source updater without duplicated lifecycle code.
 
-There is no demonstrated Herdr API blocker to composition or binary execution.
-There is no documented general optional-mod fallback/dependency resolver, and
-native missing-mod isolation is unproven here; it is a P0/P3 release gate, not a
-claim of support. The actual non-negotiable transition constraint is the old
-watcher's and agents' compiled/persisted command contract. The proposed pause
-solves that cause without permanent aliases or weakened authorization.
+Costs: multiple binary/mod generations and selected-set receipts, explicit
+external-layout pin/update ownership, atomic caller/prompt migration, some tiny
+helper/chrome duplication, native composition proof and a deliberate first
+coordinator pause. It is not a new orchestration model, remote package registry,
+quota enforcer or guarantee of uninterrupted old-process compatibility.
+
+No known Herdr blocker prevents the **primary** standalone coordinator status
+view already used in this repo. The host does not provide a dependency resolver
+or documented general missing-mod fallback; combined source-view lifecycle/
+command delivery and unexpected deletion isolation are native release gates,
+not proven capabilities. If they fail, resolve the integration/host constraint
+before shipping that phase; do not weaken standalone acceptance or hide lifecycle
+in another package. The immediate old-watcher/old-prompt transition constraint is
+solved by a person-owned drained cutover, not by shims.
