@@ -22,6 +22,7 @@ fn component_release(lock: &Locked, state: &mut State, rev: &str) {
             binary_hash: None,
             mods: BTreeMap::new(),
             layout_hash: None,
+            activated: false,
         };
         if let Some(binary) = &definition.binary {
             fs::write(root.join(&binary.name), rev).unwrap();
@@ -124,7 +125,7 @@ fn legacy_journal_recovery_then_component_upgrade_and_reverse_rollback() {
 
 #[test]
 fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
-    for prefix in 0..=6 {
+    for prefix in 0..=7 {
         let temp = tempfile::tempdir().unwrap();
         let lock = Locked::open(&temp.path().join("data")).unwrap();
         let home = temp.path().join("app");
@@ -192,6 +193,9 @@ fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
         assert_eq!(count, 6);
         if prefix < 6 {
             assert!(!lock.data.join("kit-coord/active.json").exists());
+        }
+        if prefix == 7 {
+            lock.save(&transaction.state).unwrap();
         }
         lock.recover().unwrap();
         let recovered = lock.state().unwrap();
@@ -349,4 +353,62 @@ fn mismatched_shared_legacy_binary_generations_refuse_activation() {
         .unwrap();
     assert!(error.to_string().contains("share a legacy binary"));
     assert!(!bootstrap(&lock.data).exists());
+}
+
+#[test]
+fn retained_activated_release_cannot_be_rebuilt_as_incomplete_staging() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let a = "a".repeat(40);
+    let b = "b".repeat(40);
+    let mut first = empty_state(&temp.path().join("app"));
+    component_release(&lock, &mut first, &a);
+    let first = lock
+        .activate(
+            lock.prepare(&State::default(), first, selected(&["kit-coord"], &a), None)
+                .unwrap(),
+        )
+        .unwrap();
+    let mut second = first.clone();
+    component_release(&lock, &mut second, &b);
+    let mut second = lock
+        .activate(
+            lock.prepare(&first, second, selected(&["kit-manager"], &b), None)
+                .unwrap(),
+        )
+        .unwrap();
+    let immutable = release(&lock.data, &a).join("herdr-kit");
+    fs::remove_file(&immutable).unwrap();
+    let error = lock
+        .build(&mut second, &a, &["kit-coord".into()])
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("release binary drift"),
+        "{error}"
+    );
+    assert!(!immutable.exists());
+    assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), b);
+}
+
+#[test]
+fn legacy_release_is_never_augmented_during_component_migration() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let mut state = empty_state(&temp.path().join("app"));
+    let rev = "a".repeat(40);
+    legacy_release(&lock, &mut state, &rev);
+    let before = tree(&release(&lock.data, &rev)).unwrap();
+    let error = lock
+        .build(&mut state, &rev, &["kit-coord".into()])
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("legacy release is immutable"),
+        "{error}"
+    );
+    assert_eq!(tree(&release(&lock.data, &rev)).unwrap(), before);
+    assert!(
+        !release(&lock.data, &rev)
+            .join("layout-source.json")
+            .exists()
+    );
 }

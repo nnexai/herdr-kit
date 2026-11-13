@@ -116,6 +116,8 @@ pub(super) struct PackageReceipt {
     pub binary_hash: Option<String>,
     pub mods: BTreeMap<String, BTreeMap<String, String>>,
     pub layout_hash: Option<String>,
+    #[serde(default)]
+    pub activated: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

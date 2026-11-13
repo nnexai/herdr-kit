@@ -463,6 +463,13 @@ impl Locked {
                 });
             }
         }
+        for (id, rev) in &next.selection {
+            next.package_releases
+                .get_mut(rev)
+                .and_then(|r| r.get_mut(id))
+                .context("missing selected package receipt")?
+                .activated = true;
+        }
         next.previous = old.current.clone();
         next.previous_selection = (!old.selection.is_empty()).then(|| old.selection.clone());
         next.current = legacy.map(str::to_owned).or_else(|| {
@@ -507,6 +514,17 @@ impl Locked {
                     .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
             "revision must be a full lowercase commit id"
         );
+        if state.releases.contains_key(rev) {
+            self.verify_legacy(state, rev)?;
+            bail!(
+                "legacy release is immutable; component migration requires a new committed revision"
+            );
+        }
+        if let Some(packages) = state.package_releases.get(rev) {
+            for receipt in packages.values().filter(|r| r.activated) {
+                self.verify_package(rev, receipt)?;
+            }
+        }
         let repo = state
             .source
             .clone()
@@ -553,7 +571,7 @@ impl Locked {
         }
         for id in &selected {
             if let Some(receipt) = state.package_releases.get(rev).and_then(|r| r.get(id)) {
-                if self.verify_package(rev, receipt).is_ok() {
+                if receipt.activated || self.verify_package(rev, receipt).is_ok() {
                     continue;
                 }
                 ensure!(
@@ -593,6 +611,7 @@ impl Locked {
                 binary_hash: None,
                 mods: BTreeMap::new(),
                 layout_hash: None,
+                activated: false,
             };
             if let Some(binary) = &definition.binary {
                 let existing = final_dir.join(&binary.name);
@@ -797,6 +816,15 @@ pub fn install(
     } else {
         revision(next.source.as_ref().unwrap())?
     };
+    if old.selection.is_empty() && old.current.as_deref() == Some(&rev) && components.is_empty() {
+        lock.save(&next)?;
+        return Ok(activated(
+            result(&next, Some(&rev), "current"),
+            &old,
+            &next,
+            false,
+        ));
+    }
     let ids = lock.build(&mut next, &rev, components)?;
     let selection = ids.into_iter().map(|id| (id, rev.clone())).collect();
     if old.selection == selection && old.current.is_some() {

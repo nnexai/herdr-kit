@@ -30,7 +30,11 @@ New state adds `selection`, `previous_selection`, `package_releases`, `files` an
 `mod_owners`, with defaults for old receipts. The old `releases`, `managed_mods`,
 source/app-home/current/previous/maintenance fields remain readable. Per-package
 receipts bind executable hashes, complete mod trees, source layout hashes and
-the committed package definition. File receipts bind immutable source, hash,
+the committed package definition. An `activated` receipt bit distinguishes
+retained published assets from incomplete, never-activated staging: missing
+retained files are drift, never silently rebuilt. Legacy release directories
+are never augmented; component migration uses a new committed revision, while
+an unchanged legacy full-suite install remains a no-op. File receipts bind immutable source, hash,
 executable mode and readiness ordering. Schema-2 activation journals list each
 file's old/new hash and complete mod publications plus the next durable state.
 Recovery accepts only old or new expected bytes and refuses all known drift
