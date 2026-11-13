@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Record approved modular-monorepo P0 contracts and disposable native baseline:
+  populated Board/Timeline/Limits, missing-mod isolation, zero-space source
+  carrier lifecycle/command behavior, and person-owned cutover prerequisites.
+
 - Add `coord-design`, selecting the person's OMP `@design` model role for
   UI/UX and visual design. Route design work there instead of `coord-deep`,
   and document custom role/model selection, resume, escalation and statistics.

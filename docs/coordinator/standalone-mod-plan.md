@@ -1,10 +1,14 @@
 # herdr-kit modular monorepo: feasibility, package design and cutover
 
-Status: decision proposal only; no extraction or deployment authorized.
+Status: execution approved by the person; each phase merge/deployment and the
+person-owned drained cutover still require explicit authorization.
 Evidence baseline: main at `8afa371dc185deeb27027c00b270b5a39971cf17` (2026-11-13).
 Source references below refer to that baseline, not to future file locations.
 “Observed” means source/history or the explicitly listed local commands; “Proposed”
 means a design decision, not an implemented or verified capability.
+P0 execution evidence and release prerequisites: [contract lock and native baseline](monorepo-p0.md).
+The original observations/proposals below retain their baseline meaning.
+
 
 Scope expanded after the initial coordinator-only proposal: split the whole
 repository into independently usable capability packages, with the herdr-kit
