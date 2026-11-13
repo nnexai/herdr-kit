@@ -16,6 +16,10 @@
   empty-state explanations with their title and action.
 - Report an unauthorized coordinator post-activation hook as skipped rather
   than as a failed activation hook, without changing coordinator permissions.
+- Add Clear context to the Coordinator dialog, with an idle handoff, confirmed
+  immediate restart, dialog shortcut and bindable mod command.
+- Confirm coordinator terminal loss against Herdr before ending a session,
+  so buffered events cannot mark a live replacement missing after a restart.
 
 ## 0.1.0
 

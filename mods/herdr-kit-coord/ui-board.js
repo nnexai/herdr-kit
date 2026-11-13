@@ -15,7 +15,8 @@ export function dialog(view, body, footer, board = null) {
   const color = starting ? t.dim : status?.enabled && status.state === 'running' ? t.accent : status?.enabled && status.state === 'degraded' ? t.working : t.dim;
   const health = [];
   if (status) {
-    health.push(`Watcher ${status.watcher?.running ? (status.state === 'degraded' ? 'stalled' : 'alive') : 'not running'}`);
+    const stalled = status.degraded?.some(reason => reason.code === 'watcher_heartbeat_stale');
+    health.push(`Watcher ${status.watcher?.running ? (stalled ? 'stalled' : 'alive') : 'not running'}`);
     if (status.watcher?.heartbeat_ms != null) health.push(`heartbeat ${formatAge(Date.now() - status.watcher.heartbeat_ms)} ago`);
     if (status.watcher?.release) health.push(`release ${status.watcher.release.slice(0,7)}`);
     if (status.coordinator?.status) health.push(`coordinator ${status.coordinator.status}`);
@@ -39,6 +40,10 @@ export function dialog(view, body, footer, board = null) {
     controls.child(actionButton('coord-start', status.enabled && status.state === 'degraded' ? 'Repair' : 'Start coordinator', t, cx => view.start(cx), true, 3));
   if (status?.coordinator?.terminal && !ownedActions.includes('Show coordinator'))
     controls.child(actionButton('coord-show', 'Show coordinator', t, cx => view.navigate('reply', {kind:'attention', source:{kind:'question'}}, cx), false, 4));
+  if (status?.enabled && status.state === 'running' && !view.store.restarting) {
+    if (view.store.restartPending) controls.child(actionButton('coord-restart-now', 'Restart now', t, cx => view.clearContext(cx), false, 5));
+    else controls.child(actionButton('coord-clear-context', 'Clear context', t, cx => view.clearContext(cx), false, 5));
+  }
   const close = actionButton('coord-close', 'Close', t, () => closeOverlay(props().overlay), false, board ? 11 : 7);
   const chrome = v_flex().gap(8).flex_shrink_0();
   if (board && view.width < 640) {
@@ -47,8 +52,16 @@ export function dialog(view, body, footer, board = null) {
   } else chrome.child(header.child(div().flex_1()).child(controls).child(close));
   const root = v_flex().id('coord-dialog').size_full().min_h(0).p(board ? 18 : 14).gap(board ? 12 : 8).bg(t.popover).text_color(t.foreground).text_size(13)
     .role('dialog').accessibility_label('Coordinator').child(chrome);
+  if (view.confirmRestart && view.store.restartPending && status?.state === 'running') {
+    root.child(h_flex().gap(8).items_center().role('alert')
+      .child(div().flex_1().child('Restart now? This interrupts the coordinator mid-turn.'))
+      .child(actionButton('coord-confirm-restart', 'Restart now', t, cx => { view.confirmRestart = false; view.store.restart(cx, true); }))
+      .child(actionButton('coord-cancel-restart', 'Cancel', t, cx => { view.confirmRestart = false; cx.notify(); })));
+  }
+  if (view.store.restartMessage || view.store.restarting) root.child(div().role('status').text_size(12).child(view.store.restarting ? 'Clearing context…' : view.store.restartMessage));
   if (!board) root.child(div().role('status').min_w(0).truncate().text_size(11.8).text_color(t.muted).tooltip(health.join(' · ')).child(health.join(' · ')));
-  return root.child(body).child(div().flex_shrink_0().text_size(11).text_color(t.dim).child(footer));
+  const restartHint = status?.enabled && status.state === 'running' ? view.confirmRestart && view.store.restartPending ? '   Enter restart now · Esc cancel' : view.store.restartPending ? '   n restart now' : '   n clear context' : '';
+  return root.child(body).child(div().flex_shrink_0().text_size(11).text_color(t.dim).child(`${footer}${restartHint}`));
 }
 export function list(view, id) {
   return v_flex().id(id).role('list').flex_1().min_h(0).gap(4).overflow_y_scrollbar().track_scroll(view.scroll)

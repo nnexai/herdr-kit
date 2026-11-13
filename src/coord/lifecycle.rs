@@ -732,7 +732,7 @@ pub fn status(ctx: &Ctx) -> Result<Value> {
         "not_running"
     };
     Ok(
-        json!({"schema_version":1,"generated_at_ms":now,"release":active_release(&ctx.root),"state":status,"enabled":cfg.is_some(),"autostart":cfg.as_ref().is_some_and(|c|c.autostart),"degraded":degraded,"watcher":{"running":wr,"terminal":wt.as_ref().map(|t|&t.address),"heartbeat_ms":hb.as_ref().map(|h|h.beat_ms),"release":hb.as_ref().map(|h|&h.release)},"coordinator":{"terminal":state.coordinator.terminal,"status":word,"space_id":state.coordinator.space,"tab_id":state.coordinator.tab,"session_started_ms":state.coordinator.started_ms},"counts":counts,"journal_dir":ctx.paths.journal,"journal_seq":state.last_seq}),
+        json!({"schema_version":1,"generated_at_ms":now,"release":active_release(&ctx.root),"state":status,"enabled":cfg.is_some(),"autostart":cfg.as_ref().is_some_and(|c|c.autostart),"degraded":degraded,"watcher":{"running":wr,"terminal":wt.as_ref().map(|t|&t.address),"heartbeat_ms":hb.as_ref().map(|h|h.beat_ms),"release":hb.as_ref().map(|h|&h.release)},"coordinator":{"terminal":state.coordinator.terminal,"status":word,"space_id":state.coordinator.space,"tab_id":state.coordinator.tab,"session_started_ms":state.coordinator.started_ms,"restart_pending":state.coordinator.handoff.is_some()},"counts":counts,"journal_dir":ctx.paths.journal,"journal_seq":state.last_seq}),
     )
 }
 fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {

@@ -37,7 +37,7 @@ export default class Coordinator extends View {
         store.refresh(cx, 'status', true); store.watch(cx, this);
         cx.timer.every(20000, cx => { if (!this.closed) store.refresh(cx, 'status'); });
         cx.timer.every(60000, cx => cx.notify());
-        cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.openBoard('board'); else if (command === 'timeline') { if (store.overlay && !store.overlay.closed) store.overlay.key({key:'t'},cx,true); else this.openBoard('timeline'); } else if (command === 'focus') this.focus.focus(); else if (store.overlay && !store.overlay.closed) { const keys = {up:'up',down:'down',home:'home',end:'end','page-up':'pageup','page-down':'pagedown',right:'right',left:'left',space:'space',enter:'enter',board:'b',refresh:'r',all:'a',log:'l',peek:'p',scope:'s',copy:'c','clear-scope':'x',filter:'/'}; const key = keys[command]; if (key) store.overlay.key({key}, cx, true); } setShared('herdr-kit.coord.command', ++commandRevision); } });
+        cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.openBoard('board'); else if (command === 'restart') { this.openBoard('board'); if (!store.restartPending) store.restart(cx); } else if (command === 'timeline') { if (store.overlay && !store.overlay.closed) store.overlay.key({key:'t'},cx,true); else this.openBoard('timeline'); } else if (command === 'focus') this.focus.focus(); else if (store.overlay && !store.overlay.closed) { const keys = {up:'up',down:'down',home:'home',end:'end','page-up':'pageup','page-down':'pagedown',right:'right',left:'left',space:'space',enter:'enter',board:'b',refresh:'r',all:'a',log:'l',peek:'p',scope:'s',copy:'c','clear-scope':'x',filter:'/'}; const key = keys[command]; if (key) store.overlay.key({key}, cx, true); } setShared('herdr-kit.coord.command', ++commandRevision); } });
       }
     }
   }
@@ -45,6 +45,7 @@ export default class Coordinator extends View {
   openBoard(tab = 'board') { if (!dialog) dialog = openOverlay({mod: MOD_NAME, props:{view:'board',tab}, kind:'dialog',width:760,height:600}); }
   notify(cx) { cx.notify(); }
   start(cx) { store.up(cx); }
+  clearContext(cx) { if (store.restartPending) { this.confirmRestart = true; this.focus.focus(); cx.notify(); } else store.restart(cx); }
   refresh(cx) { store.refresh(cx, 'status', true); if (this.details) store.refresh(cx, this.ui.view === 'board' ? 'board' : 'log', true, this.ui.view === 'timeline' && store.log ? {mode:'prepend'} : {}); }
   setTab(tab, cx) { if (tab === this.ui.view) return; this.ui.view = tab; this.ui.selectedKey = null; this.selectionIndex = 0; this.focus.focus(); store.refresh(cx, tab === 'board' ? 'board' : 'log', true, tab === 'timeline' && store.log ? {mode:'prepend'} : {}); cx.notify(); }
   select(row, cx) { this.ui.selectedKey = row.key; this.focus.focus(); cx.notify(); }
@@ -77,6 +78,12 @@ export default class Coordinator extends View {
   key(e, cx, command = false) {
     if (e.modifiers?.control || e.modifiers?.alt || e.modifiers?.platform) return;
     const key = e.key; this.ui.now = Date.now();
+    if (this.confirmRestart && store.restartPending) {
+      if (key === 'enter') { this.confirmRestart = false; store.restart(cx, true); }
+      else if (key === 'escape') this.confirmRestart = false;
+      else return;
+      if (!command) cx.stop_propagation(); cx.notify(); return;
+    }
     const model = this.ui.view === 'board' ? boardModel(store.board, store.status, this.ui) : timelineModel(store.log, this.ui);
     const rows = model?.rows || [], row = rows.find(r => r.key === this.ui.selectedKey);
     if (key === 'home' && this.ui.view === 'timeline' && store.newCount) {
@@ -93,6 +100,7 @@ export default class Coordinator extends View {
     } else if (key === 't') this.setTab('timeline', cx);
     else if (key === 'b') this.setTab('board', cx);
     else if (key === 'r') this.refresh(cx);
+    else if (key === 'n') this.clearContext(cx);
     else if (key === '/' && this.ui.view === 'timeline') this.filter.focus();
     else if (key === 'a' && this.ui.view === 'timeline') this.ui.detail = this.ui.detail === 'key' ? 'all' : 'key';
     else if ((key === 'x' || key === 'backspace') && this.ui.view === 'timeline') { this.ui.scope = {}; store.setScope({}); store.refresh(cx,'log',true); }
@@ -117,6 +125,7 @@ export default class Coordinator extends View {
     if (index >= 0) this.selectionIndex = index;
   }
   render() {
+    if (!store.restartPending || store.status?.state !== 'running') this.confirmRestart = false;
     this.ui.now = Date.now(); this.ui.liveAgents = new Map(agents().map(a => [a.address,a.status]));
     this.reconcile();
     return div().id('coord-root').size_full().on_size_change((size,cx) => { if (this.width !== size.width) { this.width = size.width; cx.notify(); } }).child(this.details ? (this.ui.view === 'timeline' ? renderTimeline(this) : renderBoard(this)) : renderStatus(this));

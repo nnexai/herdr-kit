@@ -270,6 +270,23 @@ impl Core {
             } else {
                 None
             };
+            if let Action::Append {
+                kind: Kind::CoordSessionEnded { terminal, .. },
+                ..
+            } = &action
+            {
+                // Journal writes and hc events are independent streams. In
+                // particular our synchronous restart queues events while the
+                // journal already points at the replacement. Confirm loss
+                // against hc before turning a stale cache miss into history.
+                match ctx.hc.get(terminal)? {
+                    Some(term) => self.observe(term),
+                    None => {
+                        self.facts.terms.remove(terminal);
+                        self.facts.working_since.remove(terminal);
+                    }
+                }
+            }
             let mut lock = batch.lock()?;
             let fresh = rules::evaluate(lock.state(), &self.facts, cfg, ctx.now());
             let key = action_key(&action);
@@ -1162,6 +1179,107 @@ mod tests {
                 .iter()
                 .any(|e| e.kind == "coord.session_ended")
         );
+    }
+    #[test]
+    fn journal_restart_precedes_terminal_events_without_ending_live_replacement() {
+        // Both watcher-driven handoffs (user/R7) and external --force can publish
+        // the new session before this watcher consumes its buffered hc events.
+        for reason in ["user", "forced", "idle"] {
+            for cached in ["missing", "before_labels", "old_identity", "finished"] {
+                let root = tempfile::tempdir().unwrap();
+                let live: Term = serde_json::from_value(json!({
+                    "address":"c2","state":"live","status":null,"status_ms":0,
+                    "turn":0,"reported":false,
+                    "labels":{"coord.managed":"1","coord.role":"coordinator"},
+                    "pid":2,"created_ms":2,"cwd":"/tmp"
+                }))
+                .unwrap();
+                let hc = FakeHc::default();
+                hc.gets.borrow_mut().push_back(Ok(Some(live.clone())));
+                hc.gets.borrow_mut().push_back(Ok(None));
+                let ctx = ctx(root.path(), hc);
+                let j = ctx.journal().unwrap();
+                let started = |terminal: &str, pid, reason: &str| Kind::CoordSessionStarted {
+                    role: "coord-main".into(),
+                    model: None,
+                    terminal: terminal.into(),
+                    pid: Some(pid),
+                    created_ms: Some(pid as u64),
+                    space: "sp".into(),
+                    tab: Some("same-tab".into()),
+                    session: None,
+                    release: "development".into(),
+                    role_hash: String::new(),
+                    reason: reason.into(),
+                    brief: "/tmp/brief".into(),
+                };
+                j.lock()
+                    .unwrap()
+                    .append(
+                        &Actor::Cli,
+                        1,
+                        vec![
+                            (None, None, started("c1", 1, "up")),
+                            (
+                                None,
+                                None,
+                                Kind::CoordSessionEnded {
+                                    reason: reason.into(),
+                                    terminal: "c1".into(),
+                                },
+                            ),
+                            (None, None, started("c2", 2, reason)),
+                        ],
+                    )
+                    .unwrap();
+                let mut core = Core {
+                    facts: Facts::default(),
+                    release: "development".into(),
+                    started_ms: 0,
+                    loaded_seq: 0,
+                    pending: BTreeMap::new(),
+                    retry_after: BTreeMap::new(),
+                };
+                let mut stale = live.clone();
+                match cached {
+                    "before_labels" => stale.labels.clear(),
+                    "old_identity" => stale.pid = Some(1),
+                    "finished" => stale.state = "finished".into(),
+                    _ => {}
+                }
+                core.on_line(
+                    Line::Snapshot(if cached == "missing" {
+                        vec![]
+                    } else {
+                        vec![stale]
+                    }),
+                    ctx.hc.as_ref(),
+                )
+                .unwrap();
+                core.tick(&ctx, &j, &Config::default()).unwrap();
+                assert_eq!(
+                    j.read_state().unwrap().coordinator.terminal.as_deref(),
+                    Some("c2"),
+                    "{reason}/{cached}"
+                );
+                assert_eq!(j.read_after(3).unwrap().len(), 0);
+                assert_eq!(core.facts.terms["c2"].pid, Some(2));
+                // A later, genuinely missing replacement must still be detected.
+                core.on_line(
+                    Line::Event {
+                        terminal: "c2".into(),
+                        kind: "removed".into(),
+                    },
+                    ctx.hc.as_ref(),
+                )
+                .unwrap();
+                core.tick(&ctx, &j, &Config::default()).unwrap();
+                assert!(j.read_state().unwrap().coordinator.terminal.is_none());
+                assert!(
+                    matches!(j.read_after(3).unwrap().as_slice(), [e] if matches!(e.typed(), Kind::CoordSessionEnded { reason, terminal } if reason == "terminal_gone" && terminal == "c2"))
+                );
+            }
+        }
     }
     #[tokio::test]
     async fn watcher_lock_rejects_second_instance() {

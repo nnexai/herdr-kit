@@ -139,6 +139,18 @@ can change configuration or ratings and start or stop the coordinator. Delegates
 report and add notes to their own tasks. Anyone can read the board, log,
 explanations, inbox, roles and statistics. `coord --help` lists commands.
 
+In the Coordinator dialog, choose **Clear context** (or press `n` while the
+dialog list has focus) to request a fresh session when the coordinator is idle.
+While waiting, **Restart now** (or `n` again) offers a confirmation before
+interrupting a turn; press Enter to confirm or Esc to cancel.
+The prior session remains in the session history.
+
+The mod also receives a `restart` command through Herdr's key bindings. Because
+installed mod names include the release revision, use the current coordinator
+folder name in `keys.json`, for example:
+`"global": { "ctrl-alt-n": "herdr-kit-coord-<revision>.restart" }`.
+Update that binding when the installed revision changes.
+
 State lives under `<data-dir>/coord/`, including the append-only journal,
 configuration, roles and task files. Built-in roles can be overridden with
 files in `coord/roles/`; `coord roles` lists the effective roles. Autostart is

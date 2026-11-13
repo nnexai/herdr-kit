@@ -18,7 +18,7 @@ Contents: 1 Goal & users · 2 Evidence · 3 Flow · 4 Screens/components (4.1 st
 4. Why is a workstream still around (retained)?
 5. What happened, in order? (timeline, journal-backed)
 
-**The UI is a read-only window onto the journal** plus one action: start the coordinator (`coord up`). All other effects are Herdr app commands that move the person's view, run only on an explicit click or key.
+**The UI is a read-only window onto the journal**, except for starting the coordinator (`coord up`) and the person's explicit clear-context action (`coord restart`). A pending request offers confirmed `coord restart --force`, which can interrupt a turn. Other effects are Herdr app commands that move the person's view, run only on an explicit click or key.
 
 **Non-goals:** answering questions (the person answers in the coordinator's terminal), closing/releasing anything, editing roles or settings, backend design, layout-file or `manager.rs` edits (called out in 8 as dependent work).
 
@@ -416,14 +416,24 @@ Same dialog, same header and health line; `Timeline` tab selected. Body:
 
 ### 4.4 Data contract
 
-The mod calls exactly four commands. Every call is `exec(BINARY, [...dataDirArgs, 'coord', verb, ...], {timeout})` with `dataDirArgs = DATA_DIR ? ['--data-dir', DATA_DIR] : []` (same as the usage mod). `BINARY`, `DATA_DIR`, `MOD_NAME`, `RELEASE` come from a stamped `runtime.js`.
+The mod calls five commands. Every call is `exec(BINARY, [...dataDirArgs, 'coord', verb, ...], {timeout})` with `dataDirArgs = DATA_DIR ? ['--data-dir', DATA_DIR] : []` (same as the usage mod). `BINARY`, `DATA_DIR`, `MOD_NAME`, `RELEASE` come from a stamped `runtime.js`.
 
 | Command | When | Timeout | Notes |
 |---|---|---|---|
 | `coord status --json` | strip: at load, every 20 s, and on journal change; overlay: on open and every 10 s while open | 10 s | cheap, no model calls |
 | `coord up` | strip click in `not_running`/`degraded`, `Start`/`Repair` buttons, autostart once per load | 60 s | exit code only; stdout ignored |
+| `coord restart [--force]` | explicit Clear context; force only after confirmation while pending | 60 s | requested waits for idle; force interrupts |
 | `coord board --json` | overlay open, only while the Board view is shown | 15 s | |
 | `coord log --json [...]` | overlay open, only while the Timeline view is shown | 15 s | |
+
+Clear context stays in the dialog header, leaving the Board's selected-item dock
+unchanged. `n` requests a graceful restart while the list has focus; the strip's
+`restart` command opens the dialog and requests the same action. While pending,
+the header offers Restart now (also `n`), followed by an inline interruption
+warning with Restart now / Enter and Cancel / Esc. Closing the dialog dismisses
+confirmation, not the request. Pending state comes from journal-backed `coordinator.restart_pending`,
+so refresh/reload and CLI requests agree. Success requires a different, non-null
+terminal and healthy running status; absence/degradation never means success.
 
 Exit codes: `0` = JSON on stdout (always valid for the requested command, even when the coordinator is down). Anything else, a thrown `exec`, a timeout, or an unparsable/wrong-`schema_version` body is a *read failure* (the mod treats all four the same way). stdout is capped at 1 MiB by `exec`/`readTextFile` conventions; the decoder rejects larger text before parsing.
 
@@ -458,6 +468,7 @@ type Status = {
     space_id: string | null;             // "sp…"
     tab_id: string | null;
     session_started_ms: number | null;
+    restart_pending: boolean;           // journal handoff not yet replaced by a new session
   };
   counts: {
     running: number;                     // tasks in state running (not stalled), plus placed-and-starting
@@ -662,7 +673,7 @@ Watch **only `coord/journal/`**, never `coord/` (sessions' `.jsonl` files change
 **Failure handling.** On read failure: keep the last good snapshot, set `failed = true`, record `{at, firstLine}`. Three consecutive failures or a snapshot > 120 s old → the strip shows `unavailable`; the board keeps showing cached data under the stale banner. A later success clears the flag. No exponential logic is needed; the timers are already slow. A failing overlay read does not spam: one banner, no `notify`.
 
 **What the mod must never do**
-- Run anything except `herdr-kit [--data-dir X] coord status|up|board|log …`. In particular never `coord down`, `restart`, `task`, `ws`, `release`, `decide`, `ask`, `report`, `explain`, `inbox`; never `hc`, `herdr-app`, `git`, `sh`.
+- Run nothing except `herdr-kit [--data-dir X] coord status|up|restart|board|log …`; `restart --force` requires an explicit confirmation while a request is pending. Never `coord down`, `task`, `ws`, `release`, `decide`, `ask`, `report`, `explain`, `inbox`; never `hc`, `herdr-app`, `git`, `sh`.
 - Never send text to a terminal or answer a question; never `terminal.kill`, `space.close`, `tab.close`, or any command that closes or creates structure.
 - Never write files (`writeTextFile`, `fs.writeFile`) or settings; the only persisted mod state is the status snapshot in `shared`.
 - Never call `coord up` while `state === 'running'`, and never more than once per click or once per module load for autostart.

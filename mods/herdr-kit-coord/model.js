@@ -12,7 +12,7 @@ const parse = text => { if (typeof text !== 'string') return malformed(); let by
 const envelope = x => { if (x.schema_version !== 1) malformed(); return {schema_version:1, generated_at_ms:num(x.generated_at_ms)}; };
 const degraded = x => fields(x,{code:str,since_ms:nn,detail:ns});
 const watcher = x => fields(x,{running:bool,terminal:ns,heartbeat_ms:nn,release:ns});
-const coordinator = x => fields(x,{terminal:ns,status:ns,space_id:ns,tab_id:ns,session_started_ms:nn});
+const coordinator = x => ({...fields(x,{terminal:ns,status:ns,space_id:ns,tab_id:ns,session_started_ms:nn}), ...(x.restart_pending === undefined ? {} : {restart_pending:bool(x.restart_pending)})});
 const counts = x => fields(x,{running:num,needs_you:num,retained:num,open_workstreams:num});
 export function decodeStatus(text) { const x=parse(text); return {...envelope(x), ...fields(x,{release:str,state:str,enabled:bool,autostart:bool,degraded:x=>list(x,200,degraded),watcher,coordinator,counts,journal_dir:str,journal_seq:num})}; }
 const check = x => fields(x,{name:str,ok:bool,detail:ns});
