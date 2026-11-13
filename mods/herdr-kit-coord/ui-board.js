@@ -82,9 +82,9 @@ function boardRow(row, view, t) {
   if (row.age) line.child(div().text_color(t.muted).text_size(11).child(`${row.kind === 'workstream' || row.kind === 'retained' ? `${row.state?.word} · ` : ''}${row.age}`));
   wrap.child(line);
   if (row.kind === 'task' && row.role && view.width < 640) wrap.child(div().text_size(11).text_color(t.muted).tooltip([row.role,row.model,row.harness].filter(Boolean).join(' · ')).child(row.role));
-  if (row.meta) wrap.child(div().min_w(0).truncate().text_size(11).text_color(row.kind === 'retained' ? t.working : t.dim).tooltip(clip(row.tooltip || row.meta,600)).child(clip(oneLine(row.meta),240)));
+  if (row.meta) wrap.child(div().min_w(0).truncate().text_size(11).text_color(row.kind === 'attention' ? t.muted : row.kind === 'retained' ? t.working : t.dim).tooltip(clip(row.tooltip || row.meta,600)).child(clip(oneLine(row.kind === 'task' ? `${row.source.id} · rung ${row.source.rung}` : row.meta),240)));
   if (row.kind === 'retained' && row.checked) wrap.child(div().text_size(11).text_color(t.dim).child(`Last checked ${row.checked} ago`));
-  if (row.actions?.length) {
+  if (row.actions?.length && (selected || row.kind === 'attention')) {
     const actions = h_flex().gap(4).items_center();
     for (const action of row.actions) if (action.enabled !== false) actions.child(actionButton(`${row.key}-${action.id}`, action.label, t, cx => view.navigate(action.id,row,cx), action.primary));
     wrap.child(actions);

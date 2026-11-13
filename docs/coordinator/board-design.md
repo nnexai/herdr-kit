@@ -101,21 +101,21 @@ Primary paths:
 
 #### 4.1.1 Placement and size
 
-The strip is its own layout block, to the **right** of the existing usage block, in the 28 px status row. Required layout shape (to be applied by whoever owns the layout file; not done here):
+The strip is its own layout block, to the right of the usage block, in the 28 px status row:
 
 ```json
 { "id": "status", "type": "row", "size": { "px": 28 }, "resizable": false,
   "children": [
     { "id": "status-usage", "type": "block",
       "content": { "mod": "herdr-kit-usage", "props": { "view": "statusbar" } } },
-    { "id": "status-coord", "type": "block", "size": { "px": 280 }, "min": 96, "max": 360,
+    { "id": "status-coord", "type": "block", "size": { "px": 80 }, "min": 0, "max": 80,
       "content": { "mod": "herdr-kit-coord", "props": { "view": "statusbar" } } }
   ] }
 ```
 
-Result, left to right: usage block (flex: machine, branch, agent count, then its `Limits` readout right-aligned) then the coordinator block 280 px wide. The coordinator block draws the same chrome background and `border_t(1)` as the usage block, so the top rule is continuous. Sizes are zoom-1 px.
+Result, left to right: the usage block (machine, branch, agent count, then its right-aligned `Limits` readout), then the coordinator block. The coordinator owns its status lifecycle and commands; keeping it mounted preserves status refresh and autostart. The usage readout's 500 px breakpoint measures its own block, so with the 80 px coordinator sibling it switches at about 580 px of total row width. At very small widths it hides the extra-provider count if necessary.
 
-Inside the block: `h_flex().size_full().px(10).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)` containing one `Button.new('coord-readout')`: `h(26)`, `px(6)`, `rounded(3)`, `border(1)`, `min_w(0)`, `overflow_hidden`, `tab_index(0)`, `track_focus(handle)`, border `t.accent` when `handle.is_focused()` else `t.chrome`, `hover(s => s.bg(t.hover).text_color(t.foreground))`.
+Both blocks draw the same chrome background and top border. The coordinator button is right-aligned within its 80 px block, with a compact icon and text, a focus border, tooltip and accessible label.
 
 #### 4.1.2 States and exact text
 

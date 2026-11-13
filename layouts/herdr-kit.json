@@ -174,25 +174,17 @@
           "resizable": false,
           "children": [
             {
-              "id": "status-left",
+              "id": "status-usage",
               "type": "block",
-              "content": { "mod": "herdr-kit-usage", "props": { "view": "status-left" } }
+              "content": { "mod": "herdr-kit-usage", "props": { "view": "statusbar" } }
             },
             {
               "id": "status-coord",
               "type": "block",
-              "size": { "px": 120 },
+              "size": { "px": 80 },
               "min": 0,
-              "max": 120,
+              "max": 80,
               "content": { "mod": "herdr-kit-coord", "props": { "view": "statusbar" } }
-            },
-            {
-              "id": "status-usage",
-              "type": "block",
-              "size": { "px": 120 },
-              "min": 0,
-              "max": 120,
-              "content": { "mod": "herdr-kit-usage", "props": { "view": "statusbar" } }
             }
           ]
         }

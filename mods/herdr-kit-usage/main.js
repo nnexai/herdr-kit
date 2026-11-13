@@ -19,9 +19,7 @@ export default class Usage extends View {
   init(_p,cx) {
     const p = props() ?? {};
     this.details = p.view === 'details' || (!p.view && !!p.overlay);
-    this.leftOnly = p.view === 'status-left';
     this.handle = cx.focus_handle(); this.width = 1000; this.lastRead = 0; this.collectingSince = 0; this.lastWorking = working(); this.failed = false; this.closed = false;
-    if (this.leftOnly) { cx.timer.every(3000, cx => cx.notify()); return; }
     if (this.details) { this.scroll = ScrollHandle.new(); this.scrollFocus = cx.focus_handle(); this.scrollIndex = 0; }
     if (this.details) { if (p?.overlay) dialog = p.overlay; this.handle.focus(); }
     else strips++;
@@ -40,7 +38,7 @@ export default class Usage extends View {
     cx.timer.every(60000, cx => cx.notify());
     if (!this.details) cx.spawn(async cx => { while (!this.closed) { const cmd = await nextCommand(); if (this.closed) break; if (cmd === 'show') this.open(); else if (cmd === 'focus') this.handle.focus(); } });
   }
-  close() { this.closed = true; if (this.leftOnly) return; if (this.details) { if (dialog === props()?.overlay) dialog = null; } else strips = Math.max(0,strips-1); }
+  close() { this.closed = true; if (this.details) { if (dialog === props()?.overlay) dialog = null; } else strips = Math.max(0,strips-1); }
   open() { if (!dialog) dialog = openOverlay({mod:MOD_NAME,props:{view:'details'},kind:'dialog',width:560,height:480}); }
   read(cx) {
     if (inflight) return;
@@ -66,7 +64,7 @@ export default class Usage extends View {
     const selected = worst && (bestSegment(worst.segments,true) || bestSegment(worst.segments));
     const description = fullLabel(all,offline);
     const readout = Button.new('usage-readout').track_focus(this.handle).tab_index(0)
-      .flex_1().min_w(0).h(26).px(6).items_center().justify_start().overflow_hidden()
+      .w(Math.min(narrow ? 120 : 200, Math.max(0, this.width - 16))).flex_shrink_0().h(26).px(6).items_center().justify_end().overflow_hidden()
       .bg(t.chrome).rounded(3).border(1)
       .border_color(this.handle.is_focused() ? t.accent : t.chrome)
       .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -82,25 +80,23 @@ export default class Usage extends View {
         .child('Limits')
         .when(!narrow && Boolean(worst),el => el.child(div().text_color(t.muted).child(worst.name)))
         .child(div().text_color(selected?.used > .8 ? segmentColor(selected,t) : t.dim).child(amount))
-        .when(visible.length > 1,el => el.child(`+${visible.length-1}`)));
+        .when(visible.length > 1 && this.width >= 120,el => el.child(`+${visible.length-1}`)));
     }
     const space = spaces().find(s => s.active);
     const list = agents();
     const needs = list.filter(a => a.status === 'blocked').length;
-    const statusLabel = (icon,text) => h_flex().gap(6).items_center()
+    const statusLabel = (icon,text) => h_flex().min_w(0).gap(6).items_center()
       .child(svg(`mods/${MOD_NAME}/${icon}.svg`).size(13))
-      .child(div().min_w(0).truncate().child(text));
-    const left = h_flex().flex_1().min_w(0).gap(16).items_center().overflow_hidden()
-      .child(statusLabel(space?.machine ? 'server' : 'monitor',space?.machine ?? 'This computer'))
-      .when(Boolean(space?.branch),el => el.child(div().max_w(160).min_w(0).child(statusLabel('branch',space.branch))))
-      .child(h_flex().gap(6).items_center()
+      .child(div().flex_1().min_w(0).truncate().child(text));
+    const left = h_flex().flex_1().min_w(0).gap(8).items_center().overflow_hidden()
+      .child(statusLabel(space?.machine ? 'server' : 'monitor',space?.machine ?? 'This computer').flex_initial())
+      .when(Boolean(space?.branch),el => el.child(div().max_w(160).min_w(0).flex_initial().child(statusLabel('branch',space.branch))))
+      .child(h_flex().flex_shrink_0().gap(6).items_center()
         .child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
-        .when(needs > 0,el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))))
-      .child(div().flex_1());
-    const bar = h_flex().size_full().items_center().bg(t.chrome)
-      .border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted);
-    if (this.leftOnly) return bar.px(14).child(left);
-    return bar.px(4).child(readout);
+        .when(needs > 0,el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))));
+    return h_flex().size_full().px(8).gap(8).items_center().bg(t.chrome)
+      .border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
+      .child(left).child(readout);
   }
   detailLimit(l, account, p, offline, t, now) {
     const stale = offline || p.stale || p.error !== null || staleLimit(l,account.fetched_at_ms,now), used = usedFraction(l), estimate = pace(l,now,stale), r = reset(l.resets_at_ms,now), c = credits(l,true);

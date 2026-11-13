@@ -77,12 +77,11 @@ installation.
 ## Usage statusbar
 
 The named layout preserves the existing 28px Herdr statusbar. Machine, branch
-and agent indicators stay on the left. On the right, the coordinator status
-comes immediately before the compact Limits readout, keeping both controls
-together without adding another row. Click Limits to view all providers,
+and agent indicators stay on the left. On the right, the compact Limits
+readout sits beside the coordinator status. Click Limits to view all providers,
 windows, credits and estimates in the native details dialog. Escape/Close
-dismisses it. The compact readout omits the provider name; the command-palette
-shortcut still works.
+dismisses it. Narrow bars omit the provider name instead of shrinking the text;
+the command-palette shortcut still works.
 
 Rust runs `omp usage --json --redact --no-extensions`, then keeps only anonymous
 allowlisted quotas for Codex, Claude and Copilot. OMP owns authentication and

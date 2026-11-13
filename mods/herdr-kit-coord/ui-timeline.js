@@ -14,14 +14,15 @@ function timelineRow(row, view, t) {
   if (row.kind === 'day') return div().pt(8).text_size(11).font_semibold().text_color(t.muted).child(row.title);
   if (row.kind === 'more') return row.selectable ? actionButton('timeline-more', row.title || 'Load older entries (200)', t, cx => view.store.refresh(cx, 'log', true, {mode:'append'})) : div().text_color(t.dim).child(row.title);
   const selected = view.ui.selectedKey === row.key, expanded = view.ui.expanded.has(row.key);
-  const color = ({attention:t.blocked,warning:t.working,ok:t.done,neutral:t.foreground,quiet:t.dim})[row.tone] || t.foreground;
+  const question = row.source?.kind === 'question.asked' || (row.source?.kind === 'task.reported' && row.source?.data?.outcome === 'question');
+  const color = question ? t.working : ({attention:t.blocked,warning:t.working,ok:t.done,neutral:t.foreground,quiet:t.dim})[row.tone] || t.foreground;
   const line = h_flex().gap(6).items_center().min_w(0).h(24)
     .child(div().w(64).flex_shrink_0().text_color(t.dim).text_size(11).child(row.time || ''))
     .child(div().w(14).flex_shrink_0().text_color(color).child(row.glyph || '·'));
-  if (view.width >= 640) line.child(div().w(84).flex_shrink_0().truncate().text_color(t.muted).text_size(11).child(row.actorLabel || ''));
-  if (row.scopeId) line.child(actionButton(`scope-${row.key}`,row.scopeId,t,cx => scope(view,row.source?.task ? {task:row.source.task} : {ws:row.source?.ws},cx)));
+  if (view.width >= 640) line.child(div().w(120).flex_shrink_0().truncate().text_color(t.muted).text_size(11).tooltip(row.actorLabel || '').child(row.actorLabel || ''));
+  line.child(div().w(110).flex_shrink_0().child(row.scopeId ? actionButton(`scope-${row.key}`,row.scopeId,t,cx => scope(view,row.source?.task ? {task:row.source.task} : {ws:row.source?.ws},cx)) : div()));
   line.child(div().flex_1().min_w(0).truncate().text_color(color).tooltip(row.text || row.title || '').child(row.text || row.title || ''));
-  const wrap = v_flex().id(`timeline-row-${row.key}`).role('list_item').min_w(0).px(4).rounded(4).border(1).border_color(selected ? t.accent : t.popover)
+  const wrap = v_flex().id(`timeline-row-${row.key}`).role('list_item').min_w(0).px(4).rounded(4).border(1).border_color(t.popover)
     .bg(selected ? t.selected : t.popover).hover(s => s.bg(t.hover)).aria_selected(selected)
     .accessibility_label([row.time, row.actorLabel, row.scopeId, row.text].filter(Boolean).join(', '))
     .on_click((_e,cx) => view.select(row,cx)).child(line);
@@ -37,7 +38,7 @@ export function renderTimeline(view) {
   const controls = h_flex().gap(6).items_center();
   const id = view.ui.scope?.task || view.ui.scope?.ws;
   if (id) controls.child(actionButton('clear-scope',`Scope: ${id} ✕`,t,cx => scope(view,{},cx)));
-  controls.child(div().flex_1().min_w(0).child(Input.new(view.filter).tab_index(5)));
+  controls.child(div().flex_1().min_w(0).px(6).rounded(4).border(1).border_color(t.border).bg(t.input).child(Input.new(view.filter).tab_index(5)));
   controls.child(actionButton('timeline-detail',view.ui.detail === 'key' ? `Key events · ${vm.hiddenCount || 0} hidden` : 'Everything',t,cx => { view.ui.detail = view.ui.detail === 'key' ? 'all' : 'key'; cx.notify(); }));
   content.child(controls);
   if (vm.newerPill) content.child(h_flex().justify_center().child(actionButton('timeline-new',vm.newerPill,t,cx => view.acceptNew(cx),true)));
