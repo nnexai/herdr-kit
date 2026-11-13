@@ -26,9 +26,15 @@ mods remain full-revision named. Generated owned layouts are immutable,
 content-addressed deployment assets and are selected structurally. Runtime
 injection replaces only runtime.js, never protocol literals in arbitrary JS.
 
-New state adds `selection`, `previous_selection`, `package_releases`, `files` and
-`mod_owners`, with defaults for old receipts. The old `releases`, `managed_mods`,
-source/app-home/current/previous/maintenance fields remain readable. Per-package
+Canonical schema-1 package history lives at `R/package-state.json`: `selection`,
+`previous_selection`, `package_releases`, `files` and `mod_owners`. Root
+`state.json` retains the legacy source/app-home/current/previous/release/
+maintenance envelope, which retained old binaries may write without discarding
+new ownership metadata. A deployment snapshot is restored only when its
+current/previous revisions match that envelope; historical package ownership
+survives even if an old legacy updater advances its revision. Activation
+publishes canonical history before the legacy envelope under the existing
+journal, with crash-prefix coverage for both metadata writes. Per-package
 receipts bind executable hashes, complete mod trees, source layout hashes and
 the committed package definition. An `activated` receipt bit distinguishes
 retained published assets from incomplete, never-activated staging: missing
@@ -42,6 +48,12 @@ before publishing targets; readiness files are last. Old one-binary activation
 journals are still parsed and recovered. Rollback restores the entire previous
 selection, including reverse activation of retained legacy releases; it does not
 prune immutable generations or rewrite another layout's pins.
+
+Rejected root-state-only package metadata after an actual private old CLI
+`source` write silently discarded its unknown fields, causing the new manager
+to refuse a legitimate installed component with `missing legacy release receipt`.
+The separate canonical history fixes the ownership loss without command aliases,
+rewriting old binaries, or importing capability logic into a shared service.
 
 P1 still has one direct legacy executable. Components sharing it cannot activate
 mismatched generations: update that shared selected set together. This temporary

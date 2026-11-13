@@ -125,7 +125,7 @@ fn legacy_journal_recovery_then_component_upgrade_and_reverse_rollback() {
 
 #[test]
 fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
-    for prefix in 0..=7 {
+    for prefix in 0..=8 {
         let temp = tempfile::tempdir().unwrap();
         let lock = Locked::open(&temp.path().join("data")).unwrap();
         let home = temp.path().join("app");
@@ -195,6 +195,9 @@ fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
             assert!(!lock.data.join("kit-coord/active.json").exists());
         }
         if prefix == 7 {
+            state::store_history(&lock.data, &transaction.state).unwrap();
+        }
+        if prefix == 8 {
             lock.save(&transaction.state).unwrap();
         }
         lock.recover().unwrap();
@@ -411,4 +414,115 @@ fn legacy_release_is_never_augmented_during_component_migration() {
             .join("layout-source.json")
             .exists()
     );
+}
+
+#[test]
+fn legacy_state_writer_cannot_discard_package_ownership() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let rev = "a".repeat(40);
+    let mut next = empty_state(&temp.path().join("app"));
+    component_release(&lock, &mut next, &rev);
+    lock.activate(
+        lock.prepare(
+            &State::default(),
+            next,
+            selected(&["kit-coord"], &rev),
+            None,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    // An actual old writer only deserializes and republishes these legacy
+    // fields. The canonical package snapshot must survive that round trip.
+    let mut old_writer: State = read_json(&state_path(&lock.data)).unwrap().unwrap();
+    old_writer.next_check = 777;
+    state::store_legacy(&lock.data, &old_writer).unwrap();
+    let recovered = lock.state().unwrap();
+    lock.verify_active(&recovered).unwrap();
+    assert_eq!(recovered.next_check, 777);
+    assert_eq!(active_release(&lock.data).as_deref(), Some(rev.as_str()));
+    let next = lock
+        .activate(
+            lock.prepare(
+                &recovered,
+                recovered.clone(),
+                selected(&["kit-coord", "kit-manager"], &rev),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        next.selection,
+        selected(&["kit-coord", "kit-manager"], &rev)
+    );
+    assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), rev);
+}
+
+#[test]
+fn legacy_journal_advancement_retains_new_package_rollback_assets() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let home = temp.path().join("app");
+    let a = "a".repeat(40);
+    let b = "b".repeat(40);
+    let c = "c".repeat(40);
+    let mut first = empty_state(&home);
+    legacy_release(&lock, &mut first, &b);
+    first.current = Some(b.clone());
+    first.managed_mods.push(b.clone());
+    save(
+        &journal_path(&lock.data),
+        &Journal::Legacy(LegacyJournal {
+            state: first,
+            old_layout: None,
+            old_binary: None,
+        }),
+    )
+    .unwrap();
+    lock.recover().unwrap();
+    let first = lock.state().unwrap();
+    let mut next = first.clone();
+    component_release(&lock, &mut next, &a);
+    let next = lock
+        .activate(
+            lock.prepare(&first, next, selected(BUNDLE, &a), None)
+                .unwrap(),
+        )
+        .unwrap();
+    let back = lock
+        .activate(
+            lock.prepare(&next, next.clone(), BTreeMap::new(), Some(&b))
+                .unwrap(),
+        )
+        .unwrap();
+    let mut old_writer: State = read_json(&state_path(&lock.data)).unwrap().unwrap();
+    legacy_release(&lock, &mut old_writer, &c);
+    old_writer.previous = Some(b.clone());
+    old_writer.current = Some(c.clone());
+    old_writer.managed_mods.push(c.clone());
+    save(
+        &journal_path(&lock.data),
+        &Journal::Legacy(LegacyJournal {
+            state: old_writer,
+            old_layout: file_hash(&layout(&home)).unwrap(),
+            old_binary: file_hash(&bootstrap(&lock.data)).unwrap(),
+        }),
+    )
+    .unwrap();
+    lock.recover().unwrap();
+    let recovered = lock.state().unwrap();
+    lock.verify_active(&recovered).unwrap();
+    assert_eq!(recovered.current.as_deref(), Some(c.as_str()));
+    let restored = lock
+        .activate(
+            lock.prepare(&recovered, recovered.clone(), selected(BUNDLE, &a), None)
+                .unwrap(),
+        )
+        .unwrap();
+    lock.verify_active(&restored).unwrap();
+    assert_eq!(restored.selection, selected(BUNDLE, &a));
+    assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), a);
+    assert_eq!(back.previous_selection.unwrap(), selected(BUNDLE, &a));
 }

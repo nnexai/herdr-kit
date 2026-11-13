@@ -7,6 +7,9 @@
 - Add committed component/bundle manifests, explicit selected installs and
   full-revision pins, structural layout/runtime bindings, per-package receipts
   and complete-selection rollback without claiming external layouts.
+- Preserve package ownership in canonical `package-state.json` across retained
+  legacy writers, with fingerprint-bound deployment recovery and readiness-last
+  multi-file crash recovery; missing activated releases remain drift, not repair.
 - Recover old and multi-artifact activation journals, refuse drift/unowned
   collisions, and document person-owned source freeze and quiet main merge
   controls for the first workspace deployment.

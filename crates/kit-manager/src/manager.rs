@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod packages;
+mod state;
 use packages::*;
 
 const DAY: u64 = 86_400;

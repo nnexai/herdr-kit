@@ -34,10 +34,10 @@ impl Locked {
         Ok(this)
     }
     fn state(&self) -> Result<State> {
-        Ok(read_json(&state_path(&self.data))?.unwrap_or_default())
+        state::load(&self.data)
     }
     fn save(&self, state: &State) -> Result<()> {
-        save(&state_path(&self.data), state)
+        state::store(&self.data, state)
     }
     fn verify_legacy(&self, state: &State, rev: &str) -> Result<()> {
         let expected = state
@@ -282,7 +282,8 @@ impl Locked {
                 self.save(&transaction.state)?;
             }
             Journal::Legacy(journal) => {
-                let state = &journal.state;
+                let state = state::merge_history(&self.data, journal.state)?;
+                let state = &state;
                 let rev = state
                     .current
                     .as_ref()
@@ -764,16 +765,7 @@ fn result(state: &State, available: Option<&str>, status: &str) -> Value {
     json!({"state":status,"current_revision":state.current,"available_revision":available,"previous_revision":state.previous,"source":state.source,"targets":{"app_home":state.app_home},"next_check":state.next_check,"components":state.selection,"previous_components":state.previous_selection,"resolved_mods":mods})
 }
 pub fn active_release(data: &Path) -> Option<String> {
-    read_json::<State>(&state_path(data))
-        .ok()
-        .flatten()
-        .and_then(|state| {
-            if state.selection.is_empty() {
-                state.current
-            } else {
-                state.selection.get("kit-coord").cloned()
-            }
-        })
+    state::coordinator_revision(data)
 }
 pub fn stable_binary(data: &Path) -> PathBuf {
     bootstrap(data)
