@@ -322,7 +322,7 @@ The footer is simply `↑↓ select   Enter open   → details   Esc close`.
 - Uncached failure: “Can't read the board.”, first error line, Retry.
 - Cached failure: retain board, selection and dock under the stale-data banner.
 
-Empty-state text uses an 18 px title and constrained 360 px explanation.
+Empty-state text uses an 18 px title and a centred, constrained 360 px explanation.
 Only explicit detail/disclosure expansion changes row height.
 
 #### 4.2.5 Decision and evidence

@@ -171,7 +171,7 @@ export function renderBoard(view) {
       const state = v_flex().flex_1().gap(12).items_center().justify_center().text_color(t.muted);
       if (vm.empty.kind === 'error') state.role('alert');
       state.child(div().font_semibold().text_size(18).text_color(t.foreground).child(store.starting ? 'Starting coordinator…' : vm.empty.text));
-      if (vm.empty.detail) state.child(div().max_w(360).child(vm.empty.detail));
+      if (vm.empty.detail) state.child(div().max_w(360).text_center().child(vm.empty.detail));
       if (vm.empty.action && !store.starting) state.child(actionButton('board-empty-action',vm.empty.action,t,cx => {
         if (vm.empty.action === 'Start coordinator') view.start(cx);
         else if (vm.empty.action === 'Show coordinator') view.navigate('reply',{kind:'attention',source:{kind:'question'}},cx);
