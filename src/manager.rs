@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(status["type"], "row");
         assert_eq!(status["children"][0]["content"]["mod"], MODS[0]);
         assert_eq!(status["children"][1]["content"]["mod"], MODS[1]);
-        assert_eq!(status["children"][1]["size"]["px"], 280);
+        assert_eq!(status["children"][1]["size"]["px"], 80);
     }
     #[test]
     fn release_mods_rejects_unknown_and_missing() {

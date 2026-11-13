@@ -13,6 +13,8 @@
   and a stable selected-item action dock. Move technical metadata into Details,
   quiet healthy diagnostics, improve narrow layouts and show Start only once
   when the coordinator is off. Keep closed task titles readable.
+- Report an unauthorized coordinator post-activation hook as skipped rather
+  than as a failed activation hook, without changing coordinator permissions.
 
 ## 0.1.0
 

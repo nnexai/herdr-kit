@@ -735,6 +735,21 @@ pub fn status(ctx: &Ctx) -> Result<Value> {
         json!({"schema_version":1,"generated_at_ms":now,"release":active_release(&ctx.root),"state":status,"enabled":cfg.is_some(),"autostart":cfg.as_ref().is_some_and(|c|c.autostart),"degraded":degraded,"watcher":{"running":wr,"terminal":wt.as_ref().map(|t|&t.address),"heartbeat_ms":hb.as_ref().map(|h|h.beat_ms),"release":hb.as_ref().map(|h|&h.release)},"coordinator":{"terminal":state.coordinator.terminal,"status":word,"space_id":state.coordinator.space,"tab_id":state.coordinator.tab,"session_started_ms":state.coordinator.started_ms},"counts":counts,"journal_dir":ctx.paths.journal,"journal_seq":state.last_seq}),
     )
 }
+fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
+    let message = String::from_utf8_lossy(stderr).into_owned();
+    let forbidden = code == Some(3)
+        && serde_json::from_slice::<Value>(stderr)
+            .ok()
+            .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
+            .as_deref()
+            == Some("forbidden_caller");
+    if forbidden {
+        json!({"state":"skipped","reason":"forbidden_caller","message":message})
+    } else {
+        json!({"state":if message.contains("unrecognized subcommand") || message.contains("unexpected argument") {"unsupported"} else {"failed"},"message":message})
+    }
+}
+
 pub fn after_activation(root: &Path) -> Value {
     if !root.join("coord/config.json").exists() {
         return json!({"state":"disabled"});
@@ -753,10 +768,7 @@ pub fn after_activation(root: &Path) -> Value {
             if child.try_wait()?.is_some() {
                 let out = child.wait_with_output()?;
                 if !out.status.success() {
-                    let message = String::from_utf8_lossy(&out.stderr).into_owned();
-                    return Ok(
-                        json!({"state":if message.contains("unrecognized subcommand") || message.contains("unexpected argument") {"unsupported"} else {"failed"},"message":message}),
-                    );
+                    return Ok(activation_failure(out.status.code(), &out.stderr));
                 }
                 return Ok(serde_json::from_slice(&out.stdout)?);
             }
@@ -775,6 +787,19 @@ pub fn after_activation(root: &Path) -> Value {
 mod tests {
     use super::super::adapter::fake::{FakeApp, FakeHc};
     use super::*;
+
+    #[test]
+    fn activation_hook_distinguishes_refusal_from_failure() {
+        let refusal = br#"{"error":{"code":"forbidden_caller","message":"caller is not permitted to run this command"}}"#;
+        let skipped = activation_failure(Some(3), refusal);
+        assert_eq!(skipped["state"], "skipped");
+        assert_eq!(skipped["reason"], "forbidden_caller");
+        assert_eq!(activation_failure(Some(1), refusal)["state"], "failed");
+        assert_eq!(
+            activation_failure(Some(3), br#"{"error":{"code":"operation_failed","message":"failed"}}"#)["state"],
+            "failed"
+        );
+    }
 
     fn context(root: &Path) -> Ctx {
         Ctx {
