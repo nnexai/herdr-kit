@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn terminal_readiness_and_labels() {
         let mut t: Term = serde_json::from_str(include_str!(
-            "../../docs/coordinator/examples/captures/hc-get-agent.json"
+            "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
         ))
         .unwrap();
         t.state = "live".into();
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn snapshot_lookup_uses_nested_terminals() {
         let s: AppSnapshot = serde_json::from_str(include_str!(
-            "../../docs/coordinator/examples/captures/herdr-app-ls.json"
+            "../../../../docs/coordinator/examples/captures/herdr-app-ls.json"
         ))
         .unwrap();
         let (space, tab) = s.tab_of("t7").unwrap();

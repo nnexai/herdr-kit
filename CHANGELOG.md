@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Package the existing `herdr-kit` executable as workspace member `kit-manager`,
+  retaining direct legacy capability commands until their vertical cutovers.
+- Add committed component/bundle manifests, explicit selected installs and
+  full-revision pins, structural layout/runtime bindings, per-package receipts
+  and complete-selection rollback without claiming external layouts.
+- Recover old and multi-artifact activation journals, refuse drift/unowned
+  collisions, and document person-owned source freeze and quiet main merge
+  controls for the first workspace deployment.
+
 - Record approved modular-monorepo P0 contracts and disposable native baseline:
   populated Board/Timeline/Limits, missing-mod isolation, zero-space source
   carrier lifecycle/command behavior, and person-owned cutover prerequisites.

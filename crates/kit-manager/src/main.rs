@@ -32,6 +32,12 @@ enum Command {
         app_home: PathBuf,
         #[arg(long)]
         source: PathBuf,
+        /// Exact component set; omitted selects the herdr-kit bundle.
+        #[arg(long = "component", value_delimiter = ',')]
+        components: Vec<String>,
+        /// Full committed source revision; omitted uses trusted HEAD.
+        #[arg(long)]
+        revision: Option<String>,
     },
     /// Read or configure the trusted local Git update source.
     Source {
@@ -47,6 +53,9 @@ enum Command {
     Update {
         #[command(subcommand)]
         command: UpdateCommand,
+        /// Update only these already selected components.
+        #[arg(long = "component", global = true, value_delimiter = ',')]
+        components: Vec<String>,
     },
 }
 
@@ -101,18 +110,20 @@ async fn run(cli: Cli) -> Result<coord::Output> {
             serde_json::to_value(usage::snapshot(&root.join("usage"), agents_working, omp_executable.as_deref()).await?)
                 .context("usage response could not be encoded")
         }
-        Command::Install { app_home, source } => manager::install(&root, &app_home, &source),
+        Command::Install { app_home, source, components, revision } => manager::install(&root, &app_home, &source, &components, revision.as_deref()),
         Command::Source { repo } => manager::source(&root, repo.as_deref()),
         Command::Status { .. } => manager::status(&root),
-        Command::Update { command } => manager::update(&root, match command {
+        Command::Update { command, components } => manager::update(&root, match command {
             UpdateCommand::Check => "check",
             UpdateCommand::Apply => "apply",
             UpdateCommand::Maintain => "maintain",
             UpdateCommand::Rollback => "rollback",
-        }),
+        }, &components),
     }?;
-    if activation_command && value.get("activated").and_then(serde_json::Value::as_bool) == Some(true) {
+    if activation_command && value.get("coord_changed").and_then(serde_json::Value::as_bool) == Some(true) {
         value["coord"] = coord::lifecycle::after_activation(&root);
+    } else if activation_command && value.get("activated").and_then(serde_json::Value::as_bool) == Some(true) {
+        value["coord"] = serde_json::json!({"state":"skipped","reason":"coordinator_not_activated"});
     }
     Ok(coord::Output::Json(value))
 }

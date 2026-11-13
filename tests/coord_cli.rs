@@ -6,7 +6,7 @@ impl Harness {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let hc = tmp.path().join("hc"); let app = tmp.path().join("herdr-app");
-        for path in [&hc, &app] { fs::copy("tests/fake/cli.sh", path).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap(); }
+        for path in [&hc, &app] { fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fake/cli.sh"), path).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap(); }
         Self { tmp, hc, app }
     }
     fn root(&self) -> &Path { self.tmp.path() }

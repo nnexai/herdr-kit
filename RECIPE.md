@@ -1,7 +1,9 @@
 # Herdr Kit
 
 A native Herdr workbench with a compact bottom-right subscription readout and
-agent coordinator, backed by one extensible Rust command-line tool.
+agent coordinator. P1 packages the existing command in a Rust workspace with
+selected-artifact installation; independent capability cutovers follow the
+[approved monorepo plan](docs/coordinator/standalone-mod-plan.md).
 
 ![Herdr Kit](preview.png)
 
@@ -48,11 +50,12 @@ outcome and rating records support `coord stats --json`. See
 - `layouts/herdr-kit.json`: custom layout retaining built-in mod references.
 - `mods/herdr-kit-usage`: native GPUI View, pure JS model, deployment runtime.
 - `mods/herdr-kit-coord`: native coordinator status, board and timeline.
-- `src/coord/`: coordinator commands, journal, lifecycle and watcher.
-- `src/usage*`: OMP adapter, private anonymous cache and scheduling.
-- `src/manager.rs`: registered Git source, immutable release builds, hash
-  receipts, activation journal and rollback.
-- `herdr.exec`: explicit argv to the pinned release's single Rust executable.
+- `crates/kit-manager/src/coord/`: direct legacy coordinator engine during P1.
+- `crates/kit-manager/src/usage*`: direct legacy OMP adapter/cache during P1.
+- `crates/kit-manager/src/manager/`: selected committed-source builds, receipts,
+  recoverable owned-artifact activation and complete-selection rollback.
+- `kit-packages.json`: package ownership, mod/runtime bindings and default bundle.
+- `herdr.exec`: explicit argv to the pinned release executable.
 - `herdr.openOverlay`, `props`, `theme`, `shared`, `nextCommand`: native UI.
 
 ## Watch out

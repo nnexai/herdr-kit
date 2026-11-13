@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "packages": {
+    "kit-manager": {
+      "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
+      "mods": []
+    },
+    "kit-coord": {
+      "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
+      "mods": ["herdr-kit-coord"]
+    },
+    "kit-usage": {
+      "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
+      "mods": ["herdr-kit-usage"]
+    },
+    "herdr-kit": {
+      "mods": [],
+      "layout": "layouts/herdr-kit.json"
+    }
+  },
+  "bundles": {
+    "herdr-kit": ["kit-manager", "kit-coord", "kit-usage", "herdr-kit"]
+  }
+}

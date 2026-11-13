@@ -1,9 +1,11 @@
 # herdr-kit
 
-One local Rust tool with native JavaScript mods and a personal layout for
-[Herdr](https://herdr.dev). Usage/limits and agent coordination are capabilities;
-installation and repository-based self/suite updates are included. This is not a Herdr fork,
-a browser frontend, or a collection of backend executables.
+A local Rust workspace with native JavaScript mods and a personal layout for
+[Herdr](https://herdr.dev). The approved modular extraction separates coordinator,
+usage and optional installation/update ownership without a mandatory kit-core.
+At P1, `kit-manager` still builds the single `herdr-kit` binary with its direct
+legacy capability commands; their clean vertical cutovers follow separately.
+This is not a Herdr fork or browser frontend.
 
 ![Herdr kit usage](preview.png)
 
@@ -78,6 +80,42 @@ shipped Herdr files, `keys.json`, settings, programs, shared/view state and
 layout click state are not owned by the updater. One app home is registered
 per data directory; use an explicit separate data directory for an independent
 installation.
+
+### Selected component installation (P1)
+
+`kit-packages.json` declares artifact ownership and the default `herdr-kit`
+bundle. Omit `--component` to install the existing complete suite. An exact
+component selection installs only its declared binary/mod assets and never
+claims another layout:
+
+```sh
+cargo build --locked --release -p kit-manager
+./target/release/herdr-kit --data-dir /absolute/private-root install \
+  --source "$PWD" --app-home /absolute/consumer-app-home \
+  --component kit-coord --revision <full-commit>
+```
+
+The JSON response returns `components` and `resolved_mods`; the external layout
+owner chooses when to reference that exact generation. `kit-coord`, `kit-usage`,
+`kit-manager` and layout assets (`herdr-kit`) are separately selected. In this
+transitional P1 release, capability selections still supply the **direct legacy**
+`herdr-kit` executable and retain their existing mod bases. This is packaging
+independence, not the final standalone `kit-coord`/`kit-usage` acceptance proof.
+
+`update apply --component NAME` limits changes to an already selected package;
+omitting it updates the owned selection. While multiple P1 components share the
+legacy binary, incompatible revision combinations refuse activation: update
+that shared set together until its vertical extraction. Rollback always restores
+the complete previous selection. Retained immutable mods are not deleted.
+Runtime injection and layout reference selection are structural; JS protocol
+keys are never globally renamed. Owned file/mod drift and even identical unowned
+collisions refuse replacement. No install switches layouts or starts an agent
+unless the selected coordinator's existing enabled activation policy applies.
+
+The first incompatible workspace deployment requires a person-owned source
+freeze and the verified new manager. See the
+[P1 release runbook](docs/coordinator/monorepo-p1.md); do not let the old installed
+builder consume the new source format.
 
 ## Usage statusbar
 
@@ -175,18 +213,22 @@ and safety rules.
 
 ## Structure and extension boundary
 
-- `src/main.rs`: one CLI, shared by people, agents and mods.
-- `src/usage*`: source adapter, anonymous protocol, scheduling and cache.
-- `src/manager.rs`: source registration, release builds, deployment and updates.
+- `Cargo.toml`: workspace, shared dependency versions and lockfile; no kit-core.
+- `kit-packages.json`: explicit packages, binary/mod/layout ownership and bundle.
+- `crates/kit-manager/src/main.rs`: existing CLI until capability cutovers.
+- `crates/kit-manager/src/coord/`: direct legacy coordinator implementation (P1).
+- `crates/kit-manager/src/usage*`: direct legacy usage implementation (P1).
+- `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
 - `mods/herdr-kit-usage/`: native GPUI presentation and pure view model.
 - `layouts/herdr-kit.json`: managed personal layout, built-in mods reused.
 
-Future Git, issue and local task-tracker capabilities belong behind additional
-subcommands/modules in the same tool, not separate helpers or placeholder
-commands. Future secure-store adapters must keep credentials in Rust and the
-OS keychain, use them internally or through a child tool's supported input,
-and never return them to JS/JSON or put them in argv/logs. This is an exposure
-policy, not a same-user process sandbox. No secret-store commands ship today.
+Independent capabilities belong in their own vertical packages, not behind an
+accidental usage or updater dependency. Shared third-party versions and the
+small compatible data-path policy do not justify a core service. Future
+secure-store adapters must keep credentials in Rust and the OS keychain, use
+them internally or through a child tool's supported input, and never return
+them to JS/JSON or put them in argv/logs. This is an exposure policy, not a
+same-user process sandbox. No secret-store commands ship today.
 
 ## Verification and provenance
 

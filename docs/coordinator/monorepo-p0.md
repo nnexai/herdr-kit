@@ -1,6 +1,7 @@
 # Modular monorepo P0: contract lock and native baseline
 
-Status: P0 complete on `coord/monorepo`; phase merge/deployment approval pending.
+Status: P0 accepted as a phase result and retained on `coord/monorepo`, without
+merge/deployment. P1 branch development is authorized; freeze is a P1 merge gate.
 The person approved execution of [the extraction plan](standalone-mod-plan.md).
 This record does not authorize a live cutover or later-phase rollout.
 Baseline code: `dba532eee69613c79576211b043806b9a7181e9d`.

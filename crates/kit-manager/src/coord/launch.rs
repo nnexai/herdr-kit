@@ -236,7 +236,7 @@ mod tests {
         fn run(&self, spec: &RunSpec) -> Result<Term> {
             self.0.borrow_mut().push(spec.clone());
             let mut t: Term = serde_json::from_str(include_str!(
-                "../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
             ))?;
             t.address = "t-test".into();
             Ok(t)
@@ -346,7 +346,7 @@ mod tests {
             fs::write(&exe, "#!/bin/sh\nenv > \"$HERDR_KIT_TEST_ENV_DUMP\"\ncat \"$HERDR_KIT_TEST_TERM_FIXTURE\"\n").unwrap();
             fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
             let mut term: serde_json::Value = serde_json::from_str(include_str!(
-                "../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
             ))
             .unwrap();
             term["address"] = json!("t-test");
