@@ -45,17 +45,33 @@ the person.
 
 ## Roles
 
-Pick a role by how open the problem is, never a model:
+Choose a role by the task's discipline first, then by how open the problem
+is. Respect the person's requested omp model role or explicit model:
 
-- `coord-light`: mechanical, fully specified tasks.
-- `coord-default`: clear goal, known approach.
-- `coord-deep`: open design, unclear cause, high cost of error.
+- `coord-design`: UI/UX, interaction, layout and visual design; starts omp
+  with `--model @design`, using the person's configured omp design model.
+  Use it for design work even when the design problem is open-ended.
+- `coord-light`: mechanical, fully specified tasks (`@smol`).
+- `coord-default`: clear goal, known approach (`@task`).
+- `coord-deep`: open technical design, unclear cause, high cost of error
+  (`@slow`); this is not a substitute for the omp design role.
 
-`kit coord roles` lists every role, including other harnesses
-(`codex-default`, `claude-default`, `copilot-default`); use those only when
-the person asks for that harness. A resumed session keeps its model, so after
-`blocked` or failed acceptance escalate with a new task on a stronger role in
-the same space and give it the previous result path in the brief.
+Use `--role coord-design` on `kit coord task start` for UI/design work.
+`kit coord roles` lists effective roles and their model selectors;
+`kit coord roles <name>` shows the start and resume commands. For another
+omp role (`@research`, for example) or an explicit model, use a matching
+user-defined role in `<data-dir>/coord/roles/`; inspect its start command
+instead of guessing from its name. Do not silently substitute another model.
+
+Other harness roles (`codex-default`, `claude-default`, `copilot-default`)
+are listed too; use them only when the person asks for that harness. Omp
+`@role` selectors are not portable to those harnesses.
+
+A resumed session keeps its model; `--session-of` cannot switch roles.
+After `blocked` or failed acceptance, escalate with a new task/session on
+the appropriate role in the same space, not by resuming to change models.
+Link it with `--follows <task> --relation escalation` and give it the previous
+result path in the brief.
 
 ## Briefs
 

@@ -126,10 +126,13 @@ current summary per workstream, so most follow-ups resolve without a scout.
 
 ### Roles and models
 
-The coordinator picks a **role**, never a model. A role is a file in
-`<data-dir>/coord/roles/<name>.md`: front matter with the harness, the start
-command and the resume command, each with placeholders (`{session_dir}`,
-`{session_id}`, `{brief}`), and a body with standing instructions.
+The coordinator picks a **role** that combines standing instructions with a
+harness and model selector. Match the task's discipline first, then its
+openness; honor the person's requested OMP role or explicit model rather
+than treating `@slow` as the design model. A role file in
+`<data-dir>/coord/roles/<name>.md` contains front matter with the harness,
+start and resume commands, placeholders (`{session_dir}`, `{session_id}`,
+`{brief}`), and a body with standing instructions.
 
 hc's own templates were tested and are not used: their command is fixed text,
 so a per-task session folder cannot be passed, and they always add the
@@ -139,16 +142,80 @@ Defaults are built into herdr-kit. A file of the same name in `roles/`
 overrides the built-in one and is never written by updates; `coord roles
 --defaults` prints the current built-ins for comparison.
 
-| Role | Used for |
-|---|---|
-| `coord-main` | The coordinator |
-| `coord-light` | Mechanical, fully specified tasks |
-| `coord-default` | Clear goal, known approach |
-| `coord-deep` | Open design, unclear cause, high cost of error |
+| Role | OMP model selector | Used for |
+|---|---|---|
+| `coord-main` | `@plan` | The coordinator |
+| `coord-light` | `@smol` | Mechanical, fully specified tasks |
+| `coord-default` | `@task` | Clear goal, known approach |
+| `coord-deep` | `@slow` | Open technical design, unclear cause, high cost of error |
+| `coord-design` | `@design` | UI/UX, interaction, layout and visual design, including open-ended work |
 
-Choice is by how open the problem is. A resumed session keeps its model, so
-escalation after `blocked` or failed acceptance is a new session on a stronger
-role in the same space, given the previous result path.
+For design work, pass `--role coord-design` to `coord task start` with the
+usual workstream, brief and placement arguments. OMP resolves `@design` from
+its own model-role configuration at session start; herdr-kit neither reads
+nor changes that configuration and does not pin a provider model. Changing
+the person's OMP design model therefore applies to future design sessions.
+This selects the model role, not an OMP bundled subagent.
+
+`coord roles` lists effective harnesses, model selectors, sources and whether
+a file overrides a built-in. `coord roles coord-design` prints the effective
+role, including its start and resume commands, without launching a delegate.
+`coord roles --defaults coord-design` prints the shipped version instead.
+
+#### Custom OMP roles and explicit models
+
+For another OMP model role, create a new named Markdown file, for example
+`<data-dir>/coord/roles/coord-research.md`:
+
+```md
+---
+harness: omp
+start: omp --model @research --session-dir {session_dir} {brief}
+resume: omp --session-dir {session_dir} --resume {session_id} {brief}
+session: dir
+---
+Research the brief's question. Separate observed evidence from inference,
+compare alternatives and put findings and sources in the named results file.
+```
+
+The person must have that model role configured in OMP. Select it with
+`--role coord-research`. For a specific model, use a descriptive new role
+name and replace `@research` in `start` with an OMP model selector such as
+`anthropic/claude-sonnet-5-5:medium`. Keep `resume` free of `--model` so OMP
+restores the session's model. Copy the relevant delegate instructions as the
+body, adapting them to the work; the reporting contract is added by the CLI.
+Alternatively, a same-name `coord-design.md` overrides that built-in while
+remaining untouched by updates. These are trusted command templates, not
+shell scripts: arguments are split and placeholders expanded without shell
+evaluation. Model selectors must use separate `--model VALUE` arguments for
+the roles list and journal to recognize them.
+
+There is no separate `task start --model` override: role files are the single
+source of the launch command, standing instructions and role hash. This
+keeps a model preference reusable rather than requiring it on every task.
+
+OMP `@role` references are OMP-specific; they are not passed to codex,
+Claude Code or Copilot. Existing non-OMP roles are unchanged. If the person
+requests another harness, a custom role must use that harness's native
+model argument, session mode and resume syntax (see the harness table below).
+
+#### Resume, escalation and measurements
+
+A resumed session keeps its model: `--session-of <task>` requires the same
+role and uses its resume command, without `--model` in the shipped roles.
+Do not use resume or edit a role file to switch an existing session's model.
+Escalation after `blocked` or failed acceptance starts a new session on the
+appropriate role in the same space, with `--follows <task> --relation
+escalation` and the previous result path in the brief.
+
+`task.placed` records the role name, content hash, harness and the model
+selector from the command (`@design`, not the provider model OMP resolves).
+On a cold resume the command has no model flag, so that event's model field
+is absent; follow `session_of` to the original placement. `coord stats --json`
+groups by role and role hash (also rung and release), not by resolved model.
+Distinct named roles keep choices visible, but changing OMP's `@design`
+mapping does not change the role hash or provide per-provider-model statistics.
+Use the harness's own session/usage records for that distinction.
 
 ### Harness contract
 

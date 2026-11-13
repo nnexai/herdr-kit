@@ -152,10 +152,19 @@ folder name in `keys.json`, for example:
 Update that binding when the installed revision changes.
 
 State lives under `<data-dir>/coord/`, including the append-only journal,
-configuration, roles and task files. Built-in roles can be overridden with
-files in `coord/roles/`; `coord roles` lists the effective roles. Autostart is
-controlled by coordinator configuration. The watcher is a `coord watch`
-subcommand running in an hc terminal, not a hidden service.
+configuration, roles and task files. Use `--role coord-design` on
+`coord task start` for UI/UX and visual design: it starts `omp --model @design`,
+so OMP resolves the person's configured design model without naming a model
+for every task. `coord-deep` uses `@slow` for open technical problems, not the
+design model role.
+
+`coord roles` lists effective roles and model selectors; `coord roles
+coord-design` shows its commands without launching anything. Built-in roles
+can be overridden with files in `coord/roles/`, or new named roles can select
+any OMP `@role` or explicit model. See [roles and models](docs/coordinator-spec.md#roles-and-models)
+for a complete role-file example, resume rules and statistics limitations.
+Autostart is controlled by coordinator configuration. The watcher is a
+`coord watch` subcommand running in an hc terminal, not a hidden service.
 
 The coordinator never closes spaces created by the person, never types into
 startup dialogs, and does not reopen a coordinator tab the person closed.

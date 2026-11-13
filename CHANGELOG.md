@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add `coord-design`, selecting the person's OMP `@design` model role for
+  UI/UX and visual design. Route design work there instead of `coord-deep`,
+  and document custom role/model selection, resume, escalation and statistics.
 - Add coordinator workstreams, task delegation, a visible watcher and native
   status, board and timeline views, with journal-based insights and statistics.
 - Integrate usage into the existing 28px statusbar, replacing the bottom-right

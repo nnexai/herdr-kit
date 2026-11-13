@@ -34,11 +34,12 @@ pub struct Vars<'a> {
     pub cwd: &'a Path,
 }
 
-pub const BUILTIN: [(&str, &str); 7] = [
+pub const BUILTIN: [(&str, &str); 8] = [
     ("coord-main", include_str!("roles/coord-main.md")),
     ("coord-light", include_str!("roles/coord-light.md")),
     ("coord-default", include_str!("roles/coord-default.md")),
     ("coord-deep", include_str!("roles/coord-deep.md")),
+    ("coord-design", include_str!("roles/coord-design.md")),
     ("codex-default", include_str!("roles/codex-default.md")),
     ("claude-default", include_str!("roles/claude-default.md")),
     ("copilot-default", include_str!("roles/copilot-default.md")),
