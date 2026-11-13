@@ -7,7 +7,7 @@ import { RailStore } from './store.js';
 import { renderRail } from './render.js';
 import { systemReducedMotion } from './motion.js';
 
-const MOTION_KEY = 'kit-coord-ui.reduced-motion';
+const MOTION_KEY = 'herdr-kit.coord-ui.reduced-motion';
 let dialog = null;
 export default class MissionLog extends View {
   init(_props,cx) {

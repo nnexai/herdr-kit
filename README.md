@@ -210,7 +210,8 @@ come from the coordinator's actual hc turn, and the step is its latest tool
 operation—not a simulated sequence. Send stays disabled during a turn.
 The narrow working placeholder is deliberately short. Reduce motion in the
 menu disables the orbit, shimmer and question pulse; the OS animation
-preference is read once when the view opens when no override is set.
+preference is read once when the view opens when no override is set. The
+motion override is kept across revision-named suite updates.
 
 ```sh
 herdr-kit coord conversation --json

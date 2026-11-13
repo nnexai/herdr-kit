@@ -21,7 +21,8 @@
 - Add the standalone `kit-coord-ui` Rail / Mission Log: a native coordinator
   conversation with truthful turn state, elapsed time, question draft pills,
   existing lifecycle/focus actions and reduced motion. Keep Board/Timeline
-  and the raw terminal available; fix the narrow working placeholder.
+  and the raw terminal available; fix the narrow working placeholder and
+  preserve the motion preference across revision-named installs.
 - Add person-only `coord say` and branch-aware `coord conversation` using
   the recorded OMP session, with exact-text delivery and explicit source states.
 
