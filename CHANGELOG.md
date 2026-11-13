@@ -9,6 +9,11 @@
 - Place compact Limits and coordinator controls together on the right, with
   machine and agent indicators on the left.
 - Refine coordinator board metadata, action visibility and timeline readability.
+- Redesign the Coordinator Board around grouped workstreams, title-led task rows
+  and a stable selected-item action dock. Move technical metadata into Details,
+  quiet healthy diagnostics, improve narrow layouts and show Start only once
+  when the coordinator is off. Keep closed task titles readable and centre
+  empty-state explanations with their title and action.
 - Report an unauthorized coordinator post-activation hook as skipped rather
   than as a failed activation hook, without changing coordinator permissions.
 

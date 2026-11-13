@@ -1,6 +1,6 @@
 # Coordinator board: UI design
 
-Status: design for the first version. Authoritative inputs: `docs/coordinator-spec.md` (sections 6 "Autostart and the status icon", 9 "What the person sees", 12 "Details fixed for the first version"). Decision from the user: the UI is a **new, separate mod `mods/herdr-kit-coord/`**; it shares no code files with `mods/herdr-kit-usage/` and may copy its patterns.
+Status: implemented design, with the Board redesign below replacing the original card/column proposal. Authoritative inputs: `docs/coordinator-spec.md` (sections 6 "Autostart and the status icon", 9 "What the person sees", 12 "Details fixed for the first version"). The UI is a **separate mod `mods/herdr-kit-coord/`**, sharing no files with `mods/herdr-kit-usage/`.
 
 Nothing here was run against the live window. Mockups use illustrative hex colours; the real mod reads `theme()`.
 
@@ -206,152 +206,139 @@ Stale means the last good snapshot's `generated_at_ms` is older than 90 s while 
 
 #### 4.2.1 Container
 
-`openOverlay({mod: MOD_NAME, props: {view:'board', tab:'board'}, kind:'dialog', width: 760, height: 600})`. Root `v_flex` with `role('dialog')`, `accessibility_label('Coordinator')`, `bg(t.popover)`, `text_color(t.foreground)`, `text_size(13)`, `p(14)`, `gap(8)`, like `usage-details`. One board at a time (module-level `dialog` guard).
+`openOverlay({mod: MOD_NAME, props: {view:'board', tab:'board'}, kind:'dialog', width: 760, height: 600})`. Board root: `role('dialog')`, `accessibility_label('Coordinator')`, `bg(t.popover)`, `text_color(t.foreground)`, 13 px text, 18 px padding, 12 px gaps. One board at a time (module-level `dialog` guard).
 
-If the host gives less room (`on_size_change` width < 640), the VM switches to `narrow` row layout (4.2.5). `[INFERENCE]` the host clamps an overlay larger than the window; the mod does not depend on it.
+Below 640 logical px the header becomes two rows. The scrollable board and action dock retain the same single-column structure at every width.
 
 Dialog (not `window`) because it is modal, `Esc` closes it without mod code, and the usage dialog sets that precedent; see Option B in 7.
 
-#### 4.2.2 Structure, top to bottom
+#### 4.2.2 Structure and hierarchy
 
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ Coordinator  [Board][Timeline]          ● Running  [Show coordinator] [Close] │  header 28px
-│ Watcher alive · heartbeat 4s ago · release a1b2c3d · coordinator working · updated 14:07:41 │  health line (t.muted, 11.8)
-├───────────────────────────────────────────────────────────────────────────┤
-│ (banner, optional: degraded / stale / error)                                  │
-│ NEEDS YOU · 2                                                                 │
-│ WORKSTREAMS · 2                                                               │
-│ RETAINED · 1                                                                  │
-│ footer: key hints (t.dim, 11)                                                 │
-└───────────────────────────────────────────────────────────────────────────┘
-```
-Everything between header and footer is one scroll area (`overflow_y_scrollbar`, `ScrollHandle`), which is also the keyboard focus target. Section headings are not selectable. Heading style: 11 px, `font_semibold`, `t.muted`, uppercase, then ` · {count}`.
+The Board is a title-led list of **continuous workstream groups**, not a collection
+of selected cards and loose child rows. Needs-you items precede workstreams;
+retained workstreams follow them. Section labels are sentence case with a quiet
+count. Workstream headers and their tasks share `t.raised`; selected rows use
+`t.selected` plus a persistent-width 2 px accent gutter. A group has 6 px outer
+corners, no heavy outline. There is 8 px separation between workstreams.
 
-**Header.**
-- Title `Coordinator` (`font_semibold`, 15).
-- View switch: two `Button`s `Board` / `Timeline` in a `role('tab_list')` container, each `role('tab')`, `.selected(view===x)`, `aria_selected`, selected one `bg(t.selected)`. (Not the `Tab`/`Tabs` components: `Tab` hears no keys.)
-- State chip (right): 6 px dot + word, same colour roles as the strip: `Running` (`t.accent`), `Not running` (`t.dim`), `Degraded` (`t.working`), `Starting…` (`t.dim`).
-- Buttons: `Start coordinator` when not running (runs `coord up`), `Repair` when degraded (runs `coord up`), `Show coordinator` when `coordinator.terminal` is known (runs `agent.focus`); `Close` (`closeOverlay(props().overlay)`). Primary style (`solid`/`solid_foreground`) only for `Start coordinator`/`Repair`.
+Each heading and row remains a **direct scroll child**, so `scroll_to_item`
+indices still match the keyboard's flat `boardModel.rows`. Details are children
+of their row, never extra scroll items. Do not introduce nested scrolling groups.
 
-**Health line** (one line, `t.muted`, truncate with ellipsis, full text in `.tooltip`): `Watcher {alive|not running|stalled} · heartbeat {age} ago · release {first 7 of watcher.release} · coordinator {working|idle|blocked|done|missing} · updated {HH:MM:SS}`. Missing parts are dropped (`watcher.heartbeat_ms` null: no heartbeat clause). Watcher word and any problem clause use `t.working`; `blocked` coordinator uses `t.blocked`. Heartbeat age text is `span()`-style (`4s`, `3m 20s`, `2h 5m`).
+**Header:** Coordinator, Board/Timeline tabs, state, Show coordinator, Close.
+Below 640 px the title/tabs/Close occupy the first row and status/actions the
+second. Healthy Board diagnostics are available in the state chip's tooltip and
+accessibility label, rather than a permanent line. The full watcher heartbeat,
+release, coordinator status and update time remain available there. Timeline
+keeps its existing health line and layout.
 
-**Banner** (optional, a bordered row above the sections, `t.raised` bg, 1 px `t.border`, `role('alert')` for errors):
-- degraded: `Degraded: watcher heartbeat stale for 3m 20s. Tasks keep running; nudges and reconcile are paused.` + `Repair` button. Text comes from `status.degraded[]`; wording above is the only mod-authored part (second sentence only for `watcher_*` reasons).
-- stale data: `Showing data from 14:02 — refresh failed: <first stderr line>.` + `Retry`.
-- journal unwatched: not shown; timer fallback is silent.
+**One owner per action:** when an empty state or banner already provides Start,
+Repair or Show coordinator, the header omits the same action. The empty off
+state therefore contains exactly one Start coordinator button. While starting,
+body copy says “Starting coordinator…” and start actions are hidden. Data is
+never cleared just because the coordinator is off.
 
-**Section: Needs you** (shown only when `attention.length > 0`).
-One row per `attention` item, oldest first (longest wait on top). Row (min height 52):
-```
- ? Should the fix also bump the lockfile, or leave it alone?                  12m
-   Fix login flow · ws-k3m2ab-t1 · asked by coordinator        [Reply in coordinator] [Log]
-```
-- Line 1: kind glyph (`?` question, `!` blocked/start_blocked/stalled; `t.blocked`), text (`attention.text`, `truncate()`; full text in tooltip and in details), age right-aligned (`t.muted`).
-- Line 2 (`t.dim`, 11): `{workstream title} · {task id} · {origin}`; origin by kind: `question` → `asked by coordinator`; `task_question` → `asked by delegate`; `task_blocked` → `delegate blocked`; `start_blocked` → `did not start after {n}s (start-up dialog?)`; `stalled` → `no report {age} after nudge`; `coordinator_blocked` → `coordinator is blocked`.
-- Actions: `question`, `task_question`, `coordinator_blocked`: **Reply in coordinator** (`agent.focus {terminal: coordinator.terminal}`; hidden if terminal unknown) and **Log**. `task_blocked`, `start_blocked`, `stalled`: **Show** (`agent.focus` to the task terminal; a start-blocked task is typically sitting in a dialog the person must answer themselves, the system never does) and **Peek**, **Log**.
-- Details (Right/Space): the full `text` (clipped to 600 chars), `options[]` if present as a bulleted list, `ws`/`task` ids, since-time.
+**Banners:** errors, stale reads and degraded state remain visible, with Retry,
+Repair or Start coordinator as appropriate. An in-flight start does not expose
+a second start action. Watcher problems still explain that tasks keep running
+while nudges and reconcile are paused. No new execution commands are introduced.
 
-**Section: Workstreams** (open workstreams; and `closed` non-retained, non-cleaned ones as `closing`).
-Ordering: workstreams with attention first, then `last_event_ms` descending. Row types:
+**Needs you:** question or warning glyph, wrapping question text, then its
+workstream context and origin; age is secondary. Full text, options, ids and
+since-time are available in Details. Unknown attention kinds remain represented.
+Selecting an item exposes its existing actions in the dock, not in an inline
+button row. This trades one-click inline actions for a stable board.
 
-1. Workstream row (selectable, 28 px): chevron `▾`/`▸`, title (`font_semibold`, `truncate`, `max_w(300)`), meta (`t.dim`, 11, `truncate`): `{ws id} · {repo name} → {delivery target} · {n} tasks`, right-aligned `{state} · {age}`: `open · 2h 10m`, or `closing · 4m` (`closed` not retained). Default expanded when it has any non-closed task or attention; collapsed otherwise. User toggles persist in `ui.collapsed` for the overlay's lifetime.
-   - `{n} tasks` counts non-closed tasks; `Log` and `Show space` actions (`space.select {id: ws.space.id}`; hidden when no `space`).
-2. Task row (selectable, 44 px, indented 20), two lines:
-   - Line 1: **state dot + word** (74 px, `flex_shrink_0`), **title** (`flex_1`, `min_w(0)`, `truncate`), **role** (`coord-deep`, 96 px max, `t.muted`, `truncate`, tooltip `role · model · harness`), **age** (44 px right-aligned, `t.muted`; time in current state).
-   - Line 2 (`t.dim`, 11, `truncate`): `{task id} · rung {n} {rung label} — {placement_reason}`. Tooltip: full text including rejected rungs.
-   - State words and dot colours (herdr's own agent-status vocabulary, so the person already knows it):
+**Workstream:** chevron and semibold 14 px title. A quiet second line contains
+repository name, correctly pluralized non-closed task count, and Closing when
+applicable. No raw id or repeated delivery target is shown in the summary.
+Details exposes the workstream id, repository path, full delivery target and
+summary. Clicking or Enter toggles tasks. Existing attention-first, newest-event
+ordering and persistent expansion choices are unchanged.
 
-| Task state | Word | Colour |
+**Task:** title first; state word, optional report summary and age below.
+There is no fixed state column, role column, raw-id/rung line or strike-through.
+Task rows align beneath the workstream title within the same surface. State
+words retain the model vocabulary and theme roles:
+
+| State | Word | Theme role |
 |---|---|---|
-| `placed` and not yet working | `starting` | `t.idle` |
-| `placed` with `start_blocked` | `stuck` | `t.blocked` |
-| `running`, `stalled` | `stalled` | `t.blocked` |
-| `running` | `running` | `t.working` |
-| `reported` + `done` | `done` | `t.done` |
-| `reported` + `blocked` | `blocked` | `t.blocked` |
-| `reported` + `question` | `asking` | `t.blocked` |
-| `dormant` | `dormant` (hollow dot) | `t.dim` |
-| `closed` | `closed` (strike-through title, `t.dim`) | `t.dim` |
-| unknown value | the raw value | `t.unknown` |
+| placed | starting | idle |
+| placed/running with start_blocked | stuck | blocked |
+| running with stalled | stalled | blocked |
+| running | running | working |
+| reported done | done | done |
+| reported blocked/question | blocked/asking | blocked |
+| dormant/closed | dormant/closed | dim |
+| unknown | raw value | unknown |
 
-   - Order inside a workstream: attention states first (`stuck`, `stalled`, `blocked`, `asking`), then `running`, `starting`, `done`, `dormant`; ties by task number ascending. `closed` tasks hide behind a disclosure row `▸ {n} closed tasks` (selectable; Space/Enter toggles).
-   - Rung labels: 1 `same session`, 2 `same space`, 3 `other space`, 4 `new worktree`, 5 `new project`.
-   - Row actions (visible on the selected or hovered row): **Show** (task with a terminal that `agents()` still lists, or any `terminal` string: `closeOverlay`, then `agent.focus {terminal}`), **Peek** (`terminal.peek {terminal}`), **Log**. Task without a live terminal (`dormant`, `closed`): **Show space** instead of Show/Peek when `space_id` is known (`space.select {id}`, then `tab.select {id: tab_id}` if known), else the action is omitted and the row tooltip says `Agent ended; session is recorded and can be resumed by the coordinator.`
-   - Details (Right/Space) open a panel under the row (t.surface, 11 px, label column 90 px `t.dim`, value wraps): `Task` id, `Brief` path (`text_ellipsis_middle`), `Result` path when set, `Summary` (report summary, clipped 600), `Model`, `Harness`, `Placed` (date-time), `Started`, `Nudges`, `Rejected rungs` (one line each: `rung 1 same session — reason`), and `Copy` buttons for the paths (`cx.write_to_clipboard`).
+Attention states sort first, followed by running, starting, done and dormant;
+ties use task number. Closed tasks remain behind a selectable disclosure with
+correct singular/plural text. Opening it shows readable muted titles, not
+crossed-out work.
 
-**Section: Retained** (workstreams with `retained != null`, ordered by `retained.since_ms` descending).
-Row (selectable, ~64 px):
-```
- ◼ Docs refresh   ws-7hn2cd · handbook → main                           retained 1d 3h
-   Worktree has uncommitted files (3) — cleared automatically once they are committed or removed.
-   Last checked 2m ago                                          [Show space] [Log]
-```
-- `retained.reason` is the backend's human sentence (`t.working`, truncate, full in tooltip); the fixed suffix `— cleared automatically once the blocking condition is gone.` is added by the VM only when `retained.auto_clears` is true (reconcile re-checks it).
-- `Last checked {age} ago` from `retained.checked_ms`.
-- Details: `retained.checks[]` rows: `✓|✕ {check name} — {detail}`; a `✕` is `t.blocked`, `✓` `t.dim`.
-- The same workstream does not also appear under Workstreams.
+**Technical detail:** task id, brief/result paths with Copy, report summary,
+model, harness, placed/started time, nudges and rejected rungs remain available;
+the Board also includes role and the selected rung/placement explanation.
+Details values wrap and cap at 600 characters, at most 24 entries per panel.
+Titles and one-line summaries cap at 240 characters with tooltips. Task title
+tooltips retain the complete placement metadata. Rung labels are unchanged.
 
-**Footer** (`t.dim`, 11): `↑↓ select · Enter show · → details · p peek · l log · t timeline · r refresh · Esc close`. Text adapts to the selected row kind (4.2.6).
+**Retained:** same grouped treatment; reason, automatic-clear explanation and
+last-check age remain, with checks in Details and existing Show space/Log actions.
+Retained workstreams are not duplicated among active workstreams.
 
-#### 4.2.3 State layouts (board)
+#### 4.2.3 Stable selected-item action dock
 
-**Loading** (no cached board yet, request in flight): header and health line render from the status snapshot; body is one centred line `Reading board…` (`t.muted`) animated with `.frames(['Reading board ⠋','Reading board ⠙','Reading board ⠹','Reading board ⠸','Reading board ⠼','Reading board ⠴','Reading board ⠦','Reading board ⠧','Reading board ⠇','Reading board ⠏'], 90)` (native animation, no timer). Footer shows `Esc close`.
+The 68 px dock sits **outside** the scroll area above the short footer. Its
+height never changes when selection changes. It names the selected item, then
+shows actions in a fixed row, with a quiet accent outline on the first action.
+No actions appear on hover, and selection never adds height to a task/header.
 
-**Empty** (`enabled`, state running, zero workstreams and zero attention):
-```
-            No work in flight.
-   Tell the coordinator what you want done; it is in the "coordinator" space.
-                    [Show coordinator]
-```
-**Not enabled / never started** (`status.enabled === false`): body
-```
-            The coordinator is off.
-   Starting it creates a "coordinator" space and starts the coordinator agent.
-                    [Start coordinator]
-```
-If a board still exists (journal from a previous enable), it is shown under a banner `Coordinator is not running.` + `Start coordinator` instead of this empty state.
-
-**Error, no cache:** body (`role('alert')`)
-```
-            Can't read the board.
-   herdr-kit coord board: <first stderr line, max 160 chars>
-                 [Retry]        exit 2 · 14:07:41
-```
-Causes mapped to text: exec rejected → `Could not run herdr-kit`; non-zero exit → `coord board failed (exit N)` + stderr first line; invalid JSON or wrong `schema_version` → `Unexpected board format. Update herdr-kit and reload the mod.`; timeout → `coord board timed out`.
-
-**Error with cache:** the previous board stays rendered under the stale banner (4.2.2); selection is preserved.
-
-**Degraded / not running with data:** normal board plus the degraded banner; `Repair`/`Start coordinator` in the header.
-
-**Narrow (< 640 px dialog width)** (4.2.5): task row becomes three lines (state+title / role+age / placement), meta of workstream row moves under the title, health line wraps to two lines. Section order unchanged.
-
-#### 4.2.4 Long-text handling
-
-| Text | Rule |
+| Selected item | Dock actions |
 |---|---|
-| ids (`ws-…`, `…-t1`) | never truncated: `flex_shrink_0`; ids are short (≤ 14 chars) |
-| titles, attention text, reasons, placement reasons | single line, `min_w(0)`, `truncate()`; the VM first hard-clips to 240 chars (`clip(s,240)`) so a runaway string cannot make a huge layout; full text in `.tooltip(text)` (clipped 600) and in the details panel |
-| paths | `text_ellipsis_middle()` (keeps the file name) |
-| details values | wrap normally (default text wrapping), clipped to 600 chars with `…`; lines cap at 24 per panel, `+N more` line after that |
-| multi-line strings from the backend | VM replaces `\s+` runs including newlines with a single space for one-line fields |
-| counts and ages | formatted by VM (`formatAge`), never raw numbers |
+| question | Reply in coordinator (if available), Log, Details |
+| task / task attention | existing Show, Peek or Show space as applicable; Log, Details |
+| workstream | Expand/Collapse, Show space (if known), Log, Details |
+| closed disclosure | Show/Hide closed tasks |
+| retained | Show space (if known), Log, Details |
 
-No `line_clamp`: not confirmed in `gpui-kit.d.ts`; clipping is done in the VM.
+Enter matches the first action (including workstream/disclosure toggling).
+Details toggles the same expansion set as Right/Space. Non-navigation actions
+return focus to the list; Show/Peek/Show space/Reply still close the dialog and
+only navigate. Keyboard shortcuts `p`, `l`, `s`, `c`, `t`, `b`, `r` are unchanged.
+Dock buttons have action-and-target accessibility labels. Tab visits dock
+buttons after the list, then Close (Board index 11; Timeline retains index 7).
+The footer is simply `↑↓ select   Enter open   → details   Esc close`.
 
-#### 4.2.5 Layout metrics (zoom 1)
+#### 4.2.4 Loading, empty, off and errors
 
-Dialog 760 x 600, padding 14, section heading height 22, workstream row 28, task row 44 (two lines, 13 px / 11 px), attention row 52, retained row 64, details line 18, gap between sections 10, 1 px `t.border` rule above each section heading except the first. Row radius 5; selected row: `bg(t.selected)` and 1 px `t.accent` border; hover: `t.hover`. Action buttons 18 px high, `px(8)`, `rounded(4)`, 1 px `t.border`, 11 px text; primary action of the row has `t.accent` border.
+- Loading: native animated Reading board, Esc close; no dock.
+- Running empty: “No work in flight.”, an explanation, and one Show coordinator
+  button in the body when a coordinator terminal is known.
+- Off empty: “The coordinator is off.”, explanation that Start creates a
+  coordinator space/agent, and one Start coordinator button in the body.
+- Off with cached work: keep the board and dock; one Start in its banner.
+- Uncached failure: “Can't read the board.”, first error line, Retry.
+- Cached failure: retain board, selection and dock under the stale-data banner.
 
-#### 4.2.6 Footer hints by selection
+Empty-state text uses an 18 px title and a centred, constrained 360 px explanation.
+Only explicit detail/disclosure expansion changes row height.
 
-| Selected row | Footer |
-|---|---|
-| attention (question) | `Enter reply in coordinator · → details · l log · t timeline · r refresh · Esc close` |
-| attention (task) | `Enter show · p peek · → details · l log · ...` |
-| workstream | `Enter expand/collapse · s show space · l log · ...` |
-| task | `Enter show · p peek · → details · l log · ...` |
-| retained | `Enter show space · → details · l log · ...` |
+#### 4.2.5 Decision and evidence
+
+Two static directions were compared before implementation: continuous groups
+with a selected-item dock, and a master/detail split. Groups were chosen because
+the same hierarchy works at wide and narrow widths with one existing keyboard
+list. Master/detail would add a second scroll/focus owner and a narrow drill-down
+mode (whose Back would conflict with host Escape-close), and would reserve a
+large empty detail pane on small boards.
+
+The earlier polish altered metadata and action visibility without changing the
+hierarchy. This redesign changes that structure instead. Theme tokens are used
+throughout, with no new backend fields or commands. Requested design mocks and
+isolated native screenshot evidence are stored under ignored
+`evidence/board-overhaul/`; they are not release assets.
 
 ### 4.3 Timeline (view 2)
 
@@ -760,12 +747,12 @@ tests/coord.test.js     node --test, imports ../mods/herdr-kit-coord/model.js
 | Strip hover | `t.hover` background; tooltip after 0.5 s |
 | Row click | select row (and focus the list) |
 | Row click on workstream / closed-disclosure | toggle expand |
-| Row action buttons | run the action; `Show`, `Peek`, `Show space`, `Reply in coordinator` close the dialog first |
+| Selected-item dock actions | run the action; Show, Peek, Show space, Reply in coordinator close the dialog first |
 | Scope chip ✕ / scope id | clear / set scope |
 | Dialog backdrop click | closes (host default for dialog) |
 | Scroll wheel | scrolls the list |
 
-Action buttons call `cx.stop_propagation()` so the row click does not also fire. Hover state comes from `on_hover` (tracked `hoveredKey`, re-render via `cx.notify()`), because actions render only for the selected or hovered row.
+Action buttons stop propagation. Board hover changes only the background; actions live in the fixed dock. Non-navigation dock/banner actions restore list focus.
 
 ### 5.2 Keyboard (overlay)
 
@@ -788,7 +775,7 @@ Handler lives on the list container (`track_focus(listHandle)`, `tab_index(6)`, 
 | `t` / `b` | switch to Timeline / Board | switch to Board (`b`), `t` no-op |
 | `r` | refresh now | refresh now |
 | `c` | copy the selected row's id | copy the selected entry as one line |
-| `Tab` / `Shift+Tab` | explicit `tab_index` order: `Board` tab 1, `Timeline` tab 2, `Start/Repair` 3, `Show coordinator` 4, filter input 5 (Timeline only), list 6, `Close` 7 | same |
+| `Tab` / `Shift+Tab` | Board tab 1, Timeline tab 2, Start/Repair 3, Show coordinator 4, list 6, dock 7–10, Close 11 | tabs/header unchanged, filter 5, list 6, Close 7 |
 | `Esc` | closes the dialog (host) | closes the dialog (host) |
 
 Conflicts: no global shortcut is bound by the mod. The person may bind `"<mod name>.show"` in `keys.json` (`show` = open board, `timeline` = open Timeline, `focus` = focus the strip); the mod name is generation-suffixed by `manager.rs`, so no default binding is shipped `(8, Q8)`. The list ignores modified keys, so `ctrl-shift-…` host chords keep working.
@@ -806,11 +793,11 @@ The strip's `Button` has `tab_index(0)`, accepts Enter/Space as click (keyboard 
 ## 6. Accessibility
 
 - Strip: `.accessibility_label(fullSentence)` identical to the tooltip (4.1.5). Every state has distinct words, so nothing depends on colour or icon shape alone.
-- Dialog: `role('dialog')`, `accessibility_label('Coordinator')`; view switch `role('tab_list')` with `role('tab')` + `aria_selected`; section groups `role('group')` with label `Needs you, 2 items`; rows `role('list_item')` (workstream rows `role('tree_item')`); the list container `role('list')`; the selected row carries `aria_selected(true)` and `aria_active_descendant()`; banners with errors `role('alert')`; the health line `role('status')`.
+- Dialog: `role('dialog')`, `accessibility_label('Coordinator')`; tab buttons use the native `.selected()` state; the list has `role('list')`, workstreams `tree_item`, other rows `list_item`. Selected rows carry `aria_selected(true)` and `aria_active_descendant()`. Errors are alerts; Board diagnostics are on the status chip, Timeline keeps its status line. The dock is a labelled toolbar.
 - Row accessibility label (VM `row.label`): `Task ws-k3m2ab-t1, running 34 minutes, Patch session refresh, role coord-deep, rung 4 new worktree, conflicting edits in auth/session.rs`. Expanded state announced via `aria` is not available; the details panel text follows the row in the tree.
-- Focus: the focused strip button and focused row always show a 1 px `t.accent` border; actions are reachable by keyboard without the mouse (shortcut letters) and also by Tab through the header buttons.
-- Contrast: body text `t.foreground`/`t.muted` on `t.popover`; `t.dim` only for non-essential metadata (ids that are also in labels, hints, separators). The `t.blocked` and `t.working` words are always accompanied by their word.
-- Hit targets: strip button 26 px high; row actions 18 px high are secondary (the same effect is on a shortcut and in Enter), rows are 28-64 px.
+- Focus: selected Board rows have an always-reserved 2 px accent gutter; Timeline retains its existing selection treatment. Actions are reachable via shortcuts and Tab through the dock/header.
+- Contrast: text uses foreground/muted on raised/selected; dim is reserved for non-essential counts/hints. Status always has a word as well as colour.
+- Hit targets: strip 26 px, actions 22 px, Board rows padded 10 px vertically (closed disclosure 6 px). Zoom scales all metrics.
 - Motion: only native `frames`/`spin` (stop when not shown); no timers for animation. Reduced-motion preference is not exposed to mods `[INFERENCE]`; both animations are short-lived loading cues.
 - Text sizes follow zoom (`settings().zoom`, sizes written at zoom 1).
 
@@ -916,4 +903,4 @@ Each is an observable check after the mod is built; checks marked (shot) use `he
 - `docs/coordinator/board-mockups/timeline.svg`: timeline with scope chip, filter, expanded entry, day separators, `Load older`.
 - `docs/coordinator/board-mockups/icons/coord-running.svg`, `coord-off.svg`, `coord-degraded.svg`, `coord-starting.svg`: icon drafts in the usage mod's 24x24, 1.5 stroke, `currentColor` style; copy to `mods/herdr-kit-coord/` at implementation.
 
-ASCII wireframes of the remaining states (loading, empty, never-enabled, error, narrow) are inline in 4.2.3 and 4.3.
+Current Board loading, empty, off, error and narrow layouts are specified in 4.2; Timeline states remain in 4.3. The SVGs above preserve the original proposal, not the redesigned Board acceptance surface.
