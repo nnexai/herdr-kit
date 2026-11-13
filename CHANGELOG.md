@@ -9,6 +9,8 @@
 - Place compact Limits and coordinator controls together on the right, with
   machine and agent indicators on the left.
 - Refine coordinator board metadata, action visibility and timeline readability.
+- Report an unauthorized coordinator post-activation hook as skipped rather
+  than as a failed activation hook, without changing coordinator permissions.
 
 ## 0.1.0
 

@@ -67,6 +67,11 @@ mod generation; native file discovery settles asynchronously. Activation has
 an on-disk recovery journal. Old generations remain available for rollback and
 for personal layouts still referencing them. No automatic release deletion.
 
+After activation, the coordinator hook reports `skipped` with reason
+`forbidden_caller` when the invoking caller is not authorized to start it.
+This does not assert that the coordinator is running; inspect `coord status`
+for its current state. Other hook failures remain failures.
+
 The tool records content hashes. Modified managed layouts, mods, executables
 or releases block replacement rather than discarding edits. User clones,
 shipped Herdr files, `keys.json`, settings, programs, shared/view state and
