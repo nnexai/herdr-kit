@@ -1,3 +1,4 @@
+mod coord;
 mod manager;
 mod paths;
 mod usage;
@@ -18,6 +19,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Coordinate parallel agent work.
+    Coord(coord::cli::CoordArgs),
     /// Read anonymous OMP subscription usage.
     Usage {
         #[command(subcommand)]
@@ -70,24 +73,30 @@ enum UpdateCommand {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
+    let is_coord = matches!(&cli.command, Command::Coord(_));
     match run(cli).await {
-        Ok(value) => println!("{}", serde_json::to_string(&value).expect("serializable response")),
+        Ok(coord::Output::Json(value)) => println!("{}", serde_json::to_string(&value).expect("serializable response")),
+        Ok(coord::Output::Text(text)) => print!("{text}"),
         Err(error) => {
             let message: String = error.to_string().chars().filter(|c| !c.is_control()).take(512).collect();
-            eprintln!("{}", serde_json::json!({"error":{"code":"operation_failed","message":message}}));
-            std::process::exit(1);
+            let (code, exit) = if is_coord { coord::error::exit_of(&error) } else { ("operation_failed", 1) };
+            eprintln!("{}", serde_json::json!({"error":{"code":code,"message":message}}));
+            std::process::exit(exit);
         }
     }
 }
 
-async fn run(cli: Cli) -> Result<serde_json::Value> {
-    let root = cli.data_dir.map(Ok).unwrap_or_else(paths::data_dir)?;
-    let root = if root.is_absolute() {
-        root
-    } else {
-        std::env::current_dir().context("current directory unavailable")?.join(root)
-    };
-    match cli.command {
+fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
+    let root = arg.map(Ok).unwrap_or_else(paths::data_dir)?;
+    if root.is_absolute() { Ok(root) }
+    else { Ok(std::env::current_dir().context("current directory unavailable")?.join(root)) }
+}
+
+async fn run(cli: Cli) -> Result<coord::Output> {
+    let root = data_root(cli.data_dir)?;
+    let activation_command = matches!(&cli.command, Command::Install { .. } | Command::Update { .. });
+    let mut value = match cli.command {
+        Command::Coord(args) => return coord::run(&root, args).await,
         Command::Usage { command: UsageCommand::Snapshot { agents_working, omp_executable, .. } } => {
             serde_json::to_value(usage::snapshot(&root.join("usage"), agents_working, omp_executable.as_deref()).await?)
                 .context("usage response could not be encoded")
@@ -101,5 +110,9 @@ async fn run(cli: Cli) -> Result<serde_json::Value> {
             UpdateCommand::Maintain => "maintain",
             UpdateCommand::Rollback => "rollback",
         }),
+    }?;
+    if activation_command && value.get("activated").and_then(serde_json::Value::as_bool) == Some(true) {
+        value["coord"] = coord::lifecycle::after_activation(&root);
     }
+    Ok(coord::Output::Json(value))
 }

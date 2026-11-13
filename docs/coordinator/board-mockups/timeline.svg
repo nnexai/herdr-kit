@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="640" viewBox="0 0 800 640" font-family="system-ui, 'Geist', sans-serif" font-size="12">
+  <!-- Illustrative colours; see board.svg. -->
+  <style>
+    .fg{fill:#e8e9eb}.m{fill:#a9adb3}.d{fill:#8b8f95}.b{fill:#ef5350}.w{fill:#d9a441}.a{fill:#3b82f6}.dn{fill:#4aa3df}
+    .h{font-size:11px;font-weight:600;letter-spacing:.06em;fill:#a9adb3}
+    .line{stroke:#25282c}.sm{font-size:11px}.mono{font-family:ui-monospace,'JetBrains Mono',monospace;font-size:11px}
+    .btn{fill:none;stroke:#3b82f6}.btn2{fill:none;stroke:#3a3d42}.semi{font-weight:600}
+  </style>
+  <rect width="800" height="640" fill="#2b2d31"/>
+  <rect x="20" y="20" width="760" height="600" rx="8" fill="#17191c" stroke="#25282c"/>
+
+  <text x="38" y="52" class="fg semi" font-size="15">Coordinator</text>
+  <g transform="translate(140,36)"><rect width="64" height="26" rx="4" fill="none"/><text x="12" y="17" class="m">Board</text>
+    <rect x="68" width="84" height="26" rx="4" fill="#202225"/><text x="82" y="17" class="fg">Timeline</text></g>
+  <circle cx="548" cy="49" r="4" class="a"/><text x="558" y="53" class="m">Running</text>
+  <rect x="612" y="36" width="100" height="26" rx="4" class="btn2"/><text x="624" y="53" class="fg sm">Show coordinator</text>
+  <rect x="722" y="36" width="44" height="26" rx="4" class="btn2"/><text x="732" y="53" class="fg">Close</text>
+
+  <!-- filter row -->
+  <g transform="translate(38,72)">
+    <rect width="236" height="24" rx="12" fill="#202225"/><text x="12" y="16" class="fg sm">Scope: ws-k3m2ab-t1</text><text x="214" y="16" class="m sm">✕</text>
+    <rect x="248" width="300" height="24" rx="4" fill="none" stroke="#3a3d42"/><text x="258" y="16" class="d sm">Filter text (id, kind, summary)    /</text>
+    <rect x="560" width="160" height="24" rx="4" fill="none" stroke="#3a3d42"/><text x="572" y="16" class="fg sm">Key events  ·  12 hidden</text>
+  </g>
+  <line class="line" x1="20" y1="108" x2="780" y2="108"/>
+
+  <!-- list -->
+  <text x="38" y="128" class="h">TODAY</text>
+  <g font-size="12">
+    <!-- rows y step 26 -->
+    <g transform="translate(26,136)">
+      <rect width="748" height="24" rx="4" fill="#ffffff0d" stroke="#3b82f6"/>
+      <text x="10" y="16" class="d mono">14:02:11</text><text x="74" y="16" class="b">?</text>
+      <text x="92" y="16" class="m sm">coordinator</text><text x="176" y="16" class="d sm">ws-k3m2ab-t1</text>
+      <text x="270" y="16" class="fg">Asked: Should the fix also bump the lockfile, or leave it alone?</text>
+    </g>
+    <g transform="translate(26,162)">
+      <text x="10" y="16" class="d mono">13:58:40</text><text x="74" y="16" class="m">↗</text>
+      <text x="92" y="16" class="m sm">coordinator</text><text x="176" y="16" class="d sm">ws-k3m2ab-t1</text>
+      <text x="270" y="16" class="fg">Decision (digest): keep t1 on coord-default — cause is known</text>
+    </g>
+    <g transform="translate(26,188)">
+      <text x="10" y="16" class="d mono">13:51:07</text><text x="74" y="16" class="w">●</text>
+      <text x="92" y="16" class="m sm">delegate</text><text x="176" y="16" class="d sm">ws-k3m2ab-t1</text>
+      <text x="270" y="16" class="fg">Progress: repro found, failing in session refresh</text>
+    </g>
+    <g transform="translate(26,214)">
+      <rect width="748" height="150" rx="4" fill="#1d1f23"/>
+      <text x="10" y="16" class="d mono">13:40:22</text><text x="74" y="16" class="w">●</text>
+      <text x="92" y="16" class="m sm">coordinator</text><text x="176" y="16" class="d sm">ws-k3m2ab-t1</text>
+      <text x="270" y="16" class="fg">Started in tab "k3m2ab-t1" (t7)</text>
+      <text x="270" y="38" class="d sm">▾ details · seq 4812 · Nov 13, 2026 13:40:22 · actor coordinator · v1</text>
+      <g class="mono" fill="#a9adb3"><text x="270" y="58">terminal   t7</text><text x="270" y="74">tab        tb6f…</text>
+        <text x="270" y="90">session    2026-11-13T13-40-21_a91c.jsonl</text><text x="270" y="106">brief      …/coord/briefs/ws-k3m2ab-t1.md</text></g>
+      <rect x="600" y="94" width="60" height="18" rx="4" class="btn2"/><text x="611" y="107" class="fg sm">Copy path</text>
+      <text x="270" y="134" class="d sm">Enter collapse · s scope to this task · c copy</text>
+    </g>
+    <g transform="translate(26,368)">
+      <text x="10" y="16" class="d mono">13:40:19</text><text x="74" y="16" class="m">▣</text>
+      <text x="92" y="16" class="m sm">coordinator</text><text x="176" y="16" class="d sm">ws-k3m2ab-t1</text>
+      <text x="270" y="16" class="fg">Placed · coord-default · rung 2 same space — follow-up of the repro tab</text>
+    </g>
+    <g transform="translate(26,394)">
+      <text x="10" y="16" class="d mono">13:40:12</text><text x="74" y="16" class="m">◻</text>
+      <text x="92" y="16" class="m sm">coordinator</text><text x="176" y="16" class="d sm">ws-k3m2ab</text>
+      <text x="270" y="16" class="fg">Opened workstream "Fix login flow" (herdr-kit → main)</text>
+    </g>
+  </g>
+  <text x="38" y="446" class="h">YESTERDAY</text>
+  <g transform="translate(26,454)">
+    <text x="10" y="16" class="d mono">17:12:03</text><text x="74" y="16" class="w">⚠</text>
+    <text x="92" y="16" class="m sm">watcher</text><text x="176" y="16" class="d sm">ws-7hn2cd</text>
+    <text x="270" y="16" class="w">Retained: worktree has uncommitted files (3)</text>
+  </g>
+  <g transform="translate(26,480)">
+    <text x="10" y="16" class="d mono">17:11:58</text><text x="74" y="16" class="m">✓</text>
+    <text x="92" y="16" class="m sm">cli</text><text x="176" y="16" class="d sm">ws-7hn2cd</text>
+    <text x="270" y="16" class="fg">Release check · worktree clean → failed (3 untracked)</text>
+  </g>
+  <g transform="translate(26,514)">
+    <rect x="260" width="228" height="22" rx="4" class="btn2"/><text x="296" y="15" class="fg sm">Load older entries (200)</text>
+  </g>
+  <rect x="772" y="140" width="4" height="200" rx="2" fill="#ffffff22"/>
+  <text x="38" y="606" class="d sm">↑↓ select · Enter details · s scope · x clear scope · a all/key · / filter · b board · Esc close</text>
+</svg>

@@ -169,16 +169,24 @@
         },
         {
           "id": "status",
-          "type": "block",
-          "size": {
-            "px": 28
-          },
-          "content": {
-            "mod": "herdr-kit-usage",
-            "props": {
-              "view": "statusbar"
+          "type": "row",
+          "size": { "px": 28 },
+          "resizable": false,
+          "children": [
+            {
+              "id": "status-usage",
+              "type": "block",
+              "content": { "mod": "herdr-kit-usage", "props": { "view": "statusbar" } }
+            },
+            {
+              "id": "status-coord",
+              "type": "block",
+              "size": { "px": 280 },
+              "min": 96,
+              "max": 360,
+              "content": { "mod": "herdr-kit-coord", "props": { "view": "statusbar" } }
             }
-          }
+          ]
         }
       ]
     }

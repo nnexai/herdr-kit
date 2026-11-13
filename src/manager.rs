@@ -16,7 +16,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DAY: u64 = 86_400;
 const BACKOFF: u64 = 3_600;
-const MOD: &str = "herdr-kit-usage";
+const MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord"];
+const LEGACY_MOD: &str = "herdr-kit-usage";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 struct State {
@@ -191,13 +192,49 @@ fn source_path(path: &Path) -> Result<PathBuf> {
     revision(&p)?;
     Ok(p)
 }
-fn name(rev: &str) -> String { format!("{MOD}-{rev}") }
+fn name(base: &str, rev: &str) -> String { format!("{base}-{rev}") }
 fn release(data: &Path, rev: &str) -> PathBuf { data.join("releases").join(rev) }
 fn state_path(data: &Path) -> PathBuf { data.join("state.json") }
 fn journal_path(data: &Path) -> PathBuf { data.join("activation.json") }
 fn layout(home: &Path) -> PathBuf { home.join("layouts/herdr-kit.json") }
 fn bootstrap(data: &Path) -> PathBuf { data.join("bin/herdr-kit") }
-fn mod_path(home: &Path, rev: &str) -> PathBuf { home.join("mods").join(name(rev)) }
+fn mod_path(home: &Path, base: &str, rev: &str) -> PathBuf { home.join("mods").join(name(base, rev)) }
+
+fn release_mods(release_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mods = release_dir.join("mods");
+    no_links(&mods)?;
+    if mods.exists() {
+        let mut result = Vec::new();
+        for entry in fs::read_dir(&mods)? {
+            let entry = entry?;
+            ensure!(entry.file_type()?.is_dir(), "invalid release mod");
+            let base = entry.file_name().into_string().map_err(|_| anyhow::anyhow!("invalid release mod name"))?;
+            ensure!(MODS.contains(&base.as_str()), "unknown release mod: {base}");
+            result.push((base, entry.path()));
+        }
+        result.sort_by(|a, b| a.0.cmp(&b.0));
+        ensure!(!result.is_empty(), "missing release mods");
+        Ok(result)
+    } else {
+        let legacy = release_dir.join("mod");
+        no_links(&legacy)?;
+        ensure!(legacy.is_dir(), "missing release mods");
+        Ok(vec![(LEGACY_MOD.to_owned(), legacy)])
+    }
+}
+
+fn rewrite(dir: &Path, bases: &[&str], rev: &str) -> Result<()> {
+    for e in fs::read_dir(dir)? {
+        let e = e?;
+        if e.file_type()?.is_dir() { rewrite(&e.path(), bases, rev)?; }
+        else if e.path().extension().and_then(|s| s.to_str()).is_some_and(|x| x == "js" || x == "json") {
+            let mut text = fs::read_to_string(e.path())?;
+            for base in bases { text = text.replace(base, &name(base, rev)); }
+            fs::write(e.path(), text)?;
+        }
+    }
+    Ok(())
+}
 
 struct Locked { data: PathBuf, _lock: File }
 impl Locked {
@@ -233,7 +270,9 @@ impl Locked {
             self.verify_release(state, rev)?;
             let home = state.app_home.as_ref().context("missing target")?;
             let r = release(&self.data, rev);
-            ensure!(tree(&mod_path(home, rev))? == tree(&r.join("mod"))?, "mod drift detected");
+            for (base, dir) in release_mods(&r)? {
+                ensure!(tree(&mod_path(home, &base, rev))? == tree(&dir)?, "mod drift detected");
+            }
             ensure!(file_hash(&layout(home))? == file_hash(&r.join("layout.json"))?, "layout drift detected");
             ensure!(file_hash(&bootstrap(&self.data))? == file_hash(&r.join("herdr-kit"))?, "bootstrap drift detected");
         }
@@ -246,18 +285,20 @@ impl Locked {
         let home = s.app_home.as_ref().context("invalid activation journal")?;
         self.verify_release(s, rev)?;
         let r = release(&self.data, rev);
-        let target = mod_path(home, rev);
-        if target.exists() {
-            ensure!(tree(&target)? == tree(&r.join("mod"))?, "mod collision or drift detected");
-        } else {
-            no_links(&target)?;
-            let mods = home.join("mods");
-            directory(&mods)?;
-            let staging = tempfile::Builder::new().prefix(".herdr-kit-").tempdir_in(&mods)?;
-            copy_tree(&r.join("mod"), staging.path())?;
-            ensure!(tree(staging.path())? == tree(&r.join("mod"))?, "mod staging mismatch");
-            fs::rename(staging.path(), &target)?;
-            File::open(&mods)?.sync_all()?;
+        for (base, dir) in release_mods(&r)? {
+            let target = mod_path(home, &base, rev);
+            if target.exists() {
+                ensure!(tree(&target)? == tree(&dir)?, "mod collision or drift detected");
+            } else {
+                no_links(&target)?;
+                let mods = home.join("mods");
+                directory(&mods)?;
+                let staging = tempfile::Builder::new().prefix(".herdr-kit-").tempdir_in(&mods)?;
+                copy_tree(&dir, staging.path())?;
+                ensure!(tree(staging.path())? == tree(&dir)?, "mod staging mismatch");
+                fs::rename(staging.path(), &target)?;
+                File::open(&mods)?.sync_all()?;
+            }
         }
         let new_layout = file_hash(&r.join("layout.json"))?.context("missing release layout")?;
         let old = file_hash(&layout(home))?;
@@ -276,11 +317,13 @@ impl Locked {
         self.verify_active(old)?;
         self.verify_release(&next, rev)?;
         let home = next.app_home.as_ref().context("missing install target")?;
-        let target = mod_path(home, rev);
-        no_links(&target)?;
-        if target.exists() {
-            ensure!(old.managed_mods.iter().any(|item| item == rev), "mod target already exists");
-            ensure!(tree(&target)? == tree(&release(&self.data, rev).join("mod"))?, "mod collision or drift detected");
+        for (base, dir) in release_mods(&release(&self.data, rev))? {
+            let target = mod_path(home, &base, rev);
+            no_links(&target)?;
+            if target.exists() {
+                ensure!(old.managed_mods.iter().any(|item| item == rev), "mod target already exists");
+                ensure!(tree(&target)? == tree(&dir)?, "mod collision or drift detected");
+            }
         }
         if old.current.is_none() {
             ensure!(file_hash(&layout(home))?.is_none(), "layout target already exists");
@@ -323,32 +366,30 @@ impl Locked {
         let staged = tmp.path().join("release");
         directory(&staged)?;
         fs::copy(tmp.path().join("target/release/herdr-kit"), staged.join("herdr-kit"))?;
-        copy_tree(&src.join("mods").join(MOD), &staged.join("mod"))?;
-        // The app resolves a mod by folder name. Rewrite only the suite's own
-        // literal name in its assets/layout, yielding an isolated generation.
-        let new_name = name(rev);
-        fn rewrite(dir: &Path, old: &str, new: &str) -> Result<()> {
-            for e in fs::read_dir(dir)? {
-                let e = e?;
-                if e.file_type()?.is_dir() { rewrite(&e.path(), old, new)?; }
-                else if e.path().extension().and_then(|s| s.to_str()).is_some_and(|x| x == "js" || x == "json") {
-                    let text = fs::read_to_string(e.path())?;
-                    fs::write(e.path(), text.replace(old, new))?;
-                }
-            }
-            Ok(())
+        let bases: Vec<&str> = MODS.iter().copied().filter(|base| src.join("mods").join(base).is_dir()).collect();
+        ensure!(bases.contains(&LEGACY_MOD), "missing usage mod");
+        for base in &bases {
+            copy_tree(&src.join("mods").join(base), &staged.join("mods").join(base))?;
         }
-        rewrite(&staged.join("mod"), MOD, &new_name)?;
-        let runtime = format!("export const BINARY = {};\nexport const DATA_DIR = {};\nexport const RELEASE = {};\nexport const MOD_NAME = {};\n", serde_json::to_string(&final_dir.join("herdr-kit").to_string_lossy())?, serde_json::to_string(&self.data.to_string_lossy())?, serde_json::to_string(rev)?, serde_json::to_string(&new_name)?);
-        fs::write(staged.join("mod/runtime.js"), runtime)?;
-        let layout_text = fs::read_to_string(src.join("layouts/herdr-kit.json"))?;
-        ensure!(layout_text.contains(MOD), "layout does not reference suite mod");
-        fs::write(staged.join("layout.json"), layout_text.replace(MOD, &new_name))?;
-        let check = bounded(Command::new("herdr-app").arg("check").arg(staged.join("mod")).env("HERDR_APP_HOME", home).stdout(Stdio::null()).stderr(Stdio::null()), 30);
-        match check {
-            Ok(status) => ensure!(status.success(), "native mod check failed"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(_) => bail!("native mod check failed"),
+        for base in &bases {
+            let dir = staged.join("mods").join(base);
+            rewrite(&dir, &bases, rev)?;
+            let runtime = format!("export const BINARY = {};\nexport const DATA_DIR = {};\nexport const RELEASE = {};\nexport const MOD_NAME = {};\n", serde_json::to_string(&final_dir.join("herdr-kit").to_string_lossy())?, serde_json::to_string(&self.data.to_string_lossy())?, serde_json::to_string(rev)?, serde_json::to_string(&name(base, rev))?);
+            fs::write(dir.join("runtime.js"), runtime)?;
+        }
+        let mut layout_text = fs::read_to_string(src.join("layouts/herdr-kit.json"))?;
+        for base in &bases {
+            ensure!(layout_text.contains(base), "layout does not reference suite mod: {base}");
+            layout_text = layout_text.replace(base, &name(base, rev));
+        }
+        fs::write(staged.join("layout.json"), layout_text)?;
+        for base in &bases {
+            let check = bounded(Command::new("herdr-app").arg("check").arg(staged.join("mods").join(base)).env("HERDR_APP_HOME", home).stdout(Stdio::null()).stderr(Stdio::null()), 30);
+            match check {
+                Ok(status) => ensure!(status.success(), "native mod check failed"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(_) => bail!("native mod check failed"),
+            }
         }
         let receipt = tree(&staged)?;
         // Publish the receipt first: after interruption, a missing, never
@@ -363,6 +404,17 @@ impl Locked {
 
 fn result(s: &State, available: Option<&str>, status: &str) -> Value {
     json!({"state": status, "current_revision": s.current, "available_revision": available, "previous_revision": s.previous, "source": s.source, "targets": {"app_home": s.app_home}, "next_check": s.next_check})
+}
+
+pub fn active_release(data: &Path) -> Option<String> {
+    read_json::<State>(&state_path(data)).ok().flatten().and_then(|state| state.current)
+}
+
+pub fn stable_binary(data: &Path) -> PathBuf { bootstrap(data) }
+
+fn activated(mut value: Value, changed: bool) -> Value {
+    value["activated"] = json!(changed);
+    value
 }
 
 pub fn install(data_dir: &Path, app_home: &Path, source: &Path) -> Result<Value> {
@@ -382,10 +434,10 @@ pub fn install(data_dir: &Path, app_home: &Path, source: &Path) -> Result<Value>
     lock.build(&mut next, &rev)?;
     if old.current.as_deref() == Some(&rev) {
         lock.save(&next)?;
-        return Ok(result(&next, Some(&rev), "current"));
+        return Ok(activated(result(&next, Some(&rev), "current"), false));
     }
     let next = lock.activate(&old, next, &rev)?;
-    Ok(result(&next, Some(&rev), "installed"))
+    Ok(activated(result(&next, Some(&rev), "installed"), true))
 }
 
 pub fn status(data_dir: &Path) -> Result<Value> {
@@ -416,20 +468,22 @@ pub fn update(data_dir: &Path, action: &str) -> Result<Value> {
         let rev = state.previous.clone().context("no previous release")?;
         let old = state.clone();
         let state = lock.activate(&old, state, &rev)?;
-        return Ok(result(&state, Some(&rev), "rolled_back"));
+        let changed = old.current.as_deref() != Some(&rev);
+        return Ok(activated(result(&state, Some(&rev), "rolled_back"), changed));
     }
-    if action == "maintain" && now() < state.next_check { return Ok(result(&state, None, "not_due")); }
+    if action == "maintain" && now() < state.next_check { return Ok(activated(result(&state, None, "not_due"), false)); }
     let work = (|| -> Result<Value> {
         let repo = state.source.as_ref().context("no trusted local source configured")?;
         let rev = revision(repo)?;
-        if action == "check" { return Ok(result(&state, Some(&rev), if state.current.as_deref() == Some(&rev) { "current" } else { "available" })); }
-        if state.current.as_deref() != Some(&rev) {
+        if action == "check" { return Ok(activated(result(&state, Some(&rev), if state.current.as_deref() == Some(&rev) { "current" } else { "available" }), false)); }
+        let changed = state.current.as_deref() != Some(&rev);
+        if changed {
             let old = state.clone();
             lock.build(&mut state, &rev)?;
             state = lock.activate(&old, state.clone(), &rev)?;
         }
         if action == "maintain" { state.next_check = now().saturating_add(DAY); lock.save(&state)?; }
-        Ok(result(&state, Some(&rev), "current"))
+        Ok(activated(result(&state, Some(&rev), "current"), changed))
     })();
     if action == "maintain" && work.is_err() {
         // If activation was interrupted, leave its journal authoritative.
@@ -478,6 +532,74 @@ mod tests {
         fs::write(r.join("herdr-kit"), rev).unwrap();
         state.releases.insert(rev.to_owned(), tree(&r).unwrap());
     }
+    fn fixture_multi_release(data: &Path, state: &mut State, rev: &str) {
+        let r = release(data, rev);
+        for base in MODS {
+            let dir = r.join("mods").join(base);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("main.js"), base).unwrap();
+        }
+        fs::write(r.join("layout.json"), format!("{} {}", name(MODS[0], rev), name(MODS[1], rev))).unwrap();
+        fs::write(r.join("herdr-kit"), rev).unwrap();
+        state.releases.insert(rev.to_owned(), tree(&r).unwrap());
+    }
+    #[test]
+    fn multi_mod_activation_and_legacy_rollback() {
+        let t = tempfile::tempdir().unwrap();
+        let data = t.path().join("data");
+        let home = t.path().join("home");
+        fs::create_dir(&home).unwrap();
+        let lock = Locked::open(&data).unwrap();
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        let mut initial = State { app_home: Some(home.clone()), ..State::default() };
+        fixture_release(&data, &mut initial, &a);
+        // Give the legacy layout its real generation reference.
+        fs::write(release(&data, &a).join("layout.json"), name(LEGACY_MOD, &a)).unwrap();
+        initial.releases.insert(a.clone(), tree(&release(&data, &a)).unwrap());
+        let first = lock.activate(&State::default(), initial, &a).unwrap();
+        lock.verify_active(&first).unwrap();
+        assert_eq!(release_mods(&release(&data, &a)).unwrap()[0].0, LEGACY_MOD);
+        let mut next = first.clone();
+        fixture_multi_release(&data, &mut next, &b);
+        let second = lock.activate(&first, next, &b).unwrap();
+        lock.verify_active(&second).unwrap();
+        for base in MODS { assert!(mod_path(&home, base, &b).is_dir()); }
+        assert_eq!(active_release(&data).as_deref(), Some(b.as_str()));
+        assert_eq!(stable_binary(&data), bootstrap(&data));
+        let rolled = lock.activate(&second, second.clone(), &a).unwrap();
+        lock.verify_active(&rolled).unwrap();
+        assert!(mod_path(&home, MODS[1], &b).is_dir());
+        assert_eq!(fs::read_to_string(layout(&home)).unwrap(), name(LEGACY_MOD, &a));
+    }
+    #[test]
+    fn rewrite_all_present_mod_names() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join("nested")).unwrap();
+        fs::write(t.path().join("nested/main.js"), "herdr-kit-usage herdr-kit-coord").unwrap();
+        fs::write(t.path().join("config.json"), "\"herdr-kit-coord herdr-kit-usage\"").unwrap();
+        fs::write(t.path().join("other.txt"), "herdr-kit-usage").unwrap();
+        rewrite(t.path(), MODS, "rev").unwrap();
+        assert_eq!(fs::read_to_string(t.path().join("nested/main.js")).unwrap(), "herdr-kit-usage-rev herdr-kit-coord-rev");
+        assert_eq!(fs::read_to_string(t.path().join("config.json")).unwrap(), "\"herdr-kit-coord-rev herdr-kit-usage-rev\"");
+        assert_eq!(fs::read_to_string(t.path().join("other.txt")).unwrap(), "herdr-kit-usage");
+    }
+    #[test]
+    fn layout_references_both_mods() {
+        let layout: Value = serde_json::from_str(include_str!("../layouts/herdr-kit.json")).unwrap();
+        let status = &layout["children"][1]["children"][2];
+        assert_eq!(status["type"], "row");
+        assert_eq!(status["children"][0]["content"]["mod"], MODS[0]);
+        assert_eq!(status["children"][1]["content"]["mod"], MODS[1]);
+        assert_eq!(status["children"][1]["size"]["px"], 280);
+    }
+    #[test]
+    fn release_mods_rejects_unknown_and_missing() {
+        let t = tempfile::tempdir().unwrap();
+        assert!(release_mods(t.path()).is_err());
+        fs::create_dir_all(t.path().join("mods/unmanaged")).unwrap();
+        assert!(release_mods(t.path()).is_err());
+    }
     #[test]
     fn activation_recovers_and_rolls_back() {
         let t = tempfile::tempdir().unwrap();
@@ -516,7 +638,15 @@ mod tests {
         let other = OpenOptions::new().write(true).open(t.path().join("manager.lock")).unwrap();
         assert!(other.try_lock_exclusive().is_err());
         drop(lock);
-        other.try_lock_exclusive().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match other.try_lock_exclusive() {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && std::time::Instant::now() < deadline =>
+                    std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(e) => panic!("manager lock not released: {e}"),
+            }
+        }
     }
     #[test]
     fn refuses_existing_unowned_mod_even_if_identical() {
@@ -528,7 +658,7 @@ mod tests {
         let rev = "a".repeat(40);
         let mut next = State { app_home: Some(home.clone()), ..State::default() };
         fixture_release(&data, &mut next, &rev);
-        copy_tree(&release(&data, &rev).join("mod"), &mod_path(&home, &rev)).unwrap();
+        copy_tree(&release(&data, &rev).join("mod"), &mod_path(&home, LEGACY_MOD, &rev)).unwrap();
         assert!(lock.activate(&State::default(), next, &rev).is_err());
     }
 }

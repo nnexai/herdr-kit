@@ -1,0 +1,4 @@
+worktree /path/to/herdr-kit
+HEAD 0026472d31b62c36ba5f81e0d820ac7a07d12bee
+branch refs/heads/main
+

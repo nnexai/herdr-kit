@@ -1,8 +1,8 @@
 # herdr-kit
 
 One local Rust tool with native JavaScript mods and a personal layout for
-[Herdr](https://herdr.dev). Usage/limits is the first capability; installation
-and repository-based self/suite updates are included. This is not a Herdr fork,
+[Herdr](https://herdr.dev). Usage/limits and agent coordination are capabilities;
+installation and repository-based self/suite updates are included. This is not a Herdr fork,
 a browser frontend, or a collection of backend executables.
 
 ![Herdr kit usage](preview.png)
@@ -57,8 +57,8 @@ updater. Internet release downloads and release signing are not implemented.
 The usage strip requests maintenance at startup and every six hours. Rust
 allows a check once daily after success (one-hour failure backoff), under a
 cross-process manager lock. A new committed revision is automatically built
-and applied; unchanged or not-due checks do not rebuild. There is no daemon:
-checks stop when no mod is running. Usage reads never trigger update work.
+and applied; unchanged or not-due checks do not rebuild. Maintenance checks
+stop when no mod is running. Usage reads never trigger update work.
 
 Each immutable release contains the executable and matching native assets.
 Mods have revision-specific names, and their generated runtime calls the exact
@@ -101,6 +101,51 @@ Copilot AIC values are not rescaled. Details retain all accounts, reset times
 and conditional pace estimates. Quotas are local to this machine, even when
 viewing a remote Space. No Cockpit process, state, cache or installed files are
 used.
+
+## Coordinator
+
+The coordinator helps a person organize agent work in workstreams and tasks.
+It keeps the coordinator and its watcher visible in Herdr terminals, with a
+status icon that can start the watcher when it is not running.
+
+```sh
+<data-dir>/bin/herdr-kit coord up
+<data-dir>/bin/herdr-kit coord status --json
+<data-dir>/bin/herdr-kit coord down
+```
+
+To try an uninstalled checkout without using an older installed executable,
+build once and use a separate data directory:
+
+```sh
+cargo build --locked --release
+./target/release/herdr-kit --data-dir "$HOME/.local/share/herdr-kit-preview" coord up
+```
+
+Keep that executable in place while the preview runs; rebuilding a running
+development binary can invalidate its saved launch path. The app icon, board
+and timeline ship as the separate `herdr-kit-coord` mod with normal suite
+installation. Installation still reads committed source as described above.
+
+The person can open and close workstreams, start, send to and close tasks,
+release resources, record decisions and instructions, and rate outcomes.
+The coordinator can do the same work-management operations, but only the person
+can change configuration or ratings and start or stop the coordinator. Delegates
+report and add notes to their own tasks. Anyone can read the board, log,
+explanations, inbox, roles and statistics. `coord --help` lists commands.
+
+State lives under `<data-dir>/coord/`, including the append-only journal,
+configuration, roles and task files. Built-in roles can be overridden with
+files in `coord/roles/`; `coord roles` lists the effective roles. Autostart is
+controlled by coordinator configuration. The watcher is a `coord watch`
+subcommand running in an hc terminal, not a hidden service.
+
+The coordinator never closes spaces created by the person, never types into
+startup dialogs, and does not reopen a coordinator tab the person closed.
+The journal includes insight records such as operation and cause identifiers,
+ratings and outcomes; `coord stats --json` summarizes them. See
+[the coordinator specification](docs/coordinator-spec.md) for the full model
+and safety rules.
 
 ## Structure and extension boundary
 

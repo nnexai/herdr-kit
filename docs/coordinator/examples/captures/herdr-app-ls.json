@@ -1,0 +1,35 @@
+{
+  "spaces": [
+    {
+      "id": "sp6c42cc765578e80962e0ae96359d6f50",
+      "name": "sample-project",
+      "folder": "/path/to/sample-project",
+      "machine": null,
+      "active": false,
+      "tabs": [
+        {
+          "id": "tb78dcfc32dd4be40c21d58e45f7faec68",
+          "name": "1",
+          "active": true,
+          "settled": false,
+          "terminals": [
+            {
+              "terminal": "t7",
+              "pane": "pd482bd388790a8d2a0c5b637c6b1da02",
+              "status": "idle",
+              "app": "omp",
+              "name": null,
+              "sub_agents": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "recent": [
+    {
+      "name": "",
+      "folder": "/tmp/hk-trust2"
+    }
+  ]
+}

@@ -1,8 +1,7 @@
 # Herdr Kit
 
-A native Herdr workbench with a compact bottom-right subscription readout, backed
-by one extensible Rust command-line tool. Usage and local-repository suite
-updates are the initial capabilities.
+A native Herdr workbench with a compact bottom-right subscription readout and
+agent coordinator, backed by one extensible Rust command-line tool.
 
 ![Herdr Kit](preview.png)
 
@@ -31,10 +30,25 @@ Git source and builds only committed revisions. Rust schedules it once a day.
 It updates the single tool, managed mods and default layout as a versioned
 suite. User clones and personal settings/shortcuts remain untouched.
 
+The coordinator keeps workstreams, tasks, decisions and reports in an
+append-only local journal. The person controls it with `coord up`, `coord down`
+and `coord status`; the status icon can start its visible watcher terminal.
+People and the coordinator manage work, delegates report on their own tasks,
+and the board, log, inbox, roles and statistics are readable by all callers.
+Only the person changes configuration or rates outcomes. The data directory's
+`coord/` holds state and role overrides; autostart is configurable.
+
+The coordinator does not close spaces created by the person, type into startup
+dialogs or reopen a coordinator tab the person closed. Operation, cause,
+outcome and rating records support `coord stats --json`. See
+`docs/coordinator-spec.md` for the full behavior and safety rules.
+
 ## Built from
 
 - `layouts/herdr-kit.json`: custom layout retaining built-in mod references.
 - `mods/herdr-kit-usage`: native GPUI View, pure JS model, deployment runtime.
+- `mods/herdr-kit-coord`: native coordinator status, board and timeline.
+- `src/coord/`: coordinator commands, journal, lifecycle and watcher.
 - `src/usage*`: OMP adapter, private anonymous cache and scheduling.
 - `src/manager.rs`: registered Git source, immutable release builds, hash
   receipts, activation journal and rollback.

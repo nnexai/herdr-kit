@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add coordinator workstreams, task delegation, a visible watcher and native
+  status, board and timeline views, with journal-based insights and statistics.
 - Integrate usage into the existing 28px statusbar, replacing the bottom-right
   command-palette hint with a compact readout; remove the separate usage row.
 
