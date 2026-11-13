@@ -148,3 +148,17 @@ test('filtered loaded pages keep older entries reachable',()=>{
   assert.equal(vm.rows.at(-1).selectable,true);
  }
 });
+
+test('closed-task disclosure labels follow their count and retain navigation',()=>{
+ for (const count of [1,2]) {
+  const tasks=Array.from({length:count},(_,i)=>task({id:`ws-a-t${i+1}`,number:i+1,state:'closed'}));
+  const ui={now,collapsed:new Set(['open:ws-a'])};
+  const b=board({workstreams:[ws({tasks})],attention:[]});
+  const collapsed=m.boardModel(b,status(),ui);
+  const disclosure=collapsed.rows.find(row=>row.kind==='closed');
+  assert.equal(disclosure.title,`${count} closed ${count===1?'task':'tasks'}`);
+  assert.equal(m.moveSelection(collapsed.rows,'ws-a','down'),disclosure.key);
+  const expanded=m.boardModel(b,status(),{...ui,showClosed:new Set(['ws-a'])});
+  assert.deepEqual(expanded.rows.filter(row=>row.kind==='task').map(row=>row.key),tasks.map(t=>t.id));
+ }
+});
