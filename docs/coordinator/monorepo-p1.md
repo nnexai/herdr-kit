@@ -1,6 +1,7 @@
 # P1: workspace and selected-artifact manager
 
-Status: branch development authorized; no main merge or live deployment authorized.
+Status: P1 acceptance passed in disposable fixtures; main merge and live deployment
+remain unauthorized pending the person-owned freeze and a quiet merge owner/time.
 P0 is accepted and remains on `coord/monorepo`. Freeze is a **P1 merge/deploy**
 prerequisite, not a development prerequisite.
 
@@ -146,8 +147,32 @@ Before any P0+P1 merge into the live trusted main checkout:
 
 ## Gate evidence
 
-P1 acceptance requires committed-source private install/check/apply/rollback,
-old receipt/journal migration, selected-only ownership, preservation/refusal of
-edited or unowned bytes, and multi-artifact crash-prefix recovery. Evidence and
-observed results are recorded in the phase report under ignored
-`evidence/monorepo-p1/`; no live deployment is implied by branch verification.
+Code/source gate: `9e5b6d8`, incorporating main `b362454`, with the following
+observed proof under ignored `evidence/monorepo-p1/`:
+
+| Check | Observed outcome / evidence |
+|---|---|
+| Rust unit and CLI suites | 113 unit + 12 CLI tests passed, including conversation delivery/permissions, receipt preservation, dependency pins and every artifact/metadata crash prefix (`integrated-rust-tests.log`) |
+| Release build and JS | `cargo build --locked --release -p kit-manager` passed; all 48 JS tests passed (`integrated-build.log`, `integrated-js-tests.log`) |
+| Committed-source install/update | Real archived sources: legacy suite → new five-package/three-mod bundle; dirty source ignored; committed source update available/applied; full-set rollback and due/not-due maintenance passed (`gate-*.json`) |
+| Real old writer after reverse rollback | Old installed CLI reads its retained legacy release and writes source; new manager retains previous selection/ownership and reboots the new selected set without collisions (`gate-reverse-legacy.json`, `gate-legacy-writer.json`, `gate-new-cli-after-old-writer.json`, `gate-rebootstrap.json`) |
+| Selected-only install | Requesting kit-coord-ui installed exactly kit-coord-ui + kit-coord, not usage, manager selection or suite layout; consumer-owned layout/keys stayed byte-identical (`chat-only-*.json`, `chat-unowned-*.sha256`) |
+| Drift and durable data | Edited managed layout refused without overwriting its bytes; copied journal/roles/briefs/results/session bytes and unowned settings/layout/keys stayed identical across deployment (`gate-drift-refusal.stderr`, `gate-*.sha256`) |
+| Native installed surface | Real Mission Log, Board, Timeline and seeded Claude 32% Limits rendered; healthy status errors=[], zero actors and unchanged private core (`native-*.png`, `native-*-status.json`, `gate-final-terminals.json`, `gate-final-core.json`) |
+| Cleanup | Only owned disposable app/core/compositor stopped; temporary source/runtime/build scaffolding removed (`cleanup.txt`, `fixture-*.json`) |
+
+The private source-update marker commit changes no product code; runtime/UI/CLI
+pins were asserted to match its complete selected revision. No user credentials
+or live journal were read/copied. Native state used the repository's sample
+journal and a bounded fake OMP report. No model agents, Herdr Spaces or additional
+project worktrees were created; existing Git tests use their own temporary
+fixtures. Native source/carrier/layout-matrix behavior beyond this P1 scope
+remains gated by P2–P4; P5 rollout is still separately authorized.
+
+After that native/source gate, main's motion-key-only `1a39a1f` was merged as
+`8ca44c4`, preserving both its stable preference key and this branch's pinned
+dependency binding. All 12 affected UI tests and a fresh disposable native
+`herdr-app check` passed (`late-main-ui-tests.log`,
+`late-main-native-check.log`). Installed-window screenshots above intentionally
+identify the earlier `9e5b6d8` source/marker generation; the late merge changes
+only the shared preference key, not layout or rendering.
