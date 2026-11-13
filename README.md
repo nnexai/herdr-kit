@@ -151,6 +151,41 @@ folder name in `keys.json`, for example:
 `"global": { "ctrl-alt-n": "herdr-kit-coord-<revision>.restart" }`.
 Update that binding when the installed revision changes.
 
+### Mission Log
+
+The separate `kit-coord-ui` mod adds **Mission log** to the sidebar. It opens
+the Rail conversation view without replacing Board/Timeline or the raw
+coordinator terminal. Its menu reuses the coordinator's Clear context,
+Restart and Show actions. No key bindings are installed.
+
+The rail interleaves real coordinator replies with placed tasks, delegate
+reports, progress, decisions and questions. Question pills only fill the
+composer; Enter or Send delivers the draft. Working state and elapsed time
+come from the coordinator's actual hc turn, and the step is its latest tool
+operation—not a simulated sequence. Send stays disabled during a turn.
+The narrow working placeholder is deliberately short. Reduce motion in the
+menu disables the orbit, shimmer and question pulse; the OS animation
+preference is read once when the view opens when no override is set.
+
+```sh
+herdr-kit coord conversation --json
+herdr-kit coord say --text 'A message for the coordinator'
+```
+
+`say` is person-only and always targets the recorded coordinator, never a
+delegate. It sends the text unchanged through supported `hc send`, under the
+same terminal lock as watcher delivery. `--question QID` records an answer
+only after confirmed delivery. Use `coord task send` for delegates.
+
+`conversation` projects the exact current coordinator OMP session's active
+branch. It excludes thinking, tool results, intermediate tool-use replies,
+the startup brief and operational input. It reads the recorded session,
+not terminal screen text, and reports missing, ambiguous or malformed
+sources explicitly. After Clear context, prior-session replies remain in
+OMP history rather than being copied into the new session's conversation.
+The mod itself reads only coordinator CLI JSON. If kit-coord or the
+coordinator is unavailable, it keeps the draft and shows a clear state.
+
 State lives under `<data-dir>/coord/`, including the append-only journal,
 configuration, roles and task files. Use `--role coord-design` on
 `coord task start` for UI/UX and visual design: it starts `omp --model @design`,

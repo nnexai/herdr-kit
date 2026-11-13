@@ -18,6 +18,8 @@ pub struct Attention {
     pub text: String,
     pub options: Option<Vec<String>>,
     pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qid: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -30,7 +32,7 @@ pub struct Counts {
 
 pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention> {
     let mut items = Vec::new();
-    for q in state.questions.values().filter(|q| q.answered.is_none()) {
+    for (qid, q) in state.questions.iter().filter(|(_, q)| q.answered.is_none()) {
         items.push(Attention {
             id: format!("q-{}", q.asked_seq),
             kind: "question".into(),
@@ -40,6 +42,7 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
             text: q.text.clone(),
             options: q.options.clone(),
             seq: Some(q.asked_seq),
+            qid: Some(qid.clone()),
         });
     }
     for t in state.tasks.values() {
@@ -59,6 +62,7 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
                     text: t.summary.clone().unwrap_or_default(),
                     options: None,
                     seq: Some(seq),
+                    qid: None,
                 });
             }
         }
@@ -89,6 +93,7 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
                         text: text.into(),
                         options: None,
                         seq: Some(seq),
+                        qid: None,
                     });
                 }
             }
@@ -105,6 +110,7 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
                 text: "Coordinator is blocked.".into(),
                 options: None,
                 seq: None,
+                qid: None,
             });
         }
     }

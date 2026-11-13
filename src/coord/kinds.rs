@@ -321,6 +321,8 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_ms: Option<u64>,
     },
+    #[serde(rename = "coord.sent")]
+    CoordSent { text: String, terminal: String, qid: Option<String> },
     #[serde(rename = "rating")]
     Rating {
         target: String,
@@ -473,6 +475,7 @@ impl Kind {
             Self::TaskClosed { .. } => "task.closed",
             Self::TaskTurn { .. } => "task.turn",
             Self::CoordTurn { .. } => "coord.turn",
+            Self::CoordSent { .. } => "coord.sent",
             Self::Rating { .. } => "rating",
             Self::ConfigChanged { .. } => "config.changed",
             Self::ResIntent(_) => "res.intent",

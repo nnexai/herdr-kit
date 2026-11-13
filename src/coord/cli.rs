@@ -30,6 +30,20 @@ pub enum CoordCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Send a person message to the current coordinator.
+    Say {
+        #[arg(long)]
+        text: String,
+        #[arg(long)]
+        question: Option<String>,
+    },
+    /// Read the current coordinator conversation.
+    Conversation {
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=500))]
+        limit: u16,
+    },
     /// Replace the coordinator session with a fresh one when safe.
     Restart {
         /// Restart even when the coordinator is not idle.

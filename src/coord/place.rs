@@ -67,7 +67,7 @@ fn read_brief(path: &Path) -> Result<String> {
     anyhow::ensure!(text.len() <= 1_048_576, "brief exceeds 1 MiB");
     Ok(text)
 }
-fn send_guard(term: &super::adapter::Term) -> Result<()> {
+pub(super) fn send_guard(term: &super::adapter::Term) -> Result<()> {
     if matches!(term.word(), Some("blocked" | "error")) {
         return Err(refuse("agent_blocked", "agent is blocked"));
     }
@@ -1202,31 +1202,20 @@ pub fn decide(ctx: &Ctx, c: &Caller, a: &cli::Decide) -> Result<Value> {
     let entries = l.append(&c.actor(), ctx.now(), entries)?;
     Ok(json!({"seq":entries[0].seq,"qid":qid}))
 }
+pub(super) fn answer_entry(state: &State, qid: &str, text: &str) -> Result<(Option<WsId>, Option<TaskId>, Kind)> {
+    let q = state.questions.get(qid).ok_or_else(|| refuse("unknown_question", "unknown question"))?;
+    if q.answered.is_some() {
+        return Err(refuse("question_answered", "question already answered"));
+    }
+    Ok((q.ws.clone(), q.task.clone(), Kind::QuestionAnswered { qid: qid.to_owned(), text: text.to_owned() }))
+}
+
 pub fn ask(ctx: &Ctx, c: &Caller, a: &cli::Ask) -> Result<Value> {
     let j = ctx.journal()?;
     let mut l = j.lock()?;
     if let Some(qid) = &a.answer {
-        let q = l
-            .state()
-            .questions
-            .get(qid)
-            .ok_or_else(|| refuse("unknown_question", "unknown question"))?;
-        if q.answered.is_some() {
-            return Err(refuse("question_answered", "question already answered"));
-        }
-        let (ws, task) = (q.ws.clone(), q.task.clone());
-        let e = l.append(
-            &c.actor(),
-            ctx.now(),
-            vec![(
-                ws,
-                task,
-                Kind::QuestionAnswered {
-                    qid: qid.clone(),
-                    text: a.text.clone(),
-                },
-            )],
-        )?;
+        let item = answer_entry(l.state(), qid, &a.text)?;
+        let e = l.append(&c.actor(), ctx.now(), vec![item])?;
         return Ok(json!({"seq":e[0].seq,"qid":qid}));
     }
     let (ws, task) = scope(&a.ws, &a.task)?;

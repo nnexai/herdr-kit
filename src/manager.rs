@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DAY: u64 = 86_400;
 const BACKOFF: u64 = 3_600;
-const MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord"];
+const MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord", "kit-coord-ui"];
 const LEGACY_MOD: &str = "herdr-kit-usage";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -539,7 +539,7 @@ mod tests {
             fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("main.js"), base).unwrap();
         }
-        fs::write(r.join("layout.json"), format!("{} {}", name(MODS[0], rev), name(MODS[1], rev))).unwrap();
+        fs::write(r.join("layout.json"), MODS.iter().map(|base| name(base, rev)).collect::<Vec<_>>().join(" ")).unwrap();
         fs::write(r.join("herdr-kit"), rev).unwrap();
         state.releases.insert(rev.to_owned(), tree(&r).unwrap());
     }

@@ -67,6 +67,12 @@
           ]
         },
         {
+          "id": "mission-log",
+          "type": "block",
+          "size": { "px": 28 },
+          "content": { "mod": "kit-coord-ui", "props": { "view": "launcher" } }
+        },
+        {
           "id": "sidebar-footer",
           "type": "block",
           "size": {
