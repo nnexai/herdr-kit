@@ -640,19 +640,27 @@ impl Locked {
                     serde_json::to_string(&name(base, rev))?
                 );
                 fs::write(dir.join("runtime.js"), runtime)?;
+                let mut diagnostic = tempfile::tempfile()?;
                 let check = bounded(
                     Command::new("herdr-app")
                         .arg("check")
                         .arg(&dir)
                         .env("HERDR_APP_HOME", &home)
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null()),
+                        .stdout(diagnostic.try_clone()?)
+                        .stderr(diagnostic.try_clone()?),
                     30,
                 );
                 match check {
-                    Ok(status) => ensure!(status.success(), "native mod check failed"),
+                    Ok(status) if !status.success() => {
+                        use std::io::{Read, Seek, SeekFrom};
+                        diagnostic.seek(SeekFrom::Start(0))?;
+                        let mut message = String::new();
+                        diagnostic.take(2048).read_to_string(&mut message)?;
+                        bail!("native mod check failed ({base}): {}", message.trim());
+                    }
+                    Ok(_) => (),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(_) => bail!("native mod check failed"),
+                    Err(error) => bail!("native mod check failed ({base}): {error}"),
                 }
                 receipt.mods.insert(base.clone(), tree(&dir)?);
             }

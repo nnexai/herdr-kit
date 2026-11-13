@@ -2,6 +2,10 @@
 
 Status: implemented design, with the Board redesign below replacing the original card/column proposal. Authoritative inputs: `docs/coordinator-spec.md` (sections 6 "Autostart and the status icon", 9 "What the person sees", 12 "Details fixed for the first version"). The UI is a **separate mod `mods/herdr-kit-coord/`**, sharing no files with `mods/herdr-kit-usage/`.
 
+Historical Rust source citations below use the pre-workspace tree. During P1,
+those files live under `crates/kit-manager/`; current deployment ownership is in
+the [P1 runbook](monorepo-p1.md). UI contracts retain their existing meaning.
+
 Nothing here was run against the live window. Mockups use illustrative hex colours; the real mod reads `theme()`.
 
 Contents: 1 Goal & users · 2 Evidence · 3 Flow · 4 Screens/components (4.1 status strip, 4.2 board, 4.3 timeline, 4.4 data contract, 4.5 refresh & process rules, 4.6 component breakdown) · 5 Interaction & keyboard · 6 Accessibility · 7 Options considered · 8 Open questions · 9 Acceptance scenarios · 10 Examples.

@@ -1,5 +1,10 @@
 # Coordinator: implementation plan
 
+Historical implementation record: source paths below use the pre-workspace tree.
+P1 moves that direct implementation under `crates/kit-manager/`; deployment
+ownership and subsequent extraction follow [the modular plan](standalone-mod-plan.md)
+and [P1 runbook](monorepo-p1.md), rather than this original packaging inventory.
+
 Inputs, in order of authority: `docs/coordinator-spec.md` (the spec, final),
 `docs/coordinator/board-design.md` §4.4 (authoritative for the JSON of
 `coord status`, `coord board`, `coord log`), this plan. Supporting files:
