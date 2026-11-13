@@ -23,6 +23,10 @@
   immediate restart, dialog shortcut and bindable mod command.
 - Confirm coordinator terminal loss against Herdr before ending a session,
   so buffered events cannot mark a live replacement missing after a restart.
+- Give Coordinator Board and Timeline one shared popup frame at every width,
+  and replace the Board's bottom action dock with selected-row actions. Keep
+  actions keyboard-reachable without new shortcuts; quiet healthy diagnostics
+  on both tabs and keep coordinator controls in the same header.
 
 ## 0.1.0
 

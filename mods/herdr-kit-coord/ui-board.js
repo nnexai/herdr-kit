@@ -9,7 +9,7 @@ export function actionButton(id, label, t, handler, primary = false, tabIndex = 
     .text_size(11).hover(s => s.bg(t.hover).text_color(t.foreground)).accessibility_label(label)
     .on_click((_e, cx) => { cx.stop_propagation(); handler(cx); }).child(label);
 }
-export function dialog(view, body, footer, board = null) {
+export function dialog(view, body, footer) {
   const t = theme(), status = view.store.status, starting = view.store.starting;
   const state = starting ? 'Starting…' : !status ? 'Loading…' : !status.enabled ? 'Not running' : status.state === 'running' ? 'Running' : status.state === 'degraded' ? 'Degraded' : 'Not running';
   const color = starting ? t.dim : status?.enabled && status.state === 'running' ? t.accent : status?.enabled && status.state === 'degraded' ? t.working : t.dim;
@@ -22,12 +22,12 @@ export function dialog(view, body, footer, board = null) {
     if (status.coordinator?.status) health.push(`coordinator ${status.coordinator.status}`);
     if (status.generated_at_ms != null) health.push(`updated ${formatClock(status.generated_at_ms)}`);
   }
-  const header = h_flex().gap(8).items_center().child(div().font_semibold().text_size(15).child('Coordinator'));
+  const header = h_flex().h(24).flex_shrink_0().gap(8).items_center().child(div().font_semibold().text_size(15).child('Coordinator'));
   const tabs = h_flex().gap(2).role('tab_list');
   for (const [id, label] of [['board','Board'],['timeline','Timeline']]) {
     const selected = view.ui.view === id;
     tabs.child(Button.new(`coord-tab-${id}`).role('tab').selected(selected).tab_index(id === 'board' ? 1 : 2)
-      .px(8).py(4).rounded(4).bg(selected ? t.selected : t.popover).hover(s => s.bg(t.hover))
+      .h(22).px(8).rounded(4).bg(selected ? t.selected : t.popover).hover(s => s.bg(t.hover))
       .on_click((_e, cx) => view.setTab(id,cx)).child(label));
   }
   header.child(tabs);
@@ -35,22 +35,21 @@ export function dialog(view, body, footer, board = null) {
   controls.child(h_flex().gap(5).items_center().text_color(color).role('status')
     .tooltip(health.join(' · ')).accessibility_label([state,...health].join('. '))
     .child(div().size(6).rounded(3).bg(color)).child(state));
-  const ownedActions = board ? [board.empty?.action,board.bannerAction] : [];
-  if (status && (!status.enabled || status.state !== 'running') && !starting && !ownedActions.includes('Start coordinator') && !ownedActions.includes('Repair'))
+  if (status && (!status.enabled || status.state !== 'running') && !starting)
     controls.child(actionButton('coord-start', status.enabled && status.state === 'degraded' ? 'Repair' : 'Start coordinator', t, cx => view.start(cx), true, 3));
-  if (status?.coordinator?.terminal && !ownedActions.includes('Show coordinator'))
+  if (status?.coordinator?.terminal)
     controls.child(actionButton('coord-show', 'Show coordinator', t, cx => view.navigate('reply', {kind:'attention', source:{kind:'question'}}, cx), false, 4));
   if (status?.enabled && status.state === 'running' && !view.store.restarting) {
     if (view.store.restartPending) controls.child(actionButton('coord-restart-now', 'Restart now', t, cx => view.clearContext(cx), false, 5));
     else controls.child(actionButton('coord-clear-context', 'Clear context', t, cx => view.clearContext(cx), false, 5));
   }
-  const close = actionButton('coord-close', 'Close', t, () => closeOverlay(props().overlay), false, board ? 11 : 7);
+  const close = actionButton('coord-close', 'Close', t, () => closeOverlay(props().overlay), false, 11);
   const chrome = v_flex().gap(8).flex_shrink_0();
-  if (board && view.width < 640) {
+  if (view.width < 640) {
     header.child(div().flex_1()).child(close);
-    chrome.child(header).child(controls);
+    chrome.child(header).child(controls.flex_wrap());
   } else chrome.child(header.child(div().flex_1()).child(controls).child(close));
-  const root = v_flex().id('coord-dialog').size_full().min_h(0).p(board ? 18 : 14).gap(board ? 12 : 8).bg(t.popover).text_color(t.foreground).text_size(13)
+  const root = v_flex().id('coord-dialog').size_full().min_h(0).p(18).gap(12).bg(t.popover).text_color(t.foreground).text_size(13)
     .role('dialog').accessibility_label('Coordinator').child(chrome);
   if (view.confirmRestart && view.store.restartPending && status?.state === 'running') {
     root.child(h_flex().gap(8).items_center().role('alert')
@@ -58,10 +57,14 @@ export function dialog(view, body, footer, board = null) {
       .child(actionButton('coord-confirm-restart', 'Restart now', t, cx => { view.confirmRestart = false; view.store.restart(cx, true); }))
       .child(actionButton('coord-cancel-restart', 'Cancel', t, cx => { view.confirmRestart = false; cx.notify(); })));
   }
-  if (view.store.restartMessage || view.store.restarting) root.child(div().role('status').text_size(12).child(view.store.restarting ? 'Clearing context…' : view.store.restartMessage));
-  if (!board) root.child(div().role('status').min_w(0).truncate().text_size(11.8).text_color(t.muted).tooltip(health.join(' · ')).child(health.join(' · ')));
-  const restartHint = status?.enabled && status.state === 'running' ? view.confirmRestart && view.store.restartPending ? '   Enter restart now · Esc cancel' : view.store.restartPending ? '   n restart now' : '   n clear context' : '';
-  return root.child(body).child(div().flex_shrink_0().text_size(11).text_color(t.dim).child(`${footer}${restartHint}`));
+  if (view.store.restartMessage || view.store.restarting) {
+    const message = view.store.restarting ? 'Clearing context…' : view.store.restartMessage;
+    root.child(div().role('status').flex_shrink_0().min_h(20).min_w(0).truncate().text_size(12).tooltip(message).child(message));
+  }
+  const restartHint = view.width >= 640 && status?.enabled && status.state === 'running' ? view.confirmRestart && view.store.restartPending ? '   Enter restart now   Esc cancel' : view.store.restartPending ? '   n restart now' : '   n clear context' : '';
+  const hints = `${footer}${restartHint}`;
+  return root.child(body).child(div().flex_shrink_0().h(28).pt(8).border_t(1).border_color(t.border)
+    .min_w(0).whitespace_nowrap().truncate().text_size(11).text_color(t.dim).tooltip(hints).child(hints));
 }
 export function list(view, id) {
   return v_flex().id(id).role('list').flex_1().min_h(0).gap(4).overflow_y_scrollbar().track_scroll(view.scroll)
@@ -105,10 +108,10 @@ function boardDetails(row) {
   return row.details || [];
 }
 function boardRow(row, view, t, first, last) {
-  const selected = view.ui.selectedKey === row.key, expanded = view.ui.expanded.has(row.key);
+  const selected = view.ui.selectedKey === row.key, expanded = view.ui.expanded.has(row.key), narrow = view.width < 520;
   const workstream = row.kind === 'workstream', closed = row.kind === 'closed', task = row.kind === 'task';
   const wrap = v_flex().id(`coord-row-${row.key}`).role(workstream ? 'tree_item' : 'list_item').min_w(0).flex_shrink_0()
-    .border_l(2).border_color(selected ? t.accent : t.raised).px(12).py(closed ? 6 : 10)
+    .border_l(2).border_color(selected ? t.accent : t.raised).px(12).py(closed ? 6 : 8)
     .bg(selected ? t.selected : t.raised).hover(s => s.bg(t.hover)).aria_selected(selected)
     .accessibility_label([row.kind, row.source?.id, row.state?.word, row.age, row.title, row.role, row.meta].filter(Boolean).join(', '))
     .on_click((_e,cx) => { view.select(row,cx); if (workstream || closed) view.navigate('toggle',row,cx); });
@@ -117,7 +120,7 @@ function boardRow(row, view, t, first, last) {
   if (workstream) wrap.mt(8);
   if (task || closed) wrap.pl(30);
   if (selected) wrap.aria_active_descendant();
-  const line = h_flex().gap(8).items_center().min_w(0);
+  const line = h_flex().gap(8).items_center().min_w(0).min_h(closed ? 22 : 0);
   if (workstream || closed) line.child(div().w(12).flex_shrink_0().text_color(t.muted).child((workstream ? !row.collapsed : view.ui.showClosed.has(row.source.id)) ? '▾' : '▸'));
   if (row.kind === 'attention') line.child(div().w(12).flex_shrink_0().text_color(t.blocked).child(row.state?.word || '!'));
   const title = clip(oneLine(row.title),240);
@@ -126,9 +129,10 @@ function boardRow(row, view, t, first, last) {
   if (workstream) text.font_semibold().text_size(14);
   if (closed || row.state?.word === 'closed') text.text_color(t.muted);
   line.child(text);
+  if (closed && selected) line.child(rowActions(row,view,t));
   wrap.child(line);
   if (!closed) {
-    const meta = h_flex().gap(8).items_center().min_w(0).text_size(11).text_color(t.muted);
+    const meta = h_flex().gap(8).items_center().min_w(0).min_h(22).text_size(11).text_color(t.muted);
     if (workstream) {
       const n = row.source.tasks.filter(task => task.state !== 'closed').length;
       meta.pl(20).child(div().flex_1().min_w(0).truncate().child([row.source.repo?.name,`${n} ${n === 1 ? 'task' : 'tasks'}`,row.state?.word === 'closing' ? 'Closing' : null].filter(Boolean).join('  /  ')));
@@ -142,20 +146,22 @@ function boardRow(row, view, t, first, last) {
         : row.meta;
       meta.child(div().flex_1().min_w(0).truncate().tooltip(clip(row.meta || '',600)).child(clip(oneLine(context),240)));
     }
+    if (selected && !narrow) meta.child(rowActions(row,view,t));
     if (row.age) meta.child(div().flex_shrink_0().tooltip('Time in current state').child(row.age));
     wrap.child(meta);
+  }
+  if (narrow && !closed) {
+    const shelf = h_flex().h(22).mt(6).flex_shrink_0().items_center();
+    if (selected) shelf.child(rowActions(row,view,t));
+    wrap.child(shelf);
   }
   if (row.kind === 'retained' && row.checked) wrap.child(div().text_size(11).text_color(t.dim).child(`Last checked ${row.checked} ago`));
   const details = boardDetails(row);
   if (expanded && details.length) wrap.child(detailsPanel({...row,details},view,t));
   return wrap;
 }
-function selectionDock(row, view, t) {
-  const dock = v_flex().flex_shrink_0().h(68).gap(6).pt(10).border_t(1).border_color(t.border)
-    .role('toolbar').accessibility_label('Actions for selected item');
-  const title = row?.kind === 'closed' ? 'Closed tasks' : row?.title;
-  dock.child(div().min_w(0).truncate().text_size(11).text_color(t.muted).child(title || 'Select an item to see its actions'));
-  const actions = h_flex().gap(6).items_center();
+function rowActions(row, view, t) {
+  const actions = h_flex().gap(6).items_center().flex_shrink_0().role('toolbar').accessibility_label(`Actions for ${row.title}`);
   if (row) {
     const available = row.kind === 'workstream'
       ? [{id:'toggle',label:row.collapsed ? 'Expand' : 'Collapse'},...(row.actions || [])]
@@ -169,7 +175,7 @@ function selectionDock(row, view, t) {
     }
     if (boardDetails(row).length) actions.child(actionButton('selected-details',view.ui.expanded.has(row.key) ? 'Hide details' : 'Details',t,cx => { view.focus.focus(); view.key({key:'right'},cx); },false,index));
   }
-  return dock.child(actions);
+  return actions;
 }
 export function renderBoard(view) {
   const t = theme(), store = view.store;
@@ -185,11 +191,7 @@ export function renderBoard(view) {
       if (vm.empty.kind === 'error') state.role('alert');
       state.child(div().font_semibold().text_size(18).text_color(t.foreground).child(store.starting ? 'Starting coordinator…' : vm.empty.text));
       if (vm.empty.detail) state.child(div().max_w(360).text_center().child(vm.empty.detail));
-      if (vm.empty.action && !store.starting) state.child(actionButton('board-empty-action',vm.empty.action,t,cx => {
-        if (vm.empty.action === 'Start coordinator') view.start(cx);
-        else if (vm.empty.action === 'Show coordinator') view.navigate('reply',{kind:'attention',source:{kind:'question'}},cx);
-        else view.refresh(cx);
-      },vm.empty.action === 'Start coordinator',3));
+      if (vm.empty.action === 'Retry') state.child(actionButton('board-empty-action',vm.empty.action,t,cx => view.refresh(cx)));
       body.child(state);
     }
   } else {
@@ -206,6 +208,5 @@ export function renderBoard(view) {
     }
   }
   const content = v_flex().flex_1().min_h(0).child(body);
-  if (!vm.empty) content.child(selectionDock(vm.rows.find(row => row.key === view.ui.selectedKey),view,t));
-  return dialog(view,content,vm.empty ? 'Esc close' : '↑↓ select   Enter open   → details   Esc close',vm);
+  return dialog(view,content,vm.empty ? 'Esc close' : view.width < 640 ? '↑↓ select   Enter open   Esc close' : '↑↓ select   Enter open   → details   Esc close');
 }

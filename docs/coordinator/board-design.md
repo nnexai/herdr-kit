@@ -206,9 +206,9 @@ Stale means the last good snapshot's `generated_at_ms` is older than 90 s while 
 
 #### 4.2.1 Container
 
-`openOverlay({mod: MOD_NAME, props: {view:'board', tab:'board'}, kind:'dialog', width: 760, height: 600})`. Board root: `role('dialog')`, `accessibility_label('Coordinator')`, `bg(t.popover)`, `text_color(t.foreground)`, 13 px text, 18 px padding, 12 px gaps. One board at a time (module-level `dialog` guard).
+`openOverlay({mod: MOD_NAME, props: {view:'board', tab:'board'}, kind:'dialog', width: 760, height: 600})`. Both tabs use one shared shell: `role('dialog')`, `accessibility_label('Coordinator')`, `bg(t.popover)`, 13 px text, 18 px padding and 12 px gaps. The header is 24 px high; the footer is a fixed 28 px hint row with a top rule. Restart notices occupy the same slot on both tabs. Only the body and contextual hint text change on a tab switch.
 
-Below 640 logical px the header becomes two rows. The scrollable board and action dock retain the same single-column structure at every width.
+Below 640 logical px both tabs use the same two-row header. Below 520 px Board rows reserve a 22 px action shelf, including unselected rows; otherwise actions share the metadata line.
 
 Dialog (not `window`) because it is modal, `Esc` closes it without mod code, and the usage dialog sets that precedent; see Option B in 7.
 
@@ -225,29 +225,27 @@ Each heading and row remains a **direct scroll child**, so `scroll_to_item`
 indices still match the keyboard's flat `boardModel.rows`. Details are children
 of their row, never extra scroll items. Do not introduce nested scrolling groups.
 
-**Header:** Coordinator, Board/Timeline tabs, state, Show coordinator, Close.
+**Header:** Coordinator, Board/Timeline tabs, state, coordinator actions, Close.
 Below 640 px the title/tabs/Close occupy the first row and status/actions the
-second. Healthy Board diagnostics are available in the state chip's tooltip and
-accessibility label, rather than a permanent line. The full watcher heartbeat,
-release, coordinator status and update time remain available there. Timeline
-keeps its existing health line and layout.
+second. Healthy diagnostics remain in the state chip's tooltip and accessibility
+label on both tabs. Degraded state is explained by the same banner on both.
 
-**One owner per action:** when an empty state or banner already provides Start,
-Repair or Show coordinator, the header omits the same action. The empty off
-state therefore contains exactly one Start coordinator button. While starting,
-body copy says “Starting coordinator…” and start actions are hidden. Data is
-never cleared just because the coordinator is off.
+**One owner per action:** Start, Repair and Show coordinator live in the shared
+header, depending only on coordinator status, never on the selected tab.
+Empty states and banners do not duplicate them; failed reads retain Retry.
+While starting, body copy says “Starting coordinator…” and start actions are
+hidden. Data is never cleared just because the coordinator is off.
 
-**Banners:** errors, stale reads and degraded state remain visible, with Retry,
-Repair or Start coordinator as appropriate. An in-flight start does not expose
-a second start action. Watcher problems still explain that tasks keep running
-while nudges and reconcile are paused. No new execution commands are introduced.
+**Banners:** errors, stale reads and degraded state remain visible. Failed reads
+offer Retry; Start and Repair stay in the shared header. Watcher problems still
+explain that tasks keep running while nudges and reconcile are paused. No new
+execution commands are introduced.
 
 **Needs you:** question or warning glyph, wrapping question text, then its
 workstream context and origin; age is secondary. Full text, options, ids and
 since-time are available in Details. Unknown attention kinds remain represented.
-Selecting an item exposes its existing actions in the dock, not in an inline
-button row. This trades one-click inline actions for a stable board.
+Selecting an item exposes its existing actions next to that item's metadata.
+Selection never adds height; narrow rows reserve their action shelf in advance.
 
 **Workstream:** chevron and semibold 14 px title. A quiet second line contains
 repository name, correctly pluralized non-closed task count, and Closing when
@@ -288,14 +286,15 @@ tooltips retain the complete placement metadata. Rung labels are unchanged.
 last-check age remain, with checks in Details and existing Show space/Log actions.
 Retained workstreams are not duplicated among active workstreams.
 
-#### 4.2.3 Stable selected-item action dock
+#### 4.2.3 Selected-row actions
 
-The 68 px dock sits **outside** the scroll area above the short footer. Its
-height never changes when selection changes. It names the selected item, then
-shows actions in a fixed row, with a quiet accent outline on the first action.
-No actions appear on hover, and selection never adds height to a task/header.
+There is no bottom action dock. The selected row owns a labelled action toolbar
+at the right of its metadata, before its age. Below 520 px it occupies a reserved
+shelf in the same row. Summary text truncates before actions or age shrink;
+titles remain full-width. The first action retains its quiet accent outline.
+Unselected rows have no action buttons, and selection never changes row height.
 
-| Selected item | Dock actions |
+| Selected item | Inline actions |
 |---|---|
 | question | Reply in coordinator (if available), Log, Details |
 | task / task attention | existing Show, Peek or Show space as applicable; Log, Details |
@@ -307,20 +306,20 @@ Enter matches the first action (including workstream/disclosure toggling).
 Details toggles the same expansion set as Right/Space. Non-navigation actions
 return focus to the list; Show/Peek/Show space/Reply still close the dialog and
 only navigate. Keyboard shortcuts `p`, `l`, `s`, `c`, `t`, `b`, `r` are unchanged.
-Dock buttons have action-and-target accessibility labels. Tab visits dock
-buttons after the list, then Close (Board index 11; Timeline retains index 7).
-The footer is simply `↑↓ select   Enter open   → details   Esc close`.
+Buttons have action-and-target accessibility labels. Tab visits row actions
+after the list, then Close (index 11 on both tabs). No shortcuts are added.
+The footer has a fixed height and truncates rather than wrapping at narrow widths.
 
 #### 4.2.4 Loading, empty, off and errors
 
-- Loading: native animated Reading board, Esc close; no dock.
-- Running empty: “No work in flight.”, an explanation, and one Show coordinator
-  button in the body when a coordinator terminal is known.
-- Off empty: “The coordinator is off.”, explanation that Start creates a
-  coordinator space/agent, and one Start coordinator button in the body.
-- Off with cached work: keep the board and dock; one Start in its banner.
+- Loading: native animated Reading board, Esc close.
+- Running empty: “No work in flight.” and an explanation; Show coordinator
+  stays in the header when a coordinator terminal is known.
+- Off empty: “The coordinator is off.” and an explanation that Start creates a
+  coordinator space/agent; Start coordinator stays in the header.
+- Off with cached work: keep the board and inline actions; Start stays in the header.
 - Uncached failure: “Can't read the board.”, first error line, Retry.
-- Cached failure: retain board, selection and dock under the stale-data banner.
+- Cached failure: retain board, selection and row actions under the stale-data banner.
 
 Empty-state text uses an 18 px title and a centred, constrained 360 px explanation.
 Only explicit detail/disclosure expansion changes row height.
@@ -342,7 +341,7 @@ isolated native screenshot evidence are stored under ignored
 
 ### 4.3 Timeline (view 2)
 
-Same dialog, same header and health line; `Timeline` tab selected. Body:
+Same dialog, header, diagnostic tooltip, notice slot and footer geometry; `Timeline` tab selected. Body:
 
 ```
  [Scope: ws-k3m2ab-t1 ✕]  [ filter text …                  /]  [Key events · 12 hidden]
@@ -358,10 +357,10 @@ Same dialog, same header and health line; `Timeline` tab selected. Body:
 
 **Order and grouping:** entries newest first by `seq` (descending; `ts_ms` only for display). Day separator rows (`TODAY`, `YESTERDAY`, then `Mon Nov 9`) are not selectable. Local time, 24 h, `HH:MM:SS`.
 
-**Row (single line, 24 px, selectable):** `time (64, t.dim, tabular)` · `glyph (14, tone colour)` · `actor (84, t.muted, 11)` · `scope (100, t.dim, 11, shows task id, else workstream id, else empty)` · `summary (flex_1, min_w(0), truncate, t.foreground; tone colour for warning/attention kinds)`. In narrow width the actor column is dropped. Clicking the scope text sets the scope to that task or workstream.
+**Row (single line, 24 px, selectable):** time (64), glyph (14), actor (120), scope id (110), then a truncating summary. Below 640 px the actor column is dropped; below 520 px the scope column is dropped. The selected row offers Scope (if an entry has a task/workstream), Copy and Details inline, using the existing `s`, `c` and Enter handlers without changing row height.
 
 **Scope and filtering**
-- **Scope** (server-side): none, a workstream id, or a task id. Set by `Log` on any board row, `s` on a timeline entry, or clicking a scope id. Shown as a removable chip `Scope: ws-k3m2ab-t1 ✕`; `x`/Backspace on the list or the chip's ✕ clears. Maps to `coord log --ws <id>` or `--task <id>`. A workstream scope includes its tasks' entries (backend behaviour of `--ws`).
+- **Scope** (server-side): none, a workstream id, or a task id. Set by `Log` on any board row, `s` on a timeline entry, or its inline Scope action. Shown as a removable chip `Scope: ws-k3m2ab-t1 ✕`; `x`/Backspace on the list or the chip's ✕ clears. Maps to `coord log --ws <id>` or `--task <id>`. A workstream scope includes its tasks' entries (backend behaviour of `--ws`).
 - **Filter text** (client-side, over loaded entries): `Input` bound to an `InputState` (`placeholder 'Filter id, kind, text'`); case-insensitive substring over `scope ids`, `kind`, `actor` and the one-line summary. `/` focuses it; Enter (`'submit'`) returns focus to the list.
 - **Detail level** toggle (client-side), default `Key events`: hides noisy kinds `inbox.drained`, `res.intent`, `watcher.started`, `watcher.stopped`, `nudge.sent`, and `res.release_checked` with `ok:true`; the button shows `Key events · {n} hidden`; `a` or click toggles to `Everything`. The hidden count is for loaded entries.
 - Empty-after-filter: `No entries match “{text}”.` + `Clear filter`.
@@ -426,8 +425,8 @@ The mod calls five commands. Every call is `exec(BINARY, [...dataDirArgs, 'coord
 | `coord board --json` | overlay open, only while the Board view is shown | 15 s | |
 | `coord log --json [...]` | overlay open, only while the Timeline view is shown | 15 s | |
 
-Clear context stays in the dialog header, leaving the Board's selected-item dock
-unchanged. `n` requests a graceful restart while the list has focus; the strip's
+Clear context stays in the shared dialog header, separate from row actions.
+`n` requests a graceful restart while the list has focus; the strip's
 `restart` command opens the dialog and requests the same action. While pending,
 the header offers Restart now (also `n`), followed by an inline interruption
 warning with Restart now / Enter and Cancel / Esc. Closing the dialog dismisses
@@ -758,12 +757,12 @@ tests/coord.test.js     node --test, imports ../mods/herdr-kit-coord/model.js
 | Strip hover | `t.hover` background; tooltip after 0.5 s |
 | Row click | select row (and focus the list) |
 | Row click on workstream / closed-disclosure | toggle expand |
-| Selected-item dock actions | run the action; Show, Peek, Show space, Reply in coordinator close the dialog first |
-| Scope chip ✕ / scope id | clear / set scope |
+| Selected-row actions | run the action; Show, Peek, Show space, Reply in coordinator close the dialog first |
+| Scope chip ✕ / selected entry Scope | clear / set scope |
 | Dialog backdrop click | closes (host default for dialog) |
 | Scroll wheel | scrolls the list |
 
-Action buttons stop propagation. Board hover changes only the background; actions live in the fixed dock. Non-navigation dock/banner actions restore list focus.
+Action buttons stop propagation. Board hover changes only the background; actions are revealed on selection next to the owning row. Non-navigation row/banner actions restore list focus.
 
 ### 5.2 Keyboard (overlay)
 
@@ -786,7 +785,7 @@ Handler lives on the list container (`track_focus(listHandle)`, `tab_index(6)`, 
 | `t` / `b` | switch to Timeline / Board | switch to Board (`b`), `t` no-op |
 | `r` | refresh now | refresh now |
 | `c` | copy the selected row's id | copy the selected entry as one line |
-| `Tab` / `Shift+Tab` | Board tab 1, Timeline tab 2, Start/Repair 3, Show coordinator 4, list 6, dock 7–10, Close 11 | tabs/header unchanged, filter 5, list 6, Close 7 |
+| `Tab` / `Shift+Tab` | Board tab 1, Timeline tab 2, Start/Repair 3, Show coordinator 4, Clear context 5, list 6, row actions 7–10, Close 11 | same; filter 5, selected entry actions 7–9 |
 | `Esc` | closes the dialog (host) | closes the dialog (host) |
 
 Conflicts: no global shortcut is bound by the mod. The person may bind `"<mod name>.show"` in `keys.json` (`show` = open board, `timeline` = open Timeline, `focus` = focus the strip); the mod name is generation-suffixed by `manager.rs`, so no default binding is shipped `(8, Q8)`. The list ignores modified keys, so `ctrl-shift-…` host chords keep working.
@@ -804,11 +803,11 @@ The strip's `Button` has `tab_index(0)`, accepts Enter/Space as click (keyboard 
 ## 6. Accessibility
 
 - Strip: `.accessibility_label(fullSentence)` identical to the tooltip (4.1.5). Every state has distinct words, so nothing depends on colour or icon shape alone.
-- Dialog: `role('dialog')`, `accessibility_label('Coordinator')`; tab buttons use the native `.selected()` state; the list has `role('list')`, workstreams `tree_item`, other rows `list_item`. Selected rows carry `aria_selected(true)` and `aria_active_descendant()`. Errors are alerts; Board diagnostics are on the status chip, Timeline keeps its status line. The dock is a labelled toolbar.
+- Dialog: `role('dialog')`, `accessibility_label('Coordinator')`; tab buttons use the native `.selected()` state; the list has `role('list')`, workstreams `tree_item`, other rows `list_item`. Selected rows carry `aria_selected(true)` and `aria_active_descendant()`. Errors are alerts; healthy diagnostics are on the status chip on both tabs. Selected-row actions form a labelled toolbar.
 - Row accessibility label (VM `row.label`): `Task ws-k3m2ab-t1, running 34 minutes, Patch session refresh, role coord-deep, rung 4 new worktree, conflicting edits in auth/session.rs`. Expanded state announced via `aria` is not available; the details panel text follows the row in the tree.
-- Focus: selected Board rows have an always-reserved 2 px accent gutter; Timeline retains its existing selection treatment. Actions are reachable via shortcuts and Tab through the dock/header.
+- Focus: selected Board rows have an always-reserved 2 px accent gutter; Timeline retains its existing selection treatment. Actions are reachable via existing shortcuts and Tab through the row/header.
 - Contrast: text uses foreground/muted on raised/selected; dim is reserved for non-essential counts/hints. Status always has a word as well as colour.
-- Hit targets: strip 26 px, actions 22 px, Board rows padded 10 px vertically (closed disclosure 6 px). Zoom scales all metrics.
+- Hit targets: strip 26 px, actions 22 px, Board rows padded 8 px vertically (closed disclosure 6 px). Zoom scales all metrics.
 - Motion: only native `frames`/`spin` (stop when not shown); no timers for animation. Reduced-motion preference is not exposed to mods `[INFERENCE]`; both animations are short-lived loading cues.
 - Text sizes follow zoom (`settings().zoom`, sizes written at zoom 1).
 

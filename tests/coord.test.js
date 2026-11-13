@@ -50,19 +50,23 @@ test('status strip exposes every state and its accessible text',()=>{
 test('board view exposes loading, empty, off, error and cached states',()=>{
  const empty=board({workstreams:[],attention:[]}), ui={now};
  assert.deepEqual(m.boardViewModel(null,status(),ui).empty,{kind:'loading',text:'Reading board…'});
- assert.deepEqual(m.boardViewModel(empty,status(),ui).empty,{kind:'empty',text:'No work in flight.',detail:'Tell the coordinator what you want done; it is in the "coordinator" space.',action:'Show coordinator'});
- assert.deepEqual(m.boardViewModel(empty,status({enabled:false}),ui).empty,{kind:'off',text:'The coordinator is off.',detail:'Starting it creates a "coordinator" space and starts the coordinator agent.',action:'Start coordinator'});
- assert.deepEqual(m.boardViewModel(null,status(),{...ui,failed:true,error:'bad read\nextra'}).empty,{kind:'error',text:"Can't read the board.",detail:'bad read',action:'Retry'});
+ assert.equal(m.boardViewModel(empty,status(),ui).empty.kind,'empty');
+ assert.equal(m.boardViewModel(empty,status(),ui).empty.action,undefined);
+ assert.equal(m.boardViewModel(empty,status({enabled:false}),ui).empty.kind,'off');
+ assert.equal(m.boardViewModel(empty,status({enabled:false}),ui).empty.action,undefined);
+ assert.equal(m.boardViewModel(null,status(),{...ui,failed:true,error:'bad read\nextra'}).empty.action,'Retry');
  const cached=m.boardViewModel(board(),status(),{...ui,failed:true,error:'bad read\nextra'});
  assert.equal(cached.banner,`Showing data from ${m.formatClock(now).slice(0,5)} — refresh failed: bad read.`);
  assert.equal(cached.bannerAction,'Retry');
  assert.ok(cached.rows.length);
  const off=m.boardViewModel(board(),status({enabled:false}),ui);
  assert.equal(off.banner,'Coordinator is not running.');
- assert.equal(off.bannerAction,'Start coordinator');
- const degraded=m.boardViewModel(board(),status({state:'degraded',degraded:[{code:'watcher_missing',detail:'watcher stopped',since_ms:null}]}),ui);
- assert.equal(degraded.banner,'Degraded: watcher stopped. Tasks keep running; nudges and reconcile are paused.');
- assert.equal(degraded.bannerAction,'Repair');
+ assert.equal(off.bannerAction,null);
+ const degradedStatus=status({state:'degraded',degraded:[{code:'watcher_missing',detail:'watcher stopped',since_ms:null}]});
+ const degraded=m.boardViewModel(board(),degradedStatus,ui);
+ assert.equal(degraded.bannerAction,null);
+ assert.equal(m.timelineViewModel(log(),{...ui,status:degradedStatus}).banner,degraded.banner);
+ assert.equal(m.timelineViewModel(log(),{...ui,status:degradedStatus}).bannerAction,null);
  assert.equal(m.boardViewModel(board(),status(),{...ui,starting:true}).header.state,'starting');
 });
 

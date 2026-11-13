@@ -20,8 +20,17 @@ function timelineRow(row, view, t) {
     .child(div().w(64).flex_shrink_0().text_color(t.dim).text_size(11).child(row.time || ''))
     .child(div().w(14).flex_shrink_0().text_color(color).child(row.glyph || '·'));
   if (view.width >= 640) line.child(div().w(120).flex_shrink_0().truncate().text_color(t.muted).text_size(11).tooltip(row.actorLabel || '').child(row.actorLabel || ''));
-  line.child(div().w(110).flex_shrink_0().child(row.scopeId ? actionButton(`scope-${row.key}`,row.scopeId,t,cx => scope(view,row.source?.task ? {task:row.source.task} : {ws:row.source?.ws},cx)) : div()));
+  if (view.width >= 520) line.child(div().w(110).flex_shrink_0().truncate().text_size(11).text_color(t.muted).tooltip(row.scopeId || '').child(row.scopeId || ''));
   line.child(div().flex_1().min_w(0).truncate().text_color(color).tooltip(row.text || row.title || '').child(row.text || row.title || ''));
+  if (selected) {
+    const actions = h_flex().gap(6).items_center().flex_shrink_0().role('toolbar').accessibility_label(`Actions for ${row.time} ${row.text}`);
+    let index = 7;
+    for (const [id,label,key] of [
+      ...(row.source?.task || row.source?.ws ? [['scope','Scope','s']] : []),
+      ['copy','Copy','c'], ['details',expanded ? 'Hide details' : 'Details','enter'],
+    ]) actions.child(actionButton(`selected-${id}`,label,t,cx => { view.focus.focus(); view.key({key},cx); },false,index++));
+    line.child(actions);
+  }
   const wrap = v_flex().id(`timeline-row-${row.key}`).role('list_item').min_w(0).px(4).rounded(4).border(1).border_color(t.popover)
     .bg(selected ? t.selected : t.popover).hover(s => s.bg(t.hover)).aria_selected(selected)
     .accessibility_label([row.time, row.actorLabel, row.scopeId, row.text].filter(Boolean).join(', '))
@@ -33,12 +42,12 @@ function timelineRow(row, view, t) {
 export function renderTimeline(view) {
   const t = theme(), store = view.store;
   const vm = timelineViewModel(store.log,{...view.ui,failed:store.logFailed,error:store.logError,status:store.status,statusFailed:store.failed,statusError:store.error,starting:store.starting,newerCount:store.newCount});
-  const body = list(view,'coord-timeline-list'), content = v_flex().flex_1().min_h(0).gap(4);
+  const body = list(view,'coord-timeline-list'), content = v_flex().flex_1().min_h(0).gap(8);
   view.scrollIndices = new Map();
-  const controls = h_flex().gap(6).items_center();
+  const controls = h_flex().h(28).flex_shrink_0().gap(6).items_center();
   const id = view.ui.scope?.task || view.ui.scope?.ws;
   if (id) controls.child(actionButton('clear-scope',`Scope: ${id} ✕`,t,cx => scope(view,{},cx)));
-  controls.child(div().flex_1().min_w(0).px(6).rounded(4).border(1).border_color(t.border).bg(t.input).child(Input.new(view.filter).tab_index(5)));
+  controls.child(div().flex_1().min_w(0).h(28).px(6).rounded(4).border(1).border_color(t.border).bg(t.input).child(Input.new(view.filter).tab_index(5)));
   controls.child(actionButton('timeline-detail',view.ui.detail === 'key' ? `Key events · ${vm.hiddenCount || 0} hidden` : 'Everything',t,cx => { view.ui.detail = view.ui.detail === 'key' ? 'all' : 'key'; cx.notify(); }));
   content.child(controls);
   if (vm.newerPill) content.child(h_flex().justify_center().child(actionButton('timeline-new',vm.newerPill,t,cx => view.acceptNew(cx),true)));
@@ -74,5 +83,5 @@ export function renderTimeline(view) {
     if (window.older) body.child(actionButton('timeline-window-older','Show older loaded entries',t,cx => shift(window.end,cx)));
   }
   content.child(body);
-  return dialog(view,content,vm.empty?.kind === 'loading' ? 'Esc close' : '↑↓ select · Enter details · s scope · c copy · a all events · b board · r refresh · Esc close');
+  return dialog(view,content,vm.empty?.kind === 'loading' ? 'Esc close' : view.width < 640 ? '↑↓ select   Enter details   Esc close' : '↑↓ select   Enter details   s scope   c copy   a all events   b board   r refresh   Esc close');
 }
