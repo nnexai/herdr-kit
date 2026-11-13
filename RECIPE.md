@@ -9,12 +9,12 @@ agent coordinator, backed by one extensible Rust command-line tool.
 
 Keep the stock Herdr Spaces/Agents sidebar, tab bar, terminal panes, Files and
 Changes panels. In the existing 28px statusbar, preserve machine, branch and
-agent indicators on the left and replace the command-palette hint on the right
-with `Limits Claude 71% +2`. Add no extra row. Use the current theme, existing
-14px horizontal inset and normal Herdr UI font. Narrow bars omit the provider
-name. Click for a native subscription-details dialog with all anonymous
-accounts, source timestamps, windows, meters, AIC, resets and conditional
-exhaustion estimates. Unknown/unlimited/zero/unavailable/stale remain distinct.
+agent indicators on the left. Place the coordinator status immediately before
+the compact Limits readout on the right, with no extra row. Use the current
+theme and normal Herdr UI font. The compact readout omits the provider name.
+Click for a native subscription-details dialog with all anonymous accounts,
+source timestamps, windows, meters, AIC, resets and conditional exhaustion
+estimates. Unknown/unlimited/zero/unavailable/stale remain distinct.
 
 ## How it behaves
 

@@ -6,6 +6,8 @@
   status, board and timeline views, with journal-based insights and statistics.
 - Integrate usage into the existing 28px statusbar, replacing the bottom-right
   command-palette hint with a compact readout; remove the separate usage row.
+- Place the coordinator and compact Limits controls together on the right,
+  retaining the machine and agent indicators on the left.
 
 ## 0.1.0
 

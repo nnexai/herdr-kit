@@ -35,5 +35,5 @@ export function renderStatus(view, cx) {
     .tooltip(vm.tooltip).accessibility_label(vm.label || vm.tooltip)
     .on_click((_e, cx) => { if (vm.click === 'board') view.openBoard('board'); else if (vm.click === 'up') view.start(cx); else if (vm.click === 'reread') view.refresh(cx); })
     .on_mouse_down('right', (_e, cx) => { cx.stop_propagation(); view.openBoard('board'); }).child(content);
-  return h_flex().size_full().px(10).items_center().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted).child(button);
+  return h_flex().size_full().px(4).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted).child(button);
 }
