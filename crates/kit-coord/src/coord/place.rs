@@ -1,11 +1,12 @@
+use super::adapter::{AppSnapshot, Term};
 use super::caller::Caller;
 use super::ids::{TaskId, WsId};
 use super::journal::Journal;
 use super::kinds::{
-    CorrectionWhat, Follows, Kind, Outcome, Rejected, Relation, ResType, ResourceRef, SendVia,
-    SessionMode, SessionRef, TaskOutcome, Tier, WsOutcome,
+    AttentionState, CorrectionWhat, Follows, Kind, Outcome, Rejected, Relation, ResType,
+    ResourceRef, SendVia, SessionMode, SessionRef, TaskOutcome, Tier, WsOutcome,
 };
-use super::state::{State, TaskState, WsState};
+use super::state::{State, Task, TaskState, Ws, WsState};
 use super::{Ctx, brief, cli, error, git, ids, launch, release, role};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
@@ -16,21 +17,6 @@ use std::path::{Path, PathBuf};
 
 fn refuse(code: &'static str, msg: impl Into<String>) -> anyhow::Error {
     error::refused(code, msg)
-}
-fn resource(kind: ResType, name: String) -> ResourceRef {
-    ResourceRef {
-        r#type: kind,
-        name,
-        repo: None,
-        folder: None,
-        label: None,
-        branch: None,
-        base: None,
-        base_sha: None,
-        create_branch: None,
-        space: None,
-        tab: None,
-    }
 }
 pub fn role_hash(role: &role::Role) -> Result<String> {
     let text = match &role.source {
@@ -194,12 +180,55 @@ pub fn ws_list(ctx: &Ctx, all: bool) -> Result<Value> {
     )
 }
 
-pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
-    let ws = WsId::parse(&a.ws)?;
+/// Where a rung places the task, with the arguments only that rung accepts.
+#[derive(Clone, Copy)]
+enum Target<'a> {
+    /// Rung 1: continue a previous task's session.
+    Session,
+    /// Rung 2: another tab in the workstream's space.
+    WorkstreamSpace,
+    /// Rung 3: an existing space of the person.
+    Space(&'a str),
+    /// Rung 4: a new worktree in its own space.
+    Worktree {
+        branch: &'a str,
+        base: Option<&'a str>,
+    },
+    /// Rung 5: a new project folder in its own space.
+    Folder(&'a Path),
+}
+impl<'a> Target<'a> {
+    fn parse(a: &'a cli::TaskStart) -> Result<Self> {
+        let given = (
+            a.rung,
+            a.session_of.is_some(),
+            a.space.as_deref(),
+            a.branch.as_deref(),
+            a.base.as_deref(),
+            a.folder.as_deref(),
+        );
+        Ok(match given {
+            (1, true, None, None, None, None) => Self::Session,
+            (2, false, None, None, None, None) => Self::WorkstreamSpace,
+            (3, false, Some(space), None, None, None) => Self::Space(space),
+            (4, false, None, Some(branch), base, None) => Self::Worktree { branch, base },
+            (5, false, None, None, None, Some(folder)) if folder.is_absolute() => {
+                Self::Folder(folder)
+            }
+            _ => return Err(refuse("rung_arguments", "invalid rung arguments")),
+        })
+    }
+    fn creates_space(self) -> bool {
+        matches!(self, Self::Worktree { .. } | Self::Folder(_))
+    }
+}
+
+/// Every rung below the chosen one must be rejected with a reason.
+fn rejected_rungs(a: &cli::TaskStart) -> Result<Vec<Rejected>> {
     if !(1..=5).contains(&a.rung) || a.reason.trim().is_empty() {
         return Err(refuse("rung_arguments", "rung and reason required"));
     }
-    let mut rejected = Vec::new();
+    let mut rejected: Vec<Rejected> = Vec::new();
     for item in &a.rejected {
         let (n, reason) = item
             .split_once('=')
@@ -207,7 +236,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         let n: u8 = n
             .parse()
             .map_err(|_| refuse("ladder_reason_extra", "invalid rejection rung"))?;
-        if n == 0 || n >= a.rung || rejected.iter().any(|r: &Rejected| r.rung == n) {
+        if n == 0 || n >= a.rung || rejected.iter().any(|r| r.rung == n) {
             return Err(refuse("ladder_reason_extra", "unexpected rejection"));
         }
         if reason.trim().is_empty() {
@@ -225,43 +254,261 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         ));
     }
     rejected.sort_by_key(|r| r.rung);
-    let valid = match a.rung {
-        1 => {
-            a.session_of.is_some()
-                && a.space.is_none()
-                && a.branch.is_none()
-                && a.base.is_none()
-                && a.folder.is_none()
-        }
-        2 => {
-            a.session_of.is_none()
-                && a.space.is_none()
-                && a.branch.is_none()
-                && a.base.is_none()
-                && a.folder.is_none()
-        }
-        3 => {
-            a.session_of.is_none()
-                && a.space.is_some()
-                && a.branch.is_none()
-                && a.base.is_none()
-                && a.folder.is_none()
-        }
-        4 => {
-            a.session_of.is_none() && a.space.is_none() && a.branch.is_some() && a.folder.is_none()
-        }
-        5 => {
-            a.session_of.is_none()
-                && a.space.is_none()
-                && a.branch.is_none()
-                && a.base.is_none()
-                && a.folder.as_ref().is_some_and(|p| p.is_absolute())
-        }
-        _ => false,
+    Ok(rejected)
+}
+
+/// The task whose session `--session-of` continues.
+fn predecessor(state: &State, ws: &WsId, a: &cli::TaskStart) -> Result<Option<Task>> {
+    let Some(id) = &a.session_of else {
+        return Ok(None);
     };
-    if !valid {
-        return Err(refuse("rung_arguments", "invalid rung arguments"));
+    let previous = state
+        .tasks
+        .get(&TaskId::parse(id)?)
+        .cloned()
+        .ok_or_else(|| refuse("no_session", "unknown predecessor"))?;
+    let resumable = previous.session.as_ref().is_some_and(|s| s.id.is_some());
+    if previous.ws != *ws || !resumable {
+        return Err(refuse("no_session", "predecessor has no session"));
     }
+    if a.role.as_ref().is_some_and(|r| *r != previous.role) {
+        return Err(refuse(
+            "role_mismatch",
+            "resumed session must keep its role",
+        ));
+    }
+    Ok(Some(previous))
+}
+
+/// The explicit `--follows` relation, or a follow-up of the continued session.
+fn followed_task(
+    state: &State,
+    a: &cli::TaskStart,
+    previous: Option<&Task>,
+) -> Result<Option<Follows>> {
+    match (&a.follows, a.relation) {
+        (Some(task), Some(relation)) => {
+            let task = TaskId::parse(task)?;
+            if !state.tasks.contains_key(&task) {
+                return Err(refuse("unknown_task", "followed task does not exist"));
+            }
+            let relation = match relation {
+                cli::RelationArg::FollowUp => Relation::FollowUp,
+                cli::RelationArg::Rework => Relation::Rework,
+                cli::RelationArg::Escalation => Relation::Escalation,
+            };
+            Ok(Some(Follows { task, relation }))
+        }
+        (None, None) => Ok(previous.map(|p| Follows {
+            task: p.id.clone(),
+            relation: Relation::FollowUp,
+        })),
+        _ => Err(refuse(
+            "rung_arguments",
+            "follows and relation must be supplied together",
+        )),
+    }
+}
+
+/// The task's terminal while its recorded agent process is still running there.
+fn live_terminal(ctx: &Ctx, task: &Task) -> Result<Option<Term>> {
+    let Some(address) = &task.terminal else {
+        return Ok(None);
+    };
+    Ok(ctx
+        .hc
+        .get(address)?
+        .filter(|term| term.live() && term.pid == task.pid))
+}
+
+/// Only a managed terminal that is labelled for the task and recorded as its
+/// owned tab may receive coordinator input.
+fn owns_terminal(state: &State, term: &Term, task: &TaskId) -> bool {
+    term.managed()
+        && term.label("coord.task") == Some(task.as_str())
+        && state.resources.iter().any(|r| {
+            r.owned
+                && !r.released
+                && r.r.r#type == ResType::Tab
+                && r.r.name == term.address
+                && r.task.as_ref() == Some(task)
+        })
+}
+
+/// A repository is trusted once the person has it open themselves: in a
+/// space the coordinator does not own, either live or adopted earlier.
+fn repo_trusted(state: &State, snapshot: &AppSnapshot, repo: &Path) -> bool {
+    let checkout_of = |folder: &Path| git::main_checkout(folder).ok().as_deref() == Some(repo);
+    let owned_space = |id: &str| {
+        state
+            .resources
+            .iter()
+            .any(|r| r.r.r#type == ResType::Space && r.r.name == id && r.owned && !r.released)
+    };
+    snapshot
+        .spaces
+        .iter()
+        .any(|s| !owned_space(&s.id) && checkout_of(Path::new(&s.folder)))
+        || state.resources.iter().any(|r| {
+            r.r.r#type == ResType::Space
+                && !r.owned
+                && r.r.folder.as_deref().is_some_and(&checkout_of)
+        })
+}
+
+struct Placement {
+    space: String,
+    cwd: PathBuf,
+    /// Name for a created space, or the current name of an adopted one.
+    space_label: Option<String>,
+}
+
+fn placement(
+    ctx: &Ctx,
+    target: Target<'_>,
+    state: &State,
+    w: &Ws,
+    previous: Option<&Task>,
+    snapshot: &AppSnapshot,
+) -> Result<Placement> {
+    let missing = |what: &'static str| refuse("no_space", what);
+    Ok(match target {
+        Target::Session => {
+            let p = previous.context("rung 1 continues a predecessor")?;
+            Placement {
+                space: p
+                    .space
+                    .clone()
+                    .ok_or_else(|| missing("predecessor has no space"))?,
+                cwd: p
+                    .cwd
+                    .clone()
+                    .ok_or_else(|| missing("predecessor has no cwd"))?,
+                space_label: None,
+            }
+        }
+        Target::WorkstreamSpace => Placement {
+            space: w
+                .space
+                .as_ref()
+                .ok_or_else(|| missing("workstream has no space"))?
+                .id
+                .clone(),
+            cwd: w
+                .cwd
+                .clone()
+                .ok_or_else(|| missing("workstream has no cwd"))?,
+            space_label: None,
+        },
+        Target::Space(id) => {
+            let s = snapshot
+                .space(id)
+                .ok_or_else(|| missing("space not found"))?;
+            if state.coordinator.space.as_deref() == Some(&s.id) {
+                return Err(refuse("coordinator_space", "cannot use coordinator space"));
+            }
+            Placement {
+                space: s.id.clone(),
+                cwd: PathBuf::from(&s.folder),
+                space_label: Some(s.name.clone()),
+            }
+        }
+        Target::Worktree { branch, .. } => {
+            let repo = w
+                .repo
+                .as_ref()
+                .ok_or_else(|| refuse("rung_arguments", "worktree needs a repo"))?;
+            Placement {
+                space: ids::space_id()?,
+                cwd: git::worktree_path(&ctx.config()?.worktree_root()?, repo, branch),
+                space_label: Some(format!(
+                    "{} · {}",
+                    repo.file_name().unwrap_or_default().to_string_lossy(),
+                    w.title
+                )),
+            }
+        }
+        Target::Folder(folder) => Placement {
+            space: ids::space_id()?,
+            cwd: folder.to_owned(),
+            space_label: Some(w.title.clone()),
+        },
+    })
+}
+
+fn new_session(ctx: &Ctx, role: &role::Role, id: &TaskId) -> Result<SessionRef> {
+    let dir = (role.session == SessionMode::Dir).then(|| ctx.paths.session_dir(id.as_str()));
+    if let Some(dir) = &dir {
+        fs::create_dir_all(dir)?;
+    }
+    let id = if role.session == SessionMode::Preset {
+        Some(ids::uuid_v4()?)
+    } else {
+        None
+    };
+    Ok(SessionRef {
+        mode: role.session,
+        id,
+        dir,
+    })
+}
+
+/// The rung 4 worktree, followed by its branch when that has to be created too.
+fn worktree_intents(
+    repo: &Path,
+    branch: &str,
+    base: Option<&str>,
+    delivery_branch: Option<&str>,
+    cwd: &Path,
+) -> Result<Vec<ResourceRef>> {
+    let create_branch = !git::branch_exists(repo, branch)?;
+    let mut worktree = ResourceRef::new(ResType::Worktree, cwd.to_string_lossy());
+    worktree.repo = Some(repo.to_owned());
+    worktree.branch = Some(branch.to_owned());
+    worktree.base = base.map(str::to_owned);
+    worktree.create_branch = Some(create_branch);
+    let mut intents = vec![worktree];
+    if create_branch {
+        let start = base.or(delivery_branch).unwrap_or("HEAD");
+        let mut new_branch = ResourceRef::new(ResType::Branch, branch);
+        new_branch.repo = Some(repo.to_owned());
+        new_branch.base_sha = Some(git::rev(repo, start)?);
+        intents.push(new_branch);
+    }
+    Ok(intents)
+}
+
+/// Add the planned worktree and return the resources that now exist.
+fn create_worktree(
+    repo: &Path,
+    branch: &str,
+    cwd: &Path,
+    intents: &[ResourceRef],
+) -> Result<Vec<ResourceRef>> {
+    let of_type = |kind| intents.iter().find(|r| r.r#type == kind);
+    let new_branch = of_type(ResType::Branch);
+    if let Some(parent) = cwd.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    git::worktree_add(
+        repo,
+        cwd,
+        branch,
+        new_branch.and_then(|r| r.base_sha.as_deref()),
+    )?;
+    let mut created: Vec<ResourceRef> = of_type(ResType::Worktree).cloned().into_iter().collect();
+    if let Some(intent) = new_branch {
+        let mut branch = intent.clone();
+        branch.base = branch.base_sha.clone();
+        created.push(branch);
+    }
+    Ok(created)
+}
+
+pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
+    let ws = WsId::parse(&a.ws)?;
+    let rejected = rejected_rungs(a)?;
+    let target = Target::parse(a)?;
     let snapshot = ctx.app.ls()?;
     let input = read_brief(&a.brief)?;
     let j = ctx.journal()?;
@@ -274,40 +521,13 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     if w.state != WsState::Open {
         return Err(refuse("ws_not_open", "workstream is not open"));
     }
-    if a.rung >= 4 && !w.tasks.is_empty() {
+    if target.creates_space() && !w.tasks.is_empty() {
         return Err(refuse(
             "follow_up_cannot_create_space",
             "follow-up cannot create a space",
         ));
     }
-    let previous = a
-        .session_of
-        .as_ref()
-        .map(|s| TaskId::parse(s))
-        .transpose()?
-        .map(|id| {
-            state
-                .tasks
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| refuse("no_session", "unknown predecessor"))
-        })
-        .transpose()?;
-    if previous
-        .as_ref()
-        .is_some_and(|p| p.ws != ws || p.session.as_ref().and_then(|s| s.id.as_ref()).is_none())
-    {
-        return Err(refuse("no_session", "predecessor has no session"));
-    }
-    if previous
-        .as_ref()
-        .is_some_and(|p| a.role.as_ref().is_some_and(|r| *r != p.role))
-    {
-        return Err(refuse(
-            "role_mismatch",
-            "resumed session must keep its role",
-        ));
-    }
+    let previous = predecessor(state, &ws, a)?;
     let role_name = a
         .role
         .as_deref()
@@ -315,161 +535,35 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         .ok_or_else(|| refuse("role_invalid", "role required"))?;
     let role =
         role::load(&ctx.paths, role_name).map_err(|e| refuse("role_invalid", e.to_string()))?;
-    let follows = match (&a.follows, a.relation) {
-        (Some(task), Some(relation)) => {
-            let task = TaskId::parse(task)?;
-            if !state.tasks.contains_key(&task) {
-                return Err(refuse("unknown_task", "followed task does not exist"));
-            }
-            Some(Follows {
-                task,
-                relation: match relation {
-                    cli::RelationArg::FollowUp => Relation::FollowUp,
-                    cli::RelationArg::Rework => Relation::Rework,
-                    cli::RelationArg::Escalation => Relation::Escalation,
-                },
-            })
-        }
-        (None, None) => previous.as_ref().map(|p| Follows {
-            task: p.id.clone(),
-            relation: Relation::FollowUp,
-        }),
-        _ => {
-            return Err(refuse(
-                "rung_arguments",
-                "follows and relation must be supplied together",
-            ));
-        }
-    };
+    let follows = followed_task(state, a, previous.as_ref())?;
     let role_hash = role_hash(&role)?;
-    let id = TaskId::new(
-        &ws,
-        w.tasks
-            .iter()
-            .map(TaskId::n)
-            .max()
-            .unwrap_or(0)
-            .checked_add(1)
-            .context("task id overflow")?,
-    );
+    let last_number = w.tasks.iter().map(TaskId::n).max().unwrap_or(0);
+    let id = TaskId::new(&ws, last_number.checked_add(1).context("task id overflow")?);
     let title = a.title.clone().unwrap_or_else(|| brief::title_of(&input));
-    let mut live_previous = None;
-    if let Some(p) = &previous {
-        if let Some(t) = &p.terminal {
-            if let Some(term) = ctx.hc.get(t)? {
-                if term.live() && term.pid == p.pid {
-                    send_guard(&term)?;
-                    live_previous = Some(term);
-                }
-            }
-        }
-    }
-    let (space, cwd, new_space, space_label) = match a.rung {
-        1 => {
-            let p = previous.as_ref().unwrap();
-            (
-                p.space
-                    .clone()
-                    .ok_or_else(|| refuse("no_space", "predecessor has no space"))?,
-                p.cwd
-                    .clone()
-                    .ok_or_else(|| refuse("no_space", "predecessor has no cwd"))?,
-                false,
-                None,
-            )
-        }
-        2 => (
-            w.space
-                .as_ref()
-                .ok_or_else(|| refuse("no_space", "workstream has no space"))?
-                .id
-                .clone(),
-            w.cwd
-                .clone()
-                .ok_or_else(|| refuse("no_space", "workstream has no cwd"))?,
-            false,
-            None,
-        ),
-        3 => {
-            let s = snapshot
-                .space(a.space.as_deref().unwrap())
-                .ok_or_else(|| refuse("no_space", "space not found"))?;
-            if state.coordinator.space.as_deref() == Some(&s.id) {
-                return Err(refuse("coordinator_space", "cannot use coordinator space"));
-            }
-            (
-                s.id.clone(),
-                PathBuf::from(&s.folder),
-                false,
-                Some(s.name.clone()),
-            )
-        }
-        4 => {
-            let repo = w
-                .repo
-                .as_ref()
-                .ok_or_else(|| refuse("rung_arguments", "worktree needs a repo"))?;
-            (
-                ids::space_id()?,
-                git::worktree_path(
-                    &ctx.config()?.worktree_root()?,
-                    repo,
-                    a.branch.as_deref().unwrap(),
-                ),
-                true,
-                Some(format!(
-                    "{} · {}",
-                    repo.file_name().unwrap_or_default().to_string_lossy(),
-                    w.title
-                )),
-            )
-        }
-        _ => (
-            ids::space_id()?,
-            a.folder.clone().unwrap(),
-            true,
-            Some(w.title.clone()),
-        ),
+    // A predecessor whose agent is still running takes the brief as its next
+    // turn; otherwise the role command starts or resumes a session in a new tab.
+    let live_previous = match &previous {
+        Some(p) => live_terminal(ctx, p)?,
+        None => None,
     };
-    let trusted = w.repo.as_ref().is_some_and(|repo| {
-        snapshot.spaces.iter().any(|s| {
-            let owned = state.resources.iter().any(|r| {
-                r.r.r#type == ResType::Space && r.r.name == s.id && r.owned && !r.released
-            });
-            !owned && git::main_checkout(Path::new(&s.folder)).ok().as_ref() == Some(repo)
-        }) || state.resources.iter().any(|r| {
-            r.r.r#type == ResType::Space
-                && !r.owned
-                && r.r
-                    .folder
-                    .as_deref()
-                    .and_then(|p| git::main_checkout(p).ok())
-                    .as_ref()
-                    == Some(repo)
-        })
-    });
+    if let Some(term) = &live_previous {
+        send_guard(term)?;
+    }
+    let Placement {
+        space,
+        cwd,
+        space_label,
+    } = placement(ctx, target, state, w, previous.as_ref(), &snapshot)?;
+    let new_space = target.creates_space();
+    let trusted = w
+        .repo
+        .as_deref()
+        .is_some_and(|repo| repo_trusted(state, &snapshot, repo));
     let repo = w.repo.clone();
     let delivery_branch = w.delivery_branch.clone();
-    let session = if let Some(p) = &previous {
-        p.session.clone()
-    } else {
-        let dir = if role.session == SessionMode::Dir {
-            Some(ctx.paths.session_dir(id.as_str()))
-        } else {
-            None
-        };
-        if let Some(dir) = &dir {
-            fs::create_dir_all(dir)?;
-        }
-        Some(SessionRef {
-            mode: role.session,
-            id: if role.session == SessionMode::Preset {
-                Some(ids::uuid_v4()?)
-            } else {
-                None
-            },
-            dir,
-        })
+    let session = match &previous {
+        Some(p) => p.session.clone(),
+        None => Some(new_session(ctx, &role, &id)?),
     };
     let message = if previous.is_some() {
         brief::follow_up(&input, &ctx.cli(), &ctx.paths.result(&id))
@@ -478,14 +572,6 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     };
     let brief_path = ctx.paths.brief(id.as_str());
     fs::write(&brief_path, &message)?;
-    let argv_message = brief::for_argv(message.clone(), &brief_path);
-    let vars = role::Vars {
-        brief: &argv_message,
-        session_dir: session.as_ref().and_then(|s| s.dir.as_deref()),
-        session_id: session.as_ref().and_then(|s| s.id.as_deref()),
-        repo_root: repo.as_deref(),
-        cwd: &cwd,
-    };
     let template = if previous.is_some() && live_previous.is_none() {
         role.resume
             .as_ref()
@@ -496,99 +582,73 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     if live_previous.is_none() && !template.iter().any(|arg| arg.contains("{brief}")) {
         return Err(refuse("role_invalid", "role command must include {brief}"));
     }
+    let argv_message = brief::for_argv(message.clone(), &brief_path);
+    let vars = role::Vars {
+        brief: &argv_message,
+        session_dir: session.as_ref().and_then(|s| s.dir.as_deref()),
+        session_id: session.as_ref().and_then(|s| s.id.as_deref()),
+        repo_root: repo.as_deref(),
+        cwd: &cwd,
+    };
     let argv = role::expand(template, &vars, trusted.then_some(role.trust.as_slice()))?;
-    let mut items = vec![(
-        Some(ws.clone()),
-        Some(id.clone()),
-        Kind::TaskPlaced {
-            rung: a.rung,
-            reason: a.reason.clone(),
-            rejected,
-            role: role.name.clone(),
-            harness: role.harness.clone(),
-            model: role::model_of(&argv),
-            title: title.clone(),
-            brief: brief_path.clone(),
-            session_of: previous.as_ref().map(|p| p.id.clone()),
-            session: session.clone(),
-            request: a.request.clone(),
-            follows,
-            role_hash,
-            brief_bytes: input.len() as u64,
-        },
-    )];
-    let mut intents = Vec::new();
-    if a.rung == 3
-        && !state.resources.iter().any(|r| {
-            r.r.r#type == ResType::Space
-                && r.r.name == space
-                && r.ws.as_ref() == Some(&ws)
-                && !r.released
-        })
-    {
-        let mut r = resource(ResType::Space, space.clone());
+
+    let entry = |kind: Kind| (Some(ws.clone()), Some(id.clone()), kind);
+    let superseded = |p: &Task| {
+        let reason = format!("superseded by {}", id.as_str());
+        let outcome = Some(TaskOutcome::Superseded);
+        (
+            Some(ws.clone()),
+            Some(p.id.clone()),
+            Kind::TaskClosed { reason, outcome },
+        )
+    };
+    let space_resource = || {
+        let mut r = ResourceRef::new(ResType::Space, space.clone());
         r.folder = Some(cwd.clone());
         r.label = space_label.clone();
-        items.push((Some(ws.clone()), Some(id.clone()), Kind::ResAdopted(r)));
+        r
+    };
+    let mut items = vec![entry(Kind::TaskPlaced {
+        rung: a.rung,
+        reason: a.reason.clone(),
+        rejected,
+        role: role.name.clone(),
+        harness: role.harness.clone(),
+        model: role::model_of(&argv),
+        title: title.clone(),
+        brief: brief_path.clone(),
+        session_of: previous.as_ref().map(|p| p.id.clone()),
+        session: session.clone(),
+        request: a.request.clone(),
+        follows,
+        role_hash,
+        brief_bytes: input.len() as u64,
+    })];
+    let adopted = state.resources.iter().any(|r| {
+        r.r.r#type == ResType::Space
+            && r.r.name == space
+            && r.ws.as_ref() == Some(&ws)
+            && !r.released
+    });
+    if matches!(target, Target::Space(_)) && !adopted {
+        items.push(entry(Kind::ResAdopted(space_resource())));
     }
-    if a.rung == 4 {
-        let mut r = resource(ResType::Worktree, cwd.to_string_lossy().into_owned());
-        r.repo = repo.clone();
-        r.branch = a.branch.clone();
-        r.base = a.base.clone();
-        r.create_branch = Some(!git::branch_exists(
-            repo.as_deref().unwrap(),
-            a.branch.as_deref().unwrap(),
-        )?);
-        let branch_intent = if r.create_branch == Some(true) {
-            let sha = git::rev(
-                repo.as_deref().unwrap(),
-                a.base
-                    .as_deref()
-                    .or(delivery_branch.as_deref())
-                    .unwrap_or("HEAD"),
-            )?;
-            let mut b = resource(ResType::Branch, a.branch.clone().unwrap());
-            b.repo = repo.clone();
-            b.base_sha = Some(sha);
-            Some(b)
-        } else {
-            None
-        };
-        intents.push(r);
-        if let Some(branch) = branch_intent {
-            intents.push(branch);
-        }
+    let mut intents = Vec::new();
+    if let Target::Worktree { branch, base } = target {
+        let repo = repo.as_deref().expect("placement required a repo");
+        intents = worktree_intents(repo, branch, base, delivery_branch.as_deref(), &cwd)?;
     }
     if new_space {
-        let mut r = resource(ResType::Space, space.clone());
-        r.folder = Some(cwd.clone());
-        r.label = space_label.clone();
-        intents.push(r);
+        intents.push(space_resource());
     }
     if live_previous.is_none() {
-        let mut r = resource(ResType::Tab, id.as_str().into());
-        r.space = Some(space.clone());
-        intents.push(r);
+        let mut tab = ResourceRef::new(ResType::Tab, id.as_str());
+        tab.space = Some(space.clone());
+        intents.push(tab);
     }
-    for r in &intents {
-        items.push((
-            Some(ws.clone()),
-            Some(id.clone()),
-            Kind::ResIntent(r.clone()),
-        ));
-    }
+    items.extend(intents.iter().cloned().map(|r| entry(Kind::ResIntent(r))));
     if let (Some(term), Some(p)) = (&live_previous, &previous) {
-        if !term.managed()
-            || term.label("coord.task") != Some(p.id.as_str())
-            || !state.resources.iter().any(|r| {
-                r.owned
-                    && !r.released
-                    && r.r.r#type == ResType::Tab
-                    && r.r.name == term.address
-                    && r.task.as_ref() == Some(&p.id)
-            })
-        {
+        if !owns_terminal(state, term, &p.id) {
             return Err(refuse(
                 "terminal_not_owned",
                 "predecessor terminal is not owned",
@@ -600,111 +660,80 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         .map(|term| ctx.terminal_lock(&term.address))
         .transpose()?;
     l.append(&c.actor(), ctx.now(), items)?;
-    if let Some(term) = live_previous {
-        let p = previous.as_ref().unwrap();
+
+    if let (Some(term), Some(p)) = (live_previous, &previous) {
         l.append(
             &c.actor(),
             ctx.now(),
             vec![
-                (
-                    Some(ws.clone()),
-                    Some(p.id.clone()),
-                    Kind::TaskClosed {
-                        reason: format!("superseded by {}", id.as_str()),
-                        outcome: Some(TaskOutcome::Superseded),
-                    },
-                ),
-                (
-                    Some(ws.clone()),
-                    Some(id.clone()),
-                    Kind::TaskStarted {
-                        terminal: term.address.clone(),
-                        tab: p.tab.clone(),
-                        tab_name: title.clone(),
-                        space: space.clone(),
-                        cwd: cwd.clone(),
-                        pid: term.pid,
-                        created_ms: term.created_ms,
-                        session: session.clone(),
-                        resumed: true,
-                    },
-                ),
-                (
-                    Some(ws.clone()),
-                    Some(id.clone()),
-                    Kind::TaskSent {
-                        message: brief_path,
-                        via: SendVia::Send,
-                        terminal: term.address.clone(),
-                        started: None,
-                    },
-                ),
+                superseded(p),
+                entry(Kind::TaskStarted {
+                    terminal: term.address.clone(),
+                    tab: p.tab.clone(),
+                    tab_name: title.clone(),
+                    space: space.clone(),
+                    cwd: cwd.clone(),
+                    pid: term.pid,
+                    created_ms: term.created_ms,
+                    session: session.clone(),
+                    resumed: true,
+                }),
+                entry(Kind::TaskSent {
+                    message: brief_path,
+                    via: SendVia::Send,
+                    terminal: term.address.clone(),
+                    started: None,
+                }),
             ],
         )?;
         drop(l);
-        let action = ctx
+        let labels = [("coord.task", id.as_str()), ("coord.ws", ws.as_str())];
+        let delivered = ctx
             .hc
-            .label(
-                &term.address,
-                &[("coord.task", id.as_str()), ("coord.ws", ws.as_str())],
-            )
-            .and_then(|()| ctx.hc.send(&term.address, &message).map(|_| ()));
-        if let Err(e) = action {
-            append(
-                ctx,
-                c,
-                Some(ws.clone()),
-                Some(id.clone()),
-                Kind::TaskAttention {
-                    state: super::kinds::AttentionState::Error,
-                    msg: Some(format!("handover failed: {e}")),
-                },
-            )?;
+            .label(&term.address, &labels)
+            .and_then(|()| ctx.hc.send(&term.address, &message).map(drop));
+        if let Err(e) = delivered {
+            let attention = Kind::TaskAttention {
+                state: AttentionState::Error,
+                msg: Some(format!("handover failed: {e}")),
+            };
+            append(ctx, c, Some(ws.clone()), Some(id.clone()), attention)?;
             return Err(e);
         }
         if let Some(tab) = &p.tab {
             ctx.app
                 .command("tab.rename", json!({"id":tab,"name":title}))?;
         }
-        return Ok(
-            json!({"task":id,"state":"running","terminal":term.address,"space":space,"tab":p.tab,"session":session.and_then(|s| s.id)}),
-        );
+        return Ok(json!({
+            "task": id,
+            "state": "running",
+            "terminal": term.address,
+            "space": space,
+            "tab": p.tab,
+            "session": session.and_then(|s| s.id),
+        }));
     }
     drop(l);
-    let create_result: Result<()> = (|| {
-        if a.rung == 4 {
-            let r = &intents[0];
-            let branch_intent = intents.iter().find(|r| r.r#type == ResType::Branch);
-            let base = branch_intent.and_then(|r| r.base_sha.as_deref());
-            if let Some(parent) = cwd.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            git::worktree_add(
-                repo.as_deref().unwrap(),
-                &cwd,
-                a.branch.as_deref().unwrap(),
-                base,
-            )?;
-            let mut entries = vec![(
-                Some(ws.clone()),
-                Some(id.clone()),
-                Kind::ResCreated(r.clone()),
-            )];
-            if let Some(intent) = branch_intent {
-                let mut branch = intent.clone();
-                branch.base = branch.base_sha.clone();
-                entries.push((Some(ws.clone()), Some(id.clone()), Kind::ResCreated(branch)));
-            }
-            j.lock()?.append(&c.actor(), ctx.now(), entries)?;
-        } else if a.rung == 5 {
-            fs::create_dir_all(&cwd)?;
+
+    let created = match target {
+        Target::Worktree { branch, .. } => {
+            let repo = repo.as_deref().expect("placement required a repo");
+            create_worktree(repo, branch, &cwd, &intents).and_then(|created| {
+                let entries = created
+                    .into_iter()
+                    .map(|r| entry(Kind::ResCreated(r)))
+                    .collect();
+                j.lock()?.append(&c.actor(), ctx.now(), entries)?;
+                Ok(())
+            })
         }
-        Ok(())
-    })();
-    if let Err(e) = create_result {
+        Target::Folder(_) => fs::create_dir_all(&cwd).map_err(Into::into),
+        _ => Ok(()),
+    };
+    if let Err(e) = created {
         // A failed worktree operation can still have created a checkout. Leave
         // the intent for reconciliation unless git proves the path absent.
-        let safely_absent = a.rung != 4
+        let safely_absent = !matches!(target, Target::Worktree { .. })
             || repo
                 .as_deref()
                 .and_then(|r| git::worktree_list(r).ok())
@@ -725,52 +754,35 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         argv,
         session,
         tab_name: title.clone(),
-        space_name: new_space.then_some(space_label.unwrap_or_default()),
+        space_name: new_space.then(|| space_label.clone().unwrap_or_default()),
     };
-    let launched = match launch::launch_with_started(ctx, &plan, |term| {
+    let started = |term: &Term| {
         let mut entries = Vec::new();
-        if let Some(p) = &previous {
-            if p.state != TaskState::Closed {
-                entries.push((
-                    Some(ws.clone()),
-                    Some(p.id.clone()),
-                    Kind::TaskClosed {
-                        reason: format!("superseded by {}", id.as_str()),
-                        outcome: Some(TaskOutcome::Superseded),
-                    },
-                ));
-            }
+        if let Some(p) = previous.as_ref().filter(|p| p.state != TaskState::Closed) {
+            entries.push(superseded(p));
         }
         if new_space {
-            let r = intents
-                .iter()
-                .find(|r| r.r#type == ResType::Space)
-                .unwrap()
-                .clone();
-            entries.push((Some(ws.clone()), Some(id.clone()), Kind::ResCreated(r)));
+            entries.push(entry(Kind::ResCreated(space_resource())));
         }
-        let mut tab = resource(ResType::Tab, term.address.clone());
+        let mut tab = ResourceRef::new(ResType::Tab, term.address.clone());
         tab.space = Some(space.clone());
-        entries.push((Some(ws.clone()), Some(id.clone()), Kind::ResCreated(tab)));
-        entries.push((
-            Some(ws.clone()),
-            Some(id.clone()),
-            Kind::TaskStarted {
-                terminal: term.address.clone(),
-                tab: None,
-                tab_name: title.clone(),
-                space: space.clone(),
-                cwd: cwd.clone(),
-                pid: term.pid,
-                created_ms: term.created_ms,
-                session: plan.session.clone(),
-                resumed: previous.is_some(),
-            },
-        ));
+        entries.push(entry(Kind::ResCreated(tab)));
+        entries.push(entry(Kind::TaskStarted {
+            terminal: term.address.clone(),
+            tab: None,
+            tab_name: title.clone(),
+            space: space.clone(),
+            cwd: cwd.clone(),
+            pid: term.pid,
+            created_ms: term.created_ms,
+            session: plan.session.clone(),
+            resumed: previous.is_some(),
+        }));
         j.lock()?.append(&c.actor(), ctx.now(), entries)?;
         Ok(())
-    }) {
-        Ok(v) => v,
+    };
+    let launched = match launch::launch_with_started(ctx, &plan, started) {
+        Ok(launched) => launched,
         Err(e) => {
             if e.downcast_ref::<launch::PostLaunchError>().is_none() {
                 launch_failed(ctx, &j, c, &ws, &id, &e)?;
@@ -778,22 +790,21 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
             return Err(e);
         }
     };
-    j.lock()?.append(
-        &c.actor(),
-        ctx.now(),
-        vec![(
-            Some(ws.clone()),
-            Some(id.clone()),
-            Kind::TaskLaunchDetails {
-                terminal: launched.term.address.clone(),
-                tab: launched.tab.clone(),
-                session: launched.session.clone(),
-            },
-        )],
-    )?;
-    Ok(
-        json!({"task":id,"state":"running","terminal":launched.term.address,"space":space,"tab":launched.tab,"session":launched.session.and_then(|s| s.id)}),
-    )
+    let details = Kind::TaskLaunchDetails {
+        terminal: launched.term.address.clone(),
+        tab: launched.tab.clone(),
+        session: launched.session.clone(),
+    };
+    j.lock()?
+        .append(&c.actor(), ctx.now(), vec![entry(details)])?;
+    Ok(json!({
+        "task": id,
+        "state": "running",
+        "terminal": launched.term.address,
+        "space": space,
+        "tab": launched.tab,
+        "session": launched.session.and_then(|s| s.id),
+    }))
 }
 
 pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Value> {
@@ -812,93 +823,102 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
         task.as_str(),
         state.last_seq + 1
     ));
-    let live = if let Some(addr) = &t.terminal {
-        ctx.hc.get(addr)?.filter(|v| v.live() && v.pid == t.pid)
-    } else {
-        None
-    };
-    if let Some(term) = live {
-        let _terminal_guard = ctx.terminal_lock(&term.address)?;
-        let steered = term.live()
-            && term.word() == Some("working")
-            && term.turn >= 1
-            && term.reported
-            && term
-                .status
-                .as_ref()
-                .and_then(|status| status.app.as_deref())
-                == Some("omp");
-        if !steered {
-            send_guard(&term)?;
-        }
-        fs::write(&path, &message)?;
-        let mut l = j.lock()?;
-        let current = l
-            .state()
-            .tasks
-            .get(task)
-            .ok_or_else(|| refuse("unknown_task", "task disappeared"))?;
-        if current.last_activity_seq != t.last_activity_seq
-            || current.terminal != t.terminal
-            || current.state != t.state
-        {
-            return Err(error::not_ready(
-                "agent_not_ready",
-                "task changed before send",
-            ));
-        }
-        if !term.managed()
-            || term.label("coord.task") != Some(task.as_str())
-            || !l.state().resources.iter().any(|r| {
-                r.owned
-                    && !r.released
-                    && r.r.r#type == ResType::Tab
-                    && r.r.name == term.address
-                    && r.task.as_ref() == Some(task)
-            })
-        {
-            return Err(refuse("terminal_not_owned", "task terminal is not owned"));
-        }
-        l.append(
-            &c.actor(),
-            ctx.now(),
-            vec![(
-                Some(t.ws.clone()),
-                Some(task.clone()),
-                Kind::TaskSent {
-                    message: path,
-                    via: SendVia::Send,
-                    terminal: term.address.clone(),
-                    started: None,
-                },
-            )],
-        )?;
-        drop(l);
-        let sent_result = if steered {
-            ctx.hc.steer(&term.address, &message)
-        } else {
-            ctx.hc.send(&term.address, &message)
-        };
-        let sent = match sent_result {
-            Ok(sent) => sent,
-            Err(e) => {
-                append(
-                    ctx,
-                    c,
-                    Some(t.ws.clone()),
-                    Some(task.clone()),
-                    Kind::TaskAttention {
-                        state: super::kinds::AttentionState::Error,
-                        msg: Some(format!("send failed: {e}")),
-                    },
-                )?;
-                return Err(e);
-            }
-        };
-        return Ok(
-            json!({"task":task,"sent":true,"delivery":if steered {"steering"} else {"new_turn"},"steered":steered,"turn":sent.turn,"started":sent.started}),
-        );
+    match live_terminal(ctx, t)? {
+        Some(term) => send_to_terminal(ctx, c, &j, t, &term, &path, &message),
+        None => resume_with_message(ctx, c, &j, &state, t, path, message),
     }
+}
+
+/// Deliver to the task's running agent: steer a working OMP turn, otherwise
+/// start a new turn once the agent is ready for one.
+fn send_to_terminal(
+    ctx: &Ctx,
+    c: &Caller,
+    j: &Journal,
+    t: &Task,
+    term: &Term,
+    path: &Path,
+    message: &str,
+) -> Result<Value> {
+    let entry = |kind: Kind| (Some(t.ws.clone()), Some(t.id.clone()), kind);
+    let _terminal_guard = ctx.terminal_lock(&term.address)?;
+    let steered = term.live()
+        && term.word() == Some("working")
+        && term.turn >= 1
+        && term.reported
+        && term
+            .status
+            .as_ref()
+            .and_then(|status| status.app.as_deref())
+            == Some("omp");
+    if !steered {
+        send_guard(term)?;
+    }
+    fs::write(path, message)?;
+    let mut l = j.lock()?;
+    let current = l
+        .state()
+        .tasks
+        .get(&t.id)
+        .ok_or_else(|| refuse("unknown_task", "task disappeared"))?;
+    if current.last_activity_seq != t.last_activity_seq
+        || current.terminal != t.terminal
+        || current.state != t.state
+    {
+        return Err(error::not_ready(
+            "agent_not_ready",
+            "task changed before send",
+        ));
+    }
+    if !owns_terminal(l.state(), term, &t.id) {
+        return Err(refuse("terminal_not_owned", "task terminal is not owned"));
+    }
+    let sent = Kind::TaskSent {
+        message: path.to_owned(),
+        via: SendVia::Send,
+        terminal: term.address.clone(),
+        started: None,
+    };
+    l.append(&c.actor(), ctx.now(), vec![entry(sent)])?;
+    drop(l);
+    let outcome = if steered {
+        ctx.hc.steer(&term.address, message)
+    } else {
+        ctx.hc.send(&term.address, message)
+    };
+    let sent = match outcome {
+        Ok(sent) => sent,
+        Err(e) => {
+            let attention = Kind::TaskAttention {
+                state: AttentionState::Error,
+                msg: Some(format!("send failed: {e}")),
+            };
+            append(ctx, c, Some(t.ws.clone()), Some(t.id.clone()), attention)?;
+            return Err(e);
+        }
+    };
+    Ok(json!({
+        "task": t.id,
+        "sent": true,
+        "delivery": if steered { "steering" } else { "new_turn" },
+        "steered": steered,
+        "turn": sent.turn,
+        "started": sent.started,
+    }))
+}
+
+/// The agent is gone: resume its recorded session in a new tab with the
+/// message as the prompt.
+fn resume_with_message(
+    ctx: &Ctx,
+    c: &Caller,
+    j: &Journal,
+    state: &State,
+    t: &Task,
+    path: PathBuf,
+    message: String,
+) -> Result<Value> {
+    let entry = |kind: Kind| (Some(t.ws.clone()), Some(t.id.clone()), kind);
     let session = t
         .session
         .clone()
@@ -915,23 +935,7 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
         .ok_or_else(|| refuse("no_space", "task has no space"))?;
     let repo = state.workstreams.get(&t.ws).and_then(|w| w.repo.as_deref());
     let snapshot = ctx.app.ls()?;
-    let trusted =
-        repo.is_some_and(|repo| {
-            snapshot.spaces.iter().any(|s| {
-                !state.resources.iter().any(|r| {
-                    r.owned && !r.released && r.r.r#type == ResType::Space && r.r.name == s.id
-                }) && git::main_checkout(Path::new(&s.folder)).ok().as_deref() == Some(repo)
-            }) || state.resources.iter().any(|r| {
-                !r.owned
-                    && r.r.r#type == ResType::Space
-                    && r.r
-                        .folder
-                        .as_deref()
-                        .and_then(|p| git::main_checkout(p).ok())
-                        .as_deref()
-                        == Some(repo)
-            })
-        });
+    let trusted = repo.is_some_and(|repo| repo_trusted(state, &snapshot, repo));
     let arg = brief::for_argv(message.clone(), &path);
     let vars = role::Vars {
         brief: &arg,
@@ -952,22 +956,18 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
     }
     let argv = role::expand(template, &vars, trusted.then_some(role.trust.as_slice()))?;
     fs::write(&path, &message)?;
-    let mut intent = resource(ResType::Tab, task.as_str().into());
+    let mut intent = ResourceRef::new(ResType::Tab, t.id.as_str());
     intent.space = Some(space.clone());
     j.lock()?.append(
         &c.actor(),
         ctx.now(),
-        vec![(
-            Some(t.ws.clone()),
-            Some(task.clone()),
-            Kind::ResIntent(intent.clone()),
-        )],
+        vec![entry(Kind::ResIntent(intent.clone()))],
     )?;
     let plan = launch::LaunchPlan {
-        name: task.as_str().into(),
+        name: t.id.as_str().into(),
         role_label: "delegate",
         ws: Some(t.ws.clone()),
-        task: Some(task.clone()),
+        task: Some(t.id.clone()),
         space: space.clone(),
         tab: None,
         cwd: cwd.clone(),
@@ -976,90 +976,70 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
         tab_name: t.title.clone(),
         space_name: None,
     };
-    let launched = match launch::launch_with_started(ctx, &plan, |term| {
-        let mut tab = resource(ResType::Tab, term.address.clone());
+    let started = |term: &Term| {
+        let mut tab = ResourceRef::new(ResType::Tab, term.address.clone());
         tab.space = Some(space.clone());
         let mut entries = Vec::new();
         if t.state != TaskState::Dormant && t.state != TaskState::Reported {
-            entries.push((
-                Some(t.ws.clone()),
-                Some(task.clone()),
-                Kind::TaskDormant {
-                    reason: "terminal_missing".into(),
-                },
-            ));
+            entries.push(entry(Kind::TaskDormant {
+                reason: "terminal_missing".into(),
+            }));
         }
         entries.extend([
-            (
-                Some(t.ws.clone()),
-                Some(task.clone()),
-                Kind::ResCreated(tab),
-            ),
-            (
-                Some(t.ws.clone()),
-                Some(task.clone()),
-                Kind::TaskStarted {
-                    terminal: term.address.clone(),
-                    tab: None,
-                    tab_name: t.title.clone(),
-                    space: space.clone(),
-                    cwd: cwd.clone(),
-                    pid: term.pid,
-                    created_ms: term.created_ms,
-                    session: plan.session.clone(),
-                    resumed: true,
-                },
-            ),
-            (
-                Some(t.ws.clone()),
-                Some(task.clone()),
-                Kind::TaskSent {
-                    message: path.clone(),
-                    via: SendVia::Resume,
-                    terminal: term.address.clone(),
-                    started: None,
-                },
-            ),
+            entry(Kind::ResCreated(tab)),
+            entry(Kind::TaskStarted {
+                terminal: term.address.clone(),
+                tab: None,
+                tab_name: t.title.clone(),
+                space: space.clone(),
+                cwd: cwd.clone(),
+                pid: term.pid,
+                created_ms: term.created_ms,
+                session: plan.session.clone(),
+                resumed: true,
+            }),
+            entry(Kind::TaskSent {
+                message: path.clone(),
+                via: SendVia::Resume,
+                terminal: term.address.clone(),
+                started: None,
+            }),
         ]);
         j.lock()?.append(&c.actor(), ctx.now(), entries)?;
         Ok(())
-    }) {
-        Ok(v) => v,
+    };
+    let launched = match launch::launch_with_started(ctx, &plan, started) {
+        Ok(launched) => launched,
         Err(e) => {
             if e.downcast_ref::<launch::PostLaunchError>().is_none() {
-                j.lock()?.append(
-                    &c.actor(),
-                    ctx.now(),
-                    vec![(
-                        Some(t.ws.clone()),
-                        Some(task.clone()),
-                        Kind::ResReleased {
-                            r#type: ResType::Tab,
-                            name: intent.name,
-                            note: Some("never created".into()),
-                        },
-                    )],
-                )?;
+                let never_created = Kind::ResReleased {
+                    r#type: ResType::Tab,
+                    name: intent.name,
+                    note: Some("never created".into()),
+                };
+                j.lock()?
+                    .append(&c.actor(), ctx.now(), vec![entry(never_created)])?;
             }
             return Err(e);
         }
     };
-    j.lock()?.append(
-        &c.actor(),
-        ctx.now(),
-        vec![(
-            Some(t.ws.clone()),
-            Some(task.clone()),
-            Kind::TaskLaunchDetails {
-                terminal: launched.term.address.clone(),
-                tab: launched.tab.clone(),
-                session: launched.session.clone(),
-            },
-        )],
-    )?;
-    Ok(
-        json!({"task":task,"state":"running","delivery":"new_turn","steered":false,"terminal":launched.term.address,"space":space,"tab":launched.tab,"session":launched.session.and_then(|s|s.id)}),
-    )
+    let details = Kind::TaskLaunchDetails {
+        terminal: launched.term.address.clone(),
+        tab: launched.tab.clone(),
+        session: launched.session.clone(),
+    };
+    j.lock()?
+        .append(&c.actor(), ctx.now(), vec![entry(details)])?;
+    Ok(json!({
+        "task": t.id,
+        "state": "running",
+        "delivery": "new_turn",
+        "steered": false,
+        "terminal": launched.term.address,
+        "space": space,
+        "tab": launched.tab,
+        "session": launched.session.and_then(|s| s.id),
+    }))
 }
 pub fn task_close(
     ctx: &Ctx,
