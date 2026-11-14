@@ -16,11 +16,11 @@
       "mods": ["kit-coord-ui"]
     },
     "kit-usage": {
-      "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
-      "mods": ["herdr-kit-usage"]
+      "binary": {"name": "kit-usage", "cargo_package": "kit-usage"},
+      "mods": ["kit-usage"]
     },
     "herdr-kit": {
-      "mods": [],
+      "mods": ["herdr-kit-bar"],
       "layout": "layouts/herdr-kit.json"
     }
   },
