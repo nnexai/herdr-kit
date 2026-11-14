@@ -32,6 +32,14 @@ struct State {
     files: BTreeMap<PathBuf, FileReceipt>,
     mod_owners: BTreeMap<PathBuf, BTreeMap<String, String>>,
 }
+impl State {
+    fn receipt(&self, id: &str, rev: &str) -> Option<&PackageReceipt> {
+        self.package_releases.get(rev)?.get(id)
+    }
+}
+
+/// The layout a release carries before its mod pins are projected.
+const LAYOUT_SOURCE: &str = "layout-source.json";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -210,14 +218,14 @@ fn revision(repo: &Path) -> Result<String> {
     let mut text = String::new();
     output.take(256).read_to_string(&mut text)?;
     let rev = text.trim().to_owned();
-    ensure!(
-        (rev.len() == 40 || rev.len() == 64)
-            && rev
-                .bytes()
-                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-        "invalid source revision"
-    );
+    ensure!(full_commit_id(&rev), "invalid source revision");
     Ok(rev)
+}
+fn full_commit_id(rev: &str) -> bool {
+    (rev.len() == 40 || rev.len() == 64)
+        && rev
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 fn source_path(path: &Path) -> Result<PathBuf> {
     let p = absolute(path)?;

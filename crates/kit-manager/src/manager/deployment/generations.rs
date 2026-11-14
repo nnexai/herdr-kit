@@ -132,6 +132,8 @@ fn snapshot(root: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 impl Locked {
+    /// Superseded generations that are provably unused and unmodified. One
+    /// that fails any check is retained for a later sweep, not reported.
     pub(super) fn generation_plan(
         &self,
         state: &State,
@@ -149,70 +151,80 @@ impl Locked {
             .filter(|(rev, _)| !state.selection.values().any(|selected| selected == *rev))
             .filter(|(_, packages)| packages.values().any(|receipt| receipt.activated))
             .filter_map(|(rev, packages)| {
-                let build = || -> Result<GenerationCleanup> {
-                    // Receipts, not directory naming, grant deletion authority.
-                    let release_root = release(&self.data, rev);
-                    let mut expected = BTreeMap::new();
-                    let mut roots = BTreeMap::new();
-                    let mut mods = Vec::new();
-                    let mut names = BTreeSet::new();
-                    for receipt in packages.values() {
-                        if let Some(binary) = &receipt.definition.binary {
-                            expected.insert(
-                                binary.name.clone(),
-                                receipt.binary_hash.clone().context("missing binary hash")?,
-                            );
-                        }
-                        if let Some(hash) = &receipt.layout_hash {
-                            expected.insert("layout-source.json".to_owned(), hash.clone());
-                        }
-                        for (base, hashes) in &receipt.mods {
-                            for (path, hash) in hashes {
-                                expected.insert(format!("mods/{base}/{path}"), hash.clone());
-                            }
-                            let target = mod_path(home, base, rev);
-                            if let Some(owned) = state.mod_owners.get(&target) {
-                                ensure!(owned == hashes, "mod ownership mismatch");
-                                if target.exists() {
-                                    ensure!(&tree(&target)? == hashes, "superseded mod drift");
-                                }
-                                roots.insert(target.clone(), snapshot(&target)?);
-                                let cache = home.join("data").join(name(base, rev));
-                                roots.insert(cache.clone(), snapshot(&cache)?);
-                                names.insert(name(base, rev));
-                                mods.push(target);
-                            }
-                        }
-                    }
-                    if release_root.exists() {
-                        ensure!(
-                            tree(&release_root)? == expected,
-                            "superseded release drift or unowned files"
-                        );
-                    }
-                    roots.insert(release_root.clone(), snapshot(&release_root)?);
-                    ensure!(
-                        !layouts
-                            .iter()
-                            .any(|text| names.iter().any(|name| text.contains(name))
-                                || text.contains(release_root.to_string_lossy().as_ref())),
-                        "generation referenced by layout"
-                    );
-                    ensure!(
-                        !processes
-                            .iter()
-                            .any(|path| roots.keys().any(|root| path.starts_with(root))),
-                        "generation in use by process"
-                    );
-                    Ok(GenerationCleanup {
-                        revision: rev.clone(),
-                        roots,
-                        mods,
-                    })
-                };
-                build().ok()
+                self.unused_generation(state, home, rev, packages, &layouts, processes)
+                    .ok()
             })
             .collect()
+    }
+
+    /// Receipts, not directory naming, grant deletion authority.
+    fn unused_generation(
+        &self,
+        state: &State,
+        home: &Path,
+        rev: &str,
+        packages: &BTreeMap<String, PackageReceipt>,
+        layouts: &[String],
+        processes: &[PathBuf],
+    ) -> Result<GenerationCleanup> {
+        let release_root = release(&self.data, rev);
+        let mut expected = BTreeMap::new();
+        let mut roots = BTreeMap::new();
+        let mut mods = Vec::new();
+        let mut names = BTreeSet::new();
+        for receipt in packages.values() {
+            if let Some(binary) = &receipt.definition.binary {
+                expected.insert(
+                    binary.name.clone(),
+                    receipt.binary_hash.clone().context("missing binary hash")?,
+                );
+            }
+            if let Some(hash) = &receipt.layout_hash {
+                expected.insert(LAYOUT_SOURCE.to_owned(), hash.clone());
+            }
+            for (base, hashes) in &receipt.mods {
+                for (path, hash) in hashes {
+                    expected.insert(format!("mods/{base}/{path}"), hash.clone());
+                }
+                let target = mod_path(home, base, rev);
+                if let Some(owned) = state.mod_owners.get(&target) {
+                    ensure!(owned == hashes, "mod ownership mismatch");
+                    if target.exists() {
+                        ensure!(&tree(&target)? == hashes, "superseded mod drift");
+                    }
+                    roots.insert(target.clone(), snapshot(&target)?);
+                    let cache = home.join("data").join(name(base, rev));
+                    roots.insert(cache.clone(), snapshot(&cache)?);
+                    names.insert(name(base, rev));
+                    mods.push(target);
+                }
+            }
+        }
+        if release_root.exists() {
+            ensure!(
+                tree(&release_root)? == expected,
+                "superseded release drift or unowned files"
+            );
+        }
+        roots.insert(release_root.clone(), snapshot(&release_root)?);
+        ensure!(
+            !layouts
+                .iter()
+                .any(|text| names.iter().any(|name| text.contains(name))
+                    || text.contains(release_root.to_string_lossy().as_ref())),
+            "generation referenced by layout"
+        );
+        ensure!(
+            !processes
+                .iter()
+                .any(|path| roots.keys().any(|root| path.starts_with(root))),
+            "generation in use by process"
+        );
+        Ok(GenerationCleanup {
+            revision: rev.to_owned(),
+            roots,
+            mods,
+        })
     }
 
     pub(super) fn finish_generations(
@@ -275,16 +287,9 @@ impl Locked {
         Ok(state)
     }
 
+    /// Activate nothing; the replay still collects superseded generations.
     pub(super) fn sweep_generations(&self, state: State) -> Result<State> {
-        let transaction = Transaction {
-            schema_version: 1,
-            state,
-            files: Vec::new(),
-            mods: Vec::new(),
-            obsolete_deployments: BTreeMap::new(),
-            cleanup: None,
-        };
-        self.activate(transaction)
+        self.activate(Transaction::maintenance(state))
     }
 }
 

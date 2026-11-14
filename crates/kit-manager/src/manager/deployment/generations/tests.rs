@@ -28,17 +28,6 @@ fn second(lock: &Locked, old: &State, rev: &str, paths: &[PathBuf]) -> State {
     )
 }
 
-fn maintenance(state: State) -> Transaction {
-    Transaction {
-        schema_version: 1,
-        state,
-        files: Vec::new(),
-        mods: Vec::new(),
-        obsolete_deployments: BTreeMap::new(),
-        cleanup: None,
-    }
-}
-
 #[cfg(target_os = "linux")]
 #[test]
 fn unreadable_process_links_do_not_hide_readable_pins() {
@@ -118,7 +107,7 @@ fn external_nested_layout_pins_generation_until_later_maintenance() {
     assert!(mod_path(&home, "kit-coord", &a).exists());
     assert!(pinned.package_releases.contains_key(&a));
     fs::remove_file(&external).unwrap();
-    let next = activate(&lock, maintenance(pinned), &[]);
+    let next = activate(&lock, Transaction::maintenance(pinned), &[]);
     assert!(!release(&lock.data, &a).exists());
     assert!(!next.package_releases.contains_key(&a));
     lock.verify_active(&next).unwrap();
@@ -187,7 +176,7 @@ fn real_process_executable_and_cwd_each_pin_a_generation() {
         assert!(mod_path(&home, "kit-coord", &a).exists());
         child.0.kill().unwrap();
         child.0.wait().unwrap();
-        let next = activate(&lock, maintenance(pinned), &[]);
+        let next = activate(&lock, Transaction::maintenance(pinned), &[]);
         assert!(!release(&lock.data, &a).exists());
         lock.verify_active(&next).unwrap();
     }
@@ -209,7 +198,7 @@ fn cleanup_journal_recovers_partial_trees_and_post_save_crash() {
     save(&journal_path(&lock.data), &tx).unwrap();
     lock.recover_with_processes(|| Ok(vec![release(&lock.data, &a)]))
         .unwrap();
-    let mut cleanup = maintenance(lock.state().unwrap());
+    let mut cleanup = Transaction::maintenance(lock.state().unwrap());
     cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     assert_eq!(cleanup.cleanup.as_ref().unwrap().len(), 1);
     save(&journal_path(&lock.data), &cleanup).unwrap();
@@ -248,7 +237,7 @@ fn drift_and_new_pins_never_authorize_deletion() {
     fs::write(&malformed, "malformed").unwrap();
     assert!(lock.generation_plan(&state, &[]).is_empty());
     fs::remove_file(&malformed).unwrap();
-    let mut cleanup = maintenance(state);
+    let mut cleanup = Transaction::maintenance(state);
     cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     save(&journal_path(&lock.data), &cleanup).unwrap();
     assert!(

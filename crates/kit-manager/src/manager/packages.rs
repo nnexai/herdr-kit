@@ -209,6 +209,19 @@ pub(super) struct Transaction {
     pub obsolete_deployments: BTreeMap<PathBuf, String>,
     pub cleanup: Option<Vec<GenerationCleanup>>,
 }
+impl Transaction {
+    /// Changes no file or mod; only the superseded-generation sweep runs.
+    pub fn maintenance(state: State) -> Self {
+        Self {
+            schema_version: 1,
+            state,
+            files: Vec::new(),
+            mods: Vec::new(),
+            obsolete_deployments: BTreeMap::new(),
+            cleanup: None,
+        }
+    }
+}
 
 pub(super) fn project_layout(
     value: &mut Value,
