@@ -13,6 +13,10 @@
   units, share one bounded process runner and format the Rust workspace with
   rustfmt. Commands, output and stored formats are unchanged; an oversized Git
   reply is now reported as `git output exceeds limit`.
+- Ignore `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the other
+  repository-selecting variables inherited from a Git hook or `git rebase
+  --exec` in every kit-coord and manager Git call, the kit-coord build script
+  and the tests. They previously redirected work to the caller's repository.
 - Remove superseded extraction/migration plans and duplicated role/fixture docs.
   Canonical roles and fixtures live with kit-coord.
 - Manager receipt format changes are clean cuts, not automatic conversions.

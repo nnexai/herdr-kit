@@ -80,7 +80,7 @@ impl<'a> Checkout<'a> {
             .tempdir_in(&releases)?;
         let archive = tmp.path().join("source.tar");
         run(
-            Command::new("git")
+            crate::git_env::git()
                 .arg("-C")
                 .arg(repo)
                 .args(["archive", "--format=tar", "--output"])

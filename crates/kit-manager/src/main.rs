@@ -1,3 +1,4 @@
+mod git_env;
 mod manager;
 mod paths;
 

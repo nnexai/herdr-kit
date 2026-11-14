@@ -1,5 +1,6 @@
 mod coord;
 mod deployment;
+mod git_env;
 mod paths;
 
 use anyhow::{Context, Result};

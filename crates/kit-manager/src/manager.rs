@@ -203,7 +203,7 @@ fn run(cmd: &mut Command, error: &str) -> Result<()> {
 fn revision(repo: &Path) -> Result<String> {
     let mut output = tempfile::tempfile()?;
     let status = bounded(
-        Command::new("git")
+        crate::git_env::git()
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--verify", "HEAD^{commit}"])

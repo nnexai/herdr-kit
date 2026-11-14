@@ -1,6 +1,5 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -8,7 +7,7 @@ use super::exec;
 
 /// Exit code, stdout and stderr of `git -C dir args`.
 fn run(dir: &Path, args: &[OsString], seconds: u64) -> Result<(i32, String, String)> {
-    let mut cmd = Command::new("git");
+    let mut cmd = crate::git_env::git();
     cmd.arg("-C")
         .arg(dir)
         .args(args)
@@ -203,7 +202,7 @@ mod tests {
     use super::*;
     use std::fs;
     fn git(home: &Path, dir: &Path, a: &[&str]) {
-        let status = Command::new("git")
+        let status = crate::git_env::git()
             .env("HOME", home)
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")

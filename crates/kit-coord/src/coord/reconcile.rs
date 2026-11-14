@@ -853,7 +853,7 @@ mod tests {
         let repo = dir.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
+            let out = crate::git_env::git()
                 .arg("-C")
                 .arg(&repo)
                 .args(args)

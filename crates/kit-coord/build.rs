@@ -1,7 +1,10 @@
-use std::{env, process::Command};
+use std::env;
+
+#[path = "src/git_env.rs"]
+mod git_env;
 
 fn git(args: &[&str]) -> Option<String> {
-    let output = Command::new("git").args(args).output().ok()?;
+    let output = git_env::git().args(args).output().ok()?;
     output
         .status
         .success()

@@ -1,3 +1,6 @@
+#[path = "../src/git_env.rs"]
+mod git_env;
+
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -10,6 +13,8 @@ struct Harness {
     tmp: tempfile::TempDir,
     hc: PathBuf,
     app: PathBuf,
+    /// A repository exported to kit-coord the way a git hook exports its own.
+    inherited_git: Option<PathBuf>,
 }
 impl Harness {
     fn new() -> Self {
@@ -24,7 +29,12 @@ impl Harness {
             .unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
-        Self { tmp, hc, app }
+        Self {
+            tmp,
+            hc,
+            app,
+            inherited_git: None,
+        }
     }
     fn root(&self) -> &Path {
         self.tmp.path()
@@ -39,6 +49,11 @@ impl Harness {
             .arg("--data-dir")
             .arg(self.root().join("data"))
             .args(args);
+        if let Some(repo) = &self.inherited_git {
+            c.env("GIT_DIR", repo.join(".git"))
+                .env("GIT_WORK_TREE", repo)
+                .env("GIT_INDEX_FILE", repo.join(".git/index"));
+        }
         c
     }
     fn run(&self, args: &[&str]) -> Output {
@@ -565,95 +580,145 @@ fn up_is_idempotent_with_live_managed_terminals() {
     assert!(runs[1].contains("coord.role=coordinator"));
 }
 
+fn init_repo(h: &Harness, name: &str) -> PathBuf {
+    let repo = h.root().join(name);
+    fs::create_dir_all(&repo).unwrap();
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ][..],
+    ] {
+        assert!(
+            git_env::git()
+                .env("HOME", h.root())
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    repo
+}
+
+/// Opens a workstream on `repo` and starts its first task in a new worktree on
+/// branch `feature`. Returns the workstream, the task and the start reply.
+fn start_worktree_task(h: &Harness, repo: &Path) -> (String, String, Value) {
+    let ws = h.ok(&[
+        "ws",
+        "open",
+        "--title",
+        "Work",
+        "--target",
+        "delivery",
+        "--repo",
+        repo.to_str().unwrap(),
+    ])["ws"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let coord = h.root().join("data/coord");
+    let roles = coord.join("roles");
+    fs::create_dir_all(&roles).unwrap();
+    fs::write(
+        coord.join("config.json"),
+        json!({"worktree_root":h.root().join("trees")}).to_string(),
+    )
+    .unwrap();
+    fs::write(roles.join("test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nInstructions\n").unwrap();
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Complete work").unwrap();
+    let task = format!("{ws}-t1");
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["turn"] = json!(1);
+    term["labels"] =
+        json!({"coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    term["foreground"]["pid"] = term["pid"].clone();
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+    h.queue("hc", "ls", &json!({"terminals":[]}));
+    h.queue("herdr-app","ls",&json!({"spaces":[{"id":"fixture","name":"fixture","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"tab","terminals":[{"terminal":"t7","pane":"p"}]}]}]}));
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws,
+        "--rung",
+        "4",
+        "--reason",
+        "work",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "test",
+        "--branch",
+        "feature",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+        "--reject",
+        "3=no",
+    ]);
+    (ws, task, started)
+}
+
+/// Every file below `dir`, by path.
+fn files(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut pending = vec![dir.to_owned()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+    }
+    found
+}
+
+/// Git hooks and `git rebase --exec` export their own repository. Work on a
+/// workstream's repository must still land there.
+#[test]
+fn inherited_git_repository_is_left_alone() {
+    let mut h = Harness::new();
+    let repo = init_repo(&h, "repo");
+    let decoy = init_repo(&h, "decoy");
+    let before = files(&decoy);
+    h.inherited_git = Some(decoy.clone());
+    start_worktree_task(&h, &repo);
+    assert!(h.root().join("trees/repo/feature").exists());
+    let branches = git_env::git()
+        .arg("-C")
+        .arg(&repo)
+        .args(["branch", "--list", "feature"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&branches.stdout).contains("feature"));
+    assert_eq!(files(&decoy), before);
+}
+
 #[test]
 fn worktree_release_clean_and_dirty() {
     for dirty in [false, true] {
         let h = Harness::new();
-        let repo = h.root().join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "commit",
-                "--allow-empty",
-                "-qm",
-                "initial",
-            ][..],
-        ] {
-            assert!(
-                Command::new("git")
-                    .env("HOME", h.root())
-                    .arg("-C")
-                    .arg(&repo)
-                    .args(args)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
-        }
-        let ws = h.ok(&[
-            "ws",
-            "open",
-            "--title",
-            "Work",
-            "--target",
-            "delivery",
-            "--repo",
-            repo.to_str().unwrap(),
-        ])["ws"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let coord = h.root().join("data/coord");
-        let roles = coord.join("roles");
-        fs::create_dir_all(&roles).unwrap();
-        fs::write(
-            coord.join("config.json"),
-            json!({"worktree_root":h.root().join("trees")}).to_string(),
-        )
-        .unwrap();
-        fs::write(roles.join("test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nInstructions\n").unwrap();
-        let brief = h.root().join("brief");
-        fs::write(&brief, "Complete work").unwrap();
-        let task = format!("{ws}-t1");
-        let mut term: Value =
-            serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
-        term["address"] = json!("t7");
-        term["state"] = json!("live");
-        term["turn"] = json!(1);
-        term["labels"] =
-            json!({"coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
-        term["foreground"]["pid"] = term["pid"].clone();
-        h.queue("hc", "run", &json!({"address":"t7"}));
-        h.queue("hc", "get", &term);
-        h.queue("hc", "ls", &json!({"terminals":[]}));
-        h.queue("herdr-app","ls",&json!({"spaces":[{"id":"fixture","name":"fixture","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"tab","terminals":[{"terminal":"t7","pane":"p"}]}]}]}));
-        let started = h.ok(&[
-            "task",
-            "start",
-            "--ws",
-            &ws,
-            "--rung",
-            "4",
-            "--reason",
-            "work",
-            "--brief",
-            brief.to_str().unwrap(),
-            "--role",
-            "test",
-            "--branch",
-            "feature",
-            "--reject",
-            "1=no",
-            "--reject",
-            "2=no",
-            "--reject",
-            "3=no",
-        ]);
+        let repo = init_repo(&h, "repo");
+        let (ws, task, started) = start_worktree_task(&h, &repo);
         let space = started["space"].as_str().unwrap();
         let tree = h.root().join("trees/repo/feature");
         assert!(tree.exists());
