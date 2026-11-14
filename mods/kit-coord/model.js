@@ -39,7 +39,7 @@ export function degradedSentence(status) { return (status?.degraded ?? []).map(x
 export const shouldAutostart = (status,tried) => !!status && !tried && status.enabled && status.autostart && status.state !== 'running';
 export function statusbarModel(status,ctx={}) {
  const now=ctx.now ?? 0, age=now-(ctx.lastOkMs ?? status?.generated_at_ms ?? now), stale=!!status && !!ctx.failed && age>90000;
- let state=ctx.starting?'starting':(!status ? (ctx.failed?'unavailable':'loading') : ctx.failed && (age>120000 || (ctx.failures ?? ctx.failureCount ?? 0)>=3) ? 'unavailable' : !status.enabled?'not_running':status.state);
+ let state=ctx.starting?'starting':(!status ? (ctx.failed?'unavailable':'loading') : ctx.failed && (age>120000 || (ctx.failures ?? 0)>=3) ? 'unavailable' : !status.enabled?'not_running':status.state);
  const c=status?.counts ?? {running:0,needs_you:0,retained:0};
  const segments=[['running',c.running,'running','muted'],['needs_you',c.needs_you,'needs you','blocked'],['retained',c.retained,'retained','muted']].filter(x=>x[1]>0).map(([key,n,label,role])=>({key,text:`${n} ${label}`,compact:String(n),role}));
  let text='',compactText='',tooltip='',click='reread';
@@ -48,7 +48,7 @@ export function statusbarModel(status,ctx={}) {
  else if(state==='degraded') { const reasons=status.degraded ?? []; text=`Degraded${reasons.length?` · ${reasonText(reasons[0].code)}${reasons.length>1?` +${reasons.length-1}`:''}`:''}${c.needs_you?` · ${c.needs_you} needs you`:''}`; compactText='Degraded'; tooltip=`Coordinator degraded: ${degradedSentence(status)}. Click to repair (coord up). Right-click opens the board.`; click='up'; }
  else if(state==='starting') { text='Starting…'; compactText='…'; tooltip='Starting the coordinator…'; click='none'; }
  else if(state==='loading') { text='Coordinator …'; compactText='…'; tooltip='Reading coordinator status…'; }
- else { state='unavailable'; text='Coordinator unavailable'; compactText='n/a'; tooltip=`Coordinator status unavailable: ${clip(oneLine((ctx.error ?? ctx.firstLine ?? '').split('\n')[0]),120)}. Click to retry.`; }
+ else { state='unavailable'; text='Coordinator unavailable'; compactText='n/a'; tooltip=`Coordinator status unavailable: ${clip(oneLine((ctx.error ?? '').split('\n')[0]),120)}. Click to retry.`; }
  if(c.needs_you>0 && state!=='running') tooltip+=` ${c.needs_you} needs you; open the board to review.`;
  if(stale) { text+=' ~'; compactText+=' ~'; tooltip+=` Last updated ${formatClock(status.generated_at_ms).slice(0,5)}.`; }
  const inner=(ctx.width ?? 280)-53, tier=estimateWidth(text)<=inner?'full':estimateWidth(compactText)<=inner?'dots':'icon';
@@ -200,4 +200,3 @@ export function mergePendingEntries(pending,incoming,visible=[]) {
  return mergeLog(pending.filter(e=>!shown.has(e.seq)),fresh,'prepend');
 }
 export function logArgs(scope={},options={}) { const args=['--json','--limit',String(options.limit ?? 200)]; if(scope.task) args.push('--task',scope.task); else if(scope.ws) args.push('--ws',scope.ws); if(options.beforeSeq!=null) args.push('--before-seq',String(options.beforeSeq)); if(options.afterSeq!=null) args.push('--after-seq',String(options.afterSeq)); return args; }
-export function nextRefreshDelay(state,now) { if(state.inFlight || state.inflight) return {waitMs:null}; const remaining=750-(now-(state.lastRunMs ?? state.lastMs ?? -Infinity)); return remaining<=0?{runNow:true}:{waitMs:remaining}; }

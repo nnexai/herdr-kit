@@ -722,7 +722,6 @@ tests/coord.test.js     node --test, imports ../mods/kit-coord/model.js
 | `mergeLog(prev, next, mode)` → merged entries | `mode: 'replace' \| 'prepend' \| 'append'`; de-dup by `seq`, newest-first, cap 2000 |
 | `logArgs(scope, {limit, beforeSeq, afterSeq})` → argv array | builds the `coord log` args; keeps `store.js` trivial |
 | `formatAge(ms)`, `formatClock(ms)`, `formatDay(ms, now)`, `clip(text,max)`, `oneLine(text)`, `rungLabel(n)` | text helpers |
-| `nextRefreshDelay(state, now)` | coalescing decision: `{ runNow } \| { waitMs }` (pure so it is testable) |
 
 `boardModel.rows` is the single flat array the keyboard walks; `ui-board.js` renders from `sections` but uses `rows[i].key` for selection, `aria_selected`, `aria_active_descendant` and `scroll_to_item`.
 
@@ -745,7 +744,7 @@ tests/coord.test.js     node --test, imports ../mods/kit-coord/model.js
 9. `timelineModel`: day separators (`TODAY`, `YESTERDAY`, date), key-event hiding and `hiddenCount`, text filter, scope chip, `has_more` row, 2000 cap.
 10. `mergeLog`: prepend de-dup, append, replace, order.
 11. `logArgs`: exact argv for scope none/ws/task, before/after seq.
-12. `nextRefreshDelay`: coalescing (in-flight sets dirty; 750 ms window).
+12. Refresh coalescing (in-flight sets dirty; 750 ms window) lives in `store.js`, which needs the host, and has no unit test.
 13. `formatAge`: `<1m`, `12m`, `3h 5m`, `1d 4h`; `formatDay`.
 
 ---
