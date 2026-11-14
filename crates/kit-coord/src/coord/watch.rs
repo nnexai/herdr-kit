@@ -14,6 +14,28 @@ struct PendingSend {
     task: Option<TaskId>,
     record: Kind,
 }
+impl PendingSend {
+    /// Starts `command` in the background; a later tick picks up its result.
+    fn start(
+        command: std::process::Command,
+        guard: std::fs::File,
+        ws: Option<WsId>,
+        task: Option<TaskId>,
+        record: Kind,
+    ) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tokio::spawn(async move {
+            let _ = tx.send(deliver(command).await);
+        });
+        Self {
+            _guard: guard,
+            result: rx,
+            ws,
+            task,
+            record,
+        }
+    }
+}
 
 async fn deliver(command: std::process::Command) -> Result<()> {
     use tokio::io::AsyncReadExt;
@@ -72,6 +94,7 @@ use super::{
     kinds::{Actor, Entry, Kind},
     lifecycle, reconcile,
     rules::{self, Action, Facts},
+    state::State,
 };
 
 pub enum Line {
@@ -202,8 +225,9 @@ impl Core {
             })
         });
     }
-    pub fn tick(&mut self, ctx: &Ctx, j: &Journal, cfg: &Config) -> Result<Vec<Entry>> {
-        self.load(j)?;
+    /// Journals the outcome of every delivery that finished since the last tick.
+    /// A failed delivery keeps its terminal out of further sends for 30 seconds.
+    fn record_deliveries(&mut self, ctx: &Ctx, j: &Journal) -> Result<()> {
         let completed: Vec<_> = self
             .pending
             .iter_mut()
@@ -242,60 +266,92 @@ impl Core {
                 }
             }
         }
+        Ok(())
+    }
+    /// The terminal's operation lock, unless a delivery to it is in flight, a
+    /// failed one is still backing off, or a command holds the terminal.
+    fn delivery_slot(&self, ctx: &Ctx, terminal: &str) -> Option<std::fs::File> {
+        if self.pending.contains_key(terminal)
+            || self
+                .retry_after
+                .get(terminal)
+                .is_some_and(|until| ctx.now() < *until)
+        {
+            return None;
+        }
+        ctx.terminal_lock(terminal).ok()
+    }
+    /// Replaces what the watcher believes about `terminal` with what hc reports.
+    fn recheck_terminal(&mut self, ctx: &Ctx, terminal: &str) -> Result<()> {
+        match ctx.hc.get(terminal)? {
+            Some(term) => self.observe(term),
+            None => {
+                self.facts.terms.remove(terminal);
+                self.facts.working_since.remove(terminal);
+            }
+        }
+        Ok(())
+    }
+    /// Whether the rules still ask for the action identified by `key`.
+    fn wanted(&self, state: &State, cfg: &Config, now_ms: u64, key: &str) -> bool {
+        rules::evaluate(state, &self.facts, cfg, now_ms)
+            .iter()
+            .any(|a| action_key(a) == key)
+    }
+    pub fn tick(&mut self, ctx: &Ctx, j: &Journal, cfg: &Config) -> Result<Vec<Entry>> {
+        self.load(j)?;
+        self.record_deliveries(ctx, j)?;
         self.load(j)?;
         let actions = rules::evaluate(&j.read_state()?, &self.facts, cfg, ctx.now());
         let batch = Journal::with_context(&ctx.paths, super::new_op()?, None)?;
         let mut written = Vec::new();
         for action in actions {
-            let send_guard = if let Action::Send { terminal, .. } = &action {
-                if self.pending.contains_key(terminal)
-                    || self
-                        .retry_after
-                        .get(terminal)
-                        .is_some_and(|until| ctx.now() < *until)
-                {
-                    continue;
-                }
-                match ctx.terminal_lock(terminal) {
-                    Ok(guard) => Some(guard),
-                    Err(_) => continue,
-                }
-            } else {
-                None
-            };
-            let send_term = if let Action::Send { terminal, .. } = &action {
-                match ctx.hc.get(terminal)? {
-                    Some(term) => Some(term),
-                    None => continue,
-                }
-            } else {
-                None
-            };
-            if let Action::Append {
-                kind: Kind::CoordSessionEnded { terminal, .. },
-                ..
-            } = &action
-            {
-                // Journal writes and hc events are independent streams. In
-                // particular our synchronous restart queues events while the
-                // journal already points at the replacement. Confirm loss
-                // against hc before turning a stale cache miss into history.
-                match ctx.hc.get(terminal)? {
-                    Some(term) => self.observe(term),
-                    None => {
-                        self.facts.terms.remove(terminal);
-                        self.facts.working_since.remove(terminal);
-                    }
-                }
-            }
-            let mut lock = batch.lock()?;
-            let fresh = rules::evaluate(lock.state(), &self.facts, cfg, ctx.now());
+            // Earlier actions of this tick may have changed what the rules ask
+            // for, so each action is confirmed against the journal under its lock.
             let key = action_key(&action);
-            if !fresh.iter().any(|a| action_key(a) == key) {
-                continue;
-            }
             match action {
+                Action::Send {
+                    terminal,
+                    text,
+                    record,
+                    ws,
+                    task,
+                } => {
+                    let Some(guard) = self.delivery_slot(ctx, &terminal) else {
+                        continue;
+                    };
+                    let Some(term) = ctx.hc.get(&terminal)? else {
+                        continue;
+                    };
+                    let lock = batch.lock()?;
+                    if !self.wanted(lock.state(), cfg, ctx.now(), &key)
+                        || !is_addressee(&term, lock.state(), task.as_ref())
+                    {
+                        continue;
+                    }
+                    // What hc just reported may already settle what the message is about.
+                    self.observe(term);
+                    if !self.wanted(lock.state(), cfg, ctx.now(), &key) {
+                        continue;
+                    }
+                    let command = ctx.hc.send_command(&terminal, &text);
+                    self.pending.insert(
+                        terminal,
+                        PendingSend::start(command, guard, ws, task, record),
+                    );
+                }
                 Action::Append { ws, task, kind } => {
+                    if let Kind::CoordSessionEnded { terminal, .. } = &kind {
+                        // Journal writes and hc events are independent streams. In
+                        // particular our synchronous restart queues events while the
+                        // journal already points at the replacement. Confirm loss
+                        // against hc before turning a stale cache miss into history.
+                        self.recheck_terminal(ctx, terminal)?;
+                    }
+                    let mut lock = batch.lock()?;
+                    if !self.wanted(lock.state(), cfg, ctx.now(), &key) {
+                        continue;
+                    }
                     if matches!(kind, Kind::TaskTurn { .. } | Kind::CoordTurn { .. }) {
                         let address = task
                             .as_ref()
@@ -312,70 +368,52 @@ impl Core {
                         vec![(ws, task, kind)],
                     )?);
                 }
-                Action::Send {
-                    terminal,
-                    text,
-                    record,
-                    ws,
-                    task,
-                } => {
-                    let term = send_term.unwrap();
-                    if !term.sendable() {
-                        continue;
-                    }
-                    if !term.managed() {
-                        continue;
-                    }
-                    if let Some(id) = &task {
-                        let Some(rec) = lock.state().tasks.get(id) else {
-                            continue;
-                        };
-                        if term.label("coord.task") != Some(id.as_str())
-                            || term.label("coord.ws") != Some(rec.ws.as_str())
-                            || rec.pid.is_none()
-                            || rec.pid != term.pid
-                            || rec.created_ms != Some(term.created_ms)
-                        {
-                            continue;
-                        }
-                    } else if term.label("coord.role") != Some("coordinator") {
-                        continue;
-                    }
-                    self.observe(term);
-                    if !rules::evaluate(lock.state(), &self.facts, cfg, ctx.now())
-                        .iter()
-                        .any(|a| action_key(a) == key)
-                    {
-                        continue;
-                    }
-                    let command = ctx.hc.send_command(&terminal, &text);
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    tokio::spawn(async move {
-                        let _ = tx.send(deliver(command).await);
-                    });
-                    self.pending.insert(
-                        terminal,
-                        PendingSend {
-                            _guard: send_guard.unwrap(),
-                            result: rx,
-                            ws,
-                            task,
-                            record,
-                        },
-                    );
-                }
                 Action::CloseLeftover { task, terminal } => {
-                    written.extend(lock.append(&Actor::Watcher, ctx.now(), vec![(Some(task.ws()), Some(task), Kind::ReconcileFinding { code:"replaced_terminal_retained".into(), summary:format!("Retained replaced terminal {terminal}; it may contain a person's work") })])?);
+                    let mut lock = batch.lock()?;
+                    if !self.wanted(lock.state(), cfg, ctx.now(), &key) {
+                        continue;
+                    }
+                    let finding = Kind::ReconcileFinding {
+                        code: "replaced_terminal_retained".into(),
+                        summary: format!(
+                            "Retained replaced terminal {terminal}; it may contain a person's work"
+                        ),
+                    };
+                    written.extend(lock.append(
+                        &Actor::Watcher,
+                        ctx.now(),
+                        vec![(Some(task.ws()), Some(task), finding)],
+                    )?);
                 }
                 Action::RestartCoordinator { reason } => {
-                    drop(lock);
-                    lifecycle::restart_coordinator(ctx, &batch, &reason)?;
+                    // The journal lock is released before the restart takes it again.
+                    let wanted = self.wanted(batch.lock()?.state(), cfg, ctx.now(), &key);
+                    if wanted {
+                        lifecycle::restart_coordinator(ctx, &batch, &reason)?;
+                    }
                 }
             }
         }
         self.load(j)?;
         Ok(written)
     }
+}
+/// Whether `term` can take a message now and is still the managed agent it is
+/// meant for: the recorded process of `task`, or the coordinator without one.
+fn is_addressee(term: &Term, state: &State, task: Option<&TaskId>) -> bool {
+    if !term.sendable() || !term.managed() {
+        return false;
+    }
+    let Some(id) = task else {
+        return term.label("coord.role") == Some("coordinator");
+    };
+    state.tasks.get(id).is_some_and(|rec| {
+        term.label("coord.task") == Some(id.as_str())
+            && term.label("coord.ws") == Some(rec.ws.as_str())
+            && rec.pid.is_some()
+            && rec.pid == term.pid
+            && rec.created_ms == Some(term.created_ms)
+    })
 }
 fn action_key(a: &Action) -> String {
     match a {
