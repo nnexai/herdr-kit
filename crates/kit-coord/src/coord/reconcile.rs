@@ -1,399 +1,50 @@
 //! Periodic reconciliation of journal intents and external resources.
 use super::{
     Ctx,
-    config::Config,
+    adapter::{AppSnapshot, AppSpace, Term},
     git,
-    journal::Journal,
+    ids::{TaskId, WsId},
+    journal::{Journal, Locked},
     kinds::{Actor, Check, Entry, Kind, ResType, SessionRef},
     launch,
     release::{self, Mode},
     rules::Facts,
-    state::{TaskState, WsState},
+    state::{Intent, ResourceRec, State, TaskState, WsState},
 };
 use anyhow::Result;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::Path;
 
-pub fn reconcile(ctx: &Ctx, j: &Journal, facts: &mut Facts, _cfg: &Config) -> Result<Vec<Entry>> {
+/// An intent older than this was not completed by the command that recorded it.
+const STALE_INTENT_MS: u64 = 120_000;
+
+pub fn reconcile(ctx: &Ctx, j: &Journal, facts: &mut Facts) -> Result<Vec<Entry>> {
     let before = j.last_seq()?;
-    let addresses = ctx.hc.list(true, Some(("coord.managed", "1")))?;
-    let mut terms = std::collections::BTreeMap::new();
-    for address in addresses {
-        if let Some(term) = ctx.hc.get(&address)? {
-            terms.insert(address, term);
-        }
-    }
-    facts.terms = terms;
-    facts.initialized = true;
+    refresh_terminals(ctx, facts)?;
     let app = ctx.app.ls().ok();
     let history = j.read_after(0)?;
     let mut lock = j.lock()?;
     let state = lock.state().clone();
     for intent in state.intents.values().filter(|i| {
         (i.ws.is_some() || !matches!(i.r.r#type, ResType::Space | ResType::Tab))
-            && ctx.now().saturating_sub(i.ts_ms) >= 120_000
+            && ctx.now().saturating_sub(i.ts_ms) >= STALE_INTENT_MS
     }) {
-        let mut resource = intent.r.clone();
-        let matching = facts.terms.values().find(|t| {
-            t.managed()
-                && intent
-                    .task
-                    .as_ref()
-                    .is_some_and(|id| t.label("coord.task") == Some(id.as_str()))
-                && resource
-                    .space
-                    .as_deref()
-                    .is_none_or(|s| t.label("herdr.space") == Some(s))
-        });
-        let exists = match resource.r#type {
-            ResType::Worktree => {
-                if let Some(repo) = &resource.repo {
-                    git::worktree_list(repo)?.iter().any(|w| {
-                        w.path == Path::new(&resource.name)
-                            && resource
-                                .branch
-                                .as_ref()
-                                .is_none_or(|b| w.branch.as_ref() == Some(b))
-                    })
-                } else {
-                    false
-                }
-            }
-            ResType::Space => facts.terms.values().any(|t| {
-                t.managed()
-                    && t.label("herdr.space") == Some(resource.name.as_str())
-                    && intent
-                        .task
-                        .as_ref()
-                        .is_some_and(|id| t.label("coord.task") == Some(id.as_str()))
-            }),
-            ResType::Tab => matching.is_some(),
-            ResType::Branch => {
-                if let Some(repo) = &resource.repo {
-                    git::branch_exists(repo, &resource.name)?
-                } else {
-                    false
-                }
-            }
-        };
-        if exists {
-            let session = if resource.r#type == ResType::Tab {
-                let value = history
-                    .iter()
-                    .rev()
-                    .find(|e| e.task == intent.task && e.kind == "task.placed")
-                    .and_then(|e| e.data.get("session"));
-                match value {
-                    Some(value) => {
-                        Some(serde_json::from_value::<Option<SessionRef>>(value.clone())?)
-                    }
-                    None => None,
-                }
-            } else {
-                Some(None)
-            };
-            let base_sha = if resource.r#type == ResType::Branch {
-                history
-                    .iter()
-                    .find(|e| e.seq == intent.seq)
-                    .and_then(|e| e.data.get("base_sha"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
-            } else {
-                Some(String::new())
-            };
-            if session.is_none() || base_sha.is_none() {
-                let summary = format!("Intent {} lacks recovery provenance", intent.seq);
-                if !history.iter().any(|e| matches!(e.typed(), Kind::ReconcileFinding { code, summary: s } if code == "intent_provenance_missing" && s == summary)) {
-                    lock.append(&Actor::Watcher, ctx.now(), vec![(intent.ws.clone(), intent.task.clone(), Kind::ReconcileFinding { code:"intent_provenance_missing".into(), summary })])?;
-                }
-                continue;
-            }
-            if resource.r#type == ResType::Branch {
-                resource.base = base_sha;
-            }
-            if resource.r#type == ResType::Tab {
-                let term = matching.expect("matched terminal");
-                resource.name = term.address.clone();
-                resource.tab = app
-                    .as_ref()
-                    .and_then(|a| a.tab_of(&term.address))
-                    .map(|(_, t)| t.id.clone())
-                    .or_else(|| term.label("herdr.tab").map(str::to_owned));
-            }
-            lock.append(
-                &Actor::Watcher,
-                ctx.now(),
-                vec![(
-                    intent.ws.clone(),
-                    intent.task.clone(),
-                    Kind::ResCreated(resource.clone()),
-                )],
-            )?;
-            if resource.r#type == ResType::Tab {
-                if let (Some(id), Some(term)) = (&intent.task, matching) {
-                    if let Some(task) = lock
-                        .state()
-                        .tasks
-                        .get(id)
-                        .filter(|t| t.state == TaskState::Placed)
-                        .cloned()
-                    {
-                        let cwd = Path::new(&term.cwd);
-                        let session = session.flatten().map(|base| {
-                            launch::discover_session(ctx, &base, cwd, term.created_ms, 0)
-                                .unwrap_or(base)
-                        });
-                        lock.append(
-                            &Actor::Watcher,
-                            ctx.now(),
-                            vec![(
-                                intent.ws.clone(),
-                                Some(id.clone()),
-                                Kind::TaskStarted {
-                                    terminal: term.address.clone(),
-                                    tab: resource.tab.clone(),
-                                    tab_name: task.title,
-                                    space: term.label("herdr.space").unwrap_or_default().into(),
-                                    cwd: cwd.into(),
-                                    pid: term.pid,
-                                    created_ms: term.created_ms,
-                                    session,
-                                    resumed: false,
-                                },
-                            )],
-                        )?;
-                    }
-                }
-            }
-        } else {
-            lock.append(
-                &Actor::Watcher,
-                ctx.now(),
-                vec![(
-                    intent.ws.clone(),
-                    intent.task.clone(),
-                    Kind::ResReleased {
-                        r#type: resource.r#type,
-                        name: resource.name,
-                        note: Some("never created".into()),
-                    },
-                )],
-            )?;
-            if resource.r#type == ResType::Tab {
-                if let Some(id) = &intent.task {
-                    if lock
-                        .state()
-                        .tasks
-                        .get(id)
-                        .is_some_and(|t| t.state == TaskState::Placed)
-                    {
-                        lock.append(
-                            &Actor::Watcher,
-                            ctx.now(),
-                            vec![(
-                                intent.ws.clone(),
-                                Some(id.clone()),
-                                Kind::TaskClosed {
-                                    reason: "launch interrupted".into(),
-                                    outcome: None,
-                                },
-                            )],
-                        )?;
-                    }
-                }
-            }
-        }
+        settle_intent(ctx, &mut lock, intent, &facts.terms, app.as_ref(), &history)?;
     }
-    for task in state.tasks.values() {
-        if let (Some(session), Some(cwd)) = (&task.session, &task.cwd) {
-            if session.id.is_none() && task.state != TaskState::Closed {
-                if let Some(found) =
-                    launch::discover_session(ctx, session, cwd, task.created_ms.unwrap_or(0), 0)
-                        .filter(|s| s.id.is_some())
-                {
-                    lock.append(
-                        &Actor::Watcher,
-                        ctx.now(),
-                        vec![(
-                            Some(task.ws.clone()),
-                            Some(task.id.clone()),
-                            Kind::TaskSession { session: found },
-                        )],
-                    )?;
-                }
-            }
-        }
-    }
-    for rec in state
-        .resources
-        .iter()
-        .filter(|r| r.owned && !r.released && r.r.r#type == ResType::Worktree)
-    {
-        if let Some(repo) = &rec.r.repo {
-            if !git::worktree_list(repo)?
-                .iter()
-                .any(|w| w.path == Path::new(&rec.r.name))
-            {
-                lock.append(
-                    &Actor::Watcher,
-                    ctx.now(),
-                    vec![
-                        (
-                            rec.ws.clone(),
-                            rec.task.clone(),
-                            Kind::ResReleased {
-                                r#type: ResType::Worktree,
-                                name: rec.r.name.clone(),
-                                note: Some("removed outside".into()),
-                            },
-                        ),
-                        (
-                            rec.ws.clone(),
-                            rec.task.clone(),
-                            Kind::ReconcileFinding {
-                                code: "worktree_removed".into(),
-                                summary: format!("Worktree {} was removed outside", rec.r.name),
-                            },
-                        ),
-                    ],
-                )?;
-            }
-        }
-    }
-    // Coordinator space and tab identities are retained for lifecycle restarts.
-    for rec in state.resources.iter().filter(|r| {
-        (r.ws.is_some() || !matches!(r.r.r#type, ResType::Space | ResType::Tab))
-            && r.owned
-            && !r.released
-            && r.r.r#type != ResType::Worktree
-    }) {
-        let gone = match rec.r.r#type {
-            ResType::Tab => ctx.hc.get(&rec.r.name)?.is_none(),
-            ResType::Space => app.as_ref().is_some_and(|a| a.space(&rec.r.name).is_none()),
-            ResType::Branch => match &rec.r.repo {
-                Some(repo) => !git::branch_exists(repo, &rec.r.name)?,
-                None => false,
-            },
-            ResType::Worktree => false,
-        };
-        if gone {
-            lock.append(
-                &Actor::Watcher,
-                ctx.now(),
-                vec![(
-                    rec.ws.clone(),
-                    rec.task.clone(),
-                    Kind::ResReleased {
-                        r#type: rec.r.r#type,
-                        name: rec.r.name.clone(),
-                        note: Some("gone".into()),
-                    },
-                )],
-            )?;
-        }
-    }
+    discover_sessions(ctx, &mut lock, &state)?;
+    release_removed_worktrees(ctx, &mut lock, &state)?;
+    release_gone_resources(ctx, &mut lock, &state, app.as_ref())?;
     drop(lock);
-    if let Some(app) = app {
+    if let Some(app) = &app {
         for rec in state.resources.iter().filter(|r| r.owned && !r.released) {
             match rec.r.r#type {
                 ResType::Space => {
                     if let Some(space) = app.space(&rec.r.name) {
-                        if let Some(name) = &rec.r.label {
-                            if space.name != *name {
-                                ctx.app
-                                    .command("space.rename", json!({"id":space.id,"name":name}))?;
-                            }
-                        }
-                        let mut person = false;
-                        for pane in space.tabs.iter().flat_map(|t| &t.terminals) {
-                            if !ctx.hc.get(&pane.terminal)?.is_some_and(|t| t.managed()) {
-                                person = true;
-                            }
-                        }
-                        let summary = format!("Person terminal in owned space {}", space.id);
-                        let last = history.iter().rev().find_map(|e| match e.typed() {
-                            Kind::ReconcileFinding { code, summary: s }
-                                if s == summary
-                                    && (code == "person_terminal_in_owned_space"
-                                        || code == "person_terminal_cleared") =>
-                            {
-                                Some(code)
-                            }
-                            _ => None,
-                        });
-                        if person {
-                            if last.as_deref() != Some("person_terminal_in_owned_space") {
-                                j.lock()?.append(
-                                    &Actor::Watcher,
-                                    ctx.now(),
-                                    vec![(
-                                        rec.ws.clone(),
-                                        None,
-                                        Kind::ReconcileFinding {
-                                            code: "person_terminal_in_owned_space".into(),
-                                            summary: summary.clone(),
-                                        },
-                                    )],
-                                )?;
-                            }
-                            if let Some(ws) = rec
-                                .ws
-                                .as_ref()
-                                .and_then(|id| state.workstreams.get(id))
-                                .filter(|w| {
-                                    w.state == WsState::Closed
-                                        && w.retained
-                                            .as_ref()
-                                            .is_none_or(|r| r.reason_code != "in_use_by_person")
-                                })
-                            {
-                                j.lock()?.append(
-                                    &Actor::Watcher,
-                                    ctx.now(),
-                                    vec![(
-                                        Some(ws.id.clone()),
-                                        None,
-                                        Kind::WsRetained {
-                                            reason_code: "in_use_by_person".into(),
-                                            reason: summary,
-                                            checks: vec![Check {
-                                                name: "no_person_terminal".into(),
-                                                ok: false,
-                                                detail: None,
-                                            }],
-                                        },
-                                    )],
-                                )?;
-                            }
-                        } else if last.as_deref() == Some("person_terminal_in_owned_space") {
-                            j.lock()?.append(
-                                &Actor::Watcher,
-                                ctx.now(),
-                                vec![(
-                                    rec.ws.clone(),
-                                    None,
-                                    Kind::ReconcileFinding {
-                                        code: "person_terminal_cleared".into(),
-                                        summary,
-                                    },
-                                )],
-                            )?;
-                        }
+                        align_space(ctx, j, &state, &history, space, rec)?;
                     }
                 }
-                ResType::Tab => {
-                    if let Some((_, tab)) = app.tab_of(&rec.r.name) {
-                        if let Some(task) = rec.task.as_ref().and_then(|id| state.tasks.get(id)) {
-                            if tab.name != task.title {
-                                ctx.app.command(
-                                    "tab.rename",
-                                    json!({"id":tab.id,"name":task.title}),
-                                )?;
-                            }
-                        }
-                    }
-                }
+                ResType::Tab => align_tab(ctx, &state, app, rec)?,
                 _ => {}
             }
         }
@@ -408,12 +59,431 @@ pub fn reconcile(ctx: &Ctx, j: &Journal, facts: &mut Facts, _cfg: &Config) -> Re
     j.read_after(before)
 }
 
+fn note(
+    ctx: &Ctx,
+    lock: &mut Locked<'_>,
+    ws: &Option<WsId>,
+    task: &Option<TaskId>,
+    kind: Kind,
+) -> Result<()> {
+    lock.append(
+        &Actor::Watcher,
+        ctx.now(),
+        vec![(ws.clone(), task.clone(), kind)],
+    )?;
+    Ok(())
+}
+
+fn refresh_terminals(ctx: &Ctx, facts: &mut Facts) -> Result<()> {
+    let addresses = ctx.hc.list(true, Some(("coord.managed", "1")))?;
+    let mut terms = BTreeMap::new();
+    for address in addresses {
+        if let Some(term) = ctx.hc.get(&address)? {
+            terms.insert(address, term);
+        }
+    }
+    facts.terms = terms;
+    facts.initialized = true;
+    Ok(())
+}
+
+/// Records a stale intent as created when its resource exists, as never created otherwise.
+fn settle_intent(
+    ctx: &Ctx,
+    lock: &mut Locked<'_>,
+    intent: &Intent,
+    terms: &BTreeMap<String, Term>,
+    app: Option<&AppSnapshot>,
+    history: &[Entry],
+) -> Result<()> {
+    let runs_task = |t: &Term| {
+        t.managed()
+            && intent
+                .task
+                .as_ref()
+                .is_some_and(|id| t.label("coord.task") == Some(id.as_str()))
+    };
+    let mut resource = intent.r.clone();
+    let matching = terms.values().find(|t| {
+        runs_task(t)
+            && resource
+                .space
+                .as_deref()
+                .is_none_or(|s| t.label("herdr.space") == Some(s))
+    });
+    let exists = match resource.r#type {
+        ResType::Worktree => match &resource.repo {
+            Some(repo) => git::worktree_list(repo)?.iter().any(|w| {
+                w.path == Path::new(&resource.name)
+                    && resource
+                        .branch
+                        .as_ref()
+                        .is_none_or(|b| w.branch.as_ref() == Some(b))
+            }),
+            None => false,
+        },
+        ResType::Space => terms
+            .values()
+            .any(|t| runs_task(t) && t.label("herdr.space") == Some(resource.name.as_str())),
+        ResType::Tab => matching.is_some(),
+        ResType::Branch => match &resource.repo {
+            Some(repo) => git::branch_exists(repo, &resource.name)?,
+            None => false,
+        },
+    };
+    if !exists {
+        return abandon_intent(ctx, lock, intent);
+    }
+    // A tab or branch is only adopted with the provenance its intent recorded.
+    let mut launched = None;
+    match resource.r#type {
+        ResType::Tab => {
+            let placed = history
+                .iter()
+                .rev()
+                .find(|e| e.task == intent.task && e.kind == "task.placed")
+                .and_then(|e| e.data.get("session"));
+            let Some(placed) = placed else {
+                return provenance_missing(ctx, lock, intent, history);
+            };
+            let session = serde_json::from_value::<Option<SessionRef>>(placed.clone())?;
+            let term = matching.expect("matched terminal");
+            resource.name = term.address.clone();
+            resource.tab = app
+                .and_then(|a| a.tab_of(&term.address))
+                .map(|(_, t)| t.id.clone())
+                .or_else(|| term.label("herdr.tab").map(str::to_owned));
+            launched = Some((term, session));
+        }
+        ResType::Branch => {
+            let base_sha = history
+                .iter()
+                .find(|e| e.seq == intent.seq)
+                .and_then(|e| e.data.get("base_sha"))
+                .and_then(|v| v.as_str());
+            let Some(base_sha) = base_sha else {
+                return provenance_missing(ctx, lock, intent, history);
+            };
+            resource.base = Some(base_sha.to_owned());
+        }
+        ResType::Space | ResType::Worktree => {}
+    }
+    let tab = resource.tab.clone();
+    note(
+        ctx,
+        lock,
+        &intent.ws,
+        &intent.task,
+        Kind::ResCreated(resource),
+    )?;
+    let (Some(id), Some((term, session))) = (&intent.task, launched) else {
+        return Ok(());
+    };
+    let Some(title) = lock
+        .state()
+        .tasks
+        .get(id)
+        .filter(|t| t.state == TaskState::Placed)
+        .map(|t| t.title.clone())
+    else {
+        return Ok(());
+    };
+    let cwd = Path::new(&term.cwd);
+    let session = session
+        .map(|base| launch::discover_session(ctx, &base, cwd, term.created_ms, 0).unwrap_or(base));
+    note(
+        ctx,
+        lock,
+        &intent.ws,
+        &intent.task,
+        Kind::TaskStarted {
+            terminal: term.address.clone(),
+            tab,
+            tab_name: title,
+            space: term.label("herdr.space").unwrap_or_default().into(),
+            cwd: cwd.into(),
+            pid: term.pid,
+            created_ms: term.created_ms,
+            session,
+            resumed: false,
+        },
+    )
+}
+
+fn provenance_missing(
+    ctx: &Ctx,
+    lock: &mut Locked<'_>,
+    intent: &Intent,
+    history: &[Entry],
+) -> Result<()> {
+    let summary = format!("Intent {} lacks recovery provenance", intent.seq);
+    let reported = history.iter().any(|e| {
+        matches!(e.typed(), Kind::ReconcileFinding { code, summary: s }
+            if code == "intent_provenance_missing" && s == summary)
+    });
+    if reported {
+        return Ok(());
+    }
+    note(
+        ctx,
+        lock,
+        &intent.ws,
+        &intent.task,
+        Kind::ReconcileFinding {
+            code: "intent_provenance_missing".into(),
+            summary,
+        },
+    )
+}
+
+fn abandon_intent(ctx: &Ctx, lock: &mut Locked<'_>, intent: &Intent) -> Result<()> {
+    note(
+        ctx,
+        lock,
+        &intent.ws,
+        &intent.task,
+        Kind::ResReleased {
+            r#type: intent.r.r#type,
+            name: intent.r.name.clone(),
+            note: Some("never created".into()),
+        },
+    )?;
+    let placed = intent.r.r#type == ResType::Tab
+        && intent.task.as_ref().is_some_and(|id| {
+            lock.state()
+                .tasks
+                .get(id)
+                .is_some_and(|t| t.state == TaskState::Placed)
+        });
+    if placed {
+        note(
+            ctx,
+            lock,
+            &intent.ws,
+            &intent.task,
+            Kind::TaskClosed {
+                reason: "launch interrupted".into(),
+                outcome: None,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// Picks up session files that appeared after their task was started.
+fn discover_sessions(ctx: &Ctx, lock: &mut Locked<'_>, state: &State) -> Result<()> {
+    for task in state.tasks.values() {
+        let (Some(session), Some(cwd)) = (&task.session, &task.cwd) else {
+            continue;
+        };
+        if session.id.is_some() || task.state == TaskState::Closed {
+            continue;
+        }
+        if let Some(found) =
+            launch::discover_session(ctx, session, cwd, task.created_ms.unwrap_or(0), 0)
+                .filter(|s| s.id.is_some())
+        {
+            lock.append(
+                &Actor::Watcher,
+                ctx.now(),
+                vec![(
+                    Some(task.ws.clone()),
+                    Some(task.id.clone()),
+                    Kind::TaskSession { session: found },
+                )],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn release_removed_worktrees(ctx: &Ctx, lock: &mut Locked<'_>, state: &State) -> Result<()> {
+    for rec in state
+        .resources
+        .iter()
+        .filter(|r| r.owned && !r.released && r.r.r#type == ResType::Worktree)
+    {
+        let Some(repo) = &rec.r.repo else { continue };
+        if git::worktree_list(repo)?
+            .iter()
+            .any(|w| w.path == Path::new(&rec.r.name))
+        {
+            continue;
+        }
+        lock.append(
+            &Actor::Watcher,
+            ctx.now(),
+            vec![
+                (
+                    rec.ws.clone(),
+                    rec.task.clone(),
+                    Kind::ResReleased {
+                        r#type: ResType::Worktree,
+                        name: rec.r.name.clone(),
+                        note: Some("removed outside".into()),
+                    },
+                ),
+                (
+                    rec.ws.clone(),
+                    rec.task.clone(),
+                    Kind::ReconcileFinding {
+                        code: "worktree_removed".into(),
+                        summary: format!("Worktree {} was removed outside", rec.r.name),
+                    },
+                ),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn release_gone_resources(
+    ctx: &Ctx,
+    lock: &mut Locked<'_>,
+    state: &State,
+    app: Option<&AppSnapshot>,
+) -> Result<()> {
+    // Coordinator space and tab identities are retained for lifecycle restarts.
+    for rec in state.resources.iter().filter(|r| {
+        (r.ws.is_some() || !matches!(r.r.r#type, ResType::Space | ResType::Tab))
+            && r.owned
+            && !r.released
+            && r.r.r#type != ResType::Worktree
+    }) {
+        let gone = match rec.r.r#type {
+            ResType::Tab => ctx.hc.get(&rec.r.name)?.is_none(),
+            ResType::Space => app.is_some_and(|a| a.space(&rec.r.name).is_none()),
+            ResType::Branch => match &rec.r.repo {
+                Some(repo) => !git::branch_exists(repo, &rec.r.name)?,
+                None => false,
+            },
+            ResType::Worktree => false,
+        };
+        if gone {
+            note(
+                ctx,
+                lock,
+                &rec.ws,
+                &rec.task,
+                Kind::ResReleased {
+                    r#type: rec.r.r#type,
+                    name: rec.r.name.clone(),
+                    note: Some("gone".into()),
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Restores the space name and reports person terminals appearing in or leaving it.
+fn align_space(
+    ctx: &Ctx,
+    j: &Journal,
+    state: &State,
+    history: &[Entry],
+    space: &AppSpace,
+    rec: &ResourceRec,
+) -> Result<()> {
+    if let Some(name) = &rec.r.label {
+        if space.name != *name {
+            ctx.app
+                .command("space.rename", json!({"id":space.id,"name":name}))?;
+        }
+    }
+    let mut person = false;
+    for pane in space.tabs.iter().flat_map(|t| &t.terminals) {
+        if !ctx.hc.get(&pane.terminal)?.is_some_and(|t| t.managed()) {
+            person = true;
+        }
+    }
+    let summary = format!("Person terminal in owned space {}", space.id);
+    let last = history.iter().rev().find_map(|e| match e.typed() {
+        Kind::ReconcileFinding { code, summary: s }
+            if s == summary
+                && (code == "person_terminal_in_owned_space"
+                    || code == "person_terminal_cleared") =>
+        {
+            Some(code)
+        }
+        _ => None,
+    });
+    let reported = last.as_deref() == Some("person_terminal_in_owned_space");
+    if !person {
+        if reported {
+            note(
+                ctx,
+                &mut j.lock()?,
+                &rec.ws,
+                &None,
+                Kind::ReconcileFinding {
+                    code: "person_terminal_cleared".into(),
+                    summary,
+                },
+            )?;
+        }
+        return Ok(());
+    }
+    if !reported {
+        note(
+            ctx,
+            &mut j.lock()?,
+            &rec.ws,
+            &None,
+            Kind::ReconcileFinding {
+                code: "person_terminal_in_owned_space".into(),
+                summary: summary.clone(),
+            },
+        )?;
+    }
+    let closed = rec
+        .ws
+        .as_ref()
+        .and_then(|id| state.workstreams.get(id))
+        .filter(|w| {
+            w.state == WsState::Closed
+                && w.retained
+                    .as_ref()
+                    .is_none_or(|r| r.reason_code != "in_use_by_person")
+        });
+    if let Some(ws) = closed {
+        note(
+            ctx,
+            &mut j.lock()?,
+            &Some(ws.id.clone()),
+            &None,
+            Kind::WsRetained {
+                reason_code: "in_use_by_person".into(),
+                reason: summary,
+                checks: vec![Check {
+                    name: "no_person_terminal".into(),
+                    ok: false,
+                    detail: None,
+                }],
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn align_tab(ctx: &Ctx, state: &State, app: &AppSnapshot, rec: &ResourceRec) -> Result<()> {
+    let Some((_, tab)) = app.tab_of(&rec.r.name) else {
+        return Ok(());
+    };
+    if let Some(task) = rec.task.as_ref().and_then(|id| state.tasks.get(id)) {
+        if tab.name != task.title {
+            ctx.app
+                .command("tab.rename", json!({"id":tab.id,"name":task.title}))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::coord::{
         adapter::fake::{FakeApp, FakeHc},
-        ids::{TaskId, WsId},
         kinds::ResourceRef,
         paths::CoordPaths,
     };
@@ -502,7 +572,7 @@ mod tests {
             cause: None,
         };
         let mut facts = Facts::default();
-        reconcile(&ctx, &j, &mut facts, &Config::default()).unwrap();
+        reconcile(&ctx, &j, &mut facts).unwrap();
         assert!(
             j.read_state().unwrap().tasks[&task]
                 .session
@@ -512,7 +582,7 @@ mod tests {
                 .is_none()
         );
         std::fs::write(session_dir.join("2026-11-13_late-session.jsonl"), b"{}\n").unwrap();
-        reconcile(&ctx, &j, &mut facts, &Config::default()).unwrap();
+        reconcile(&ctx, &j, &mut facts).unwrap();
         assert_eq!(
             j.read_state().unwrap().tasks[&task]
                 .session
@@ -522,7 +592,7 @@ mod tests {
                 .as_deref(),
             Some("late-session")
         );
-        reconcile(&ctx, &j, &mut facts, &Config::default()).unwrap();
+        reconcile(&ctx, &j, &mut facts).unwrap();
         assert_eq!(
             j.read_after(0)
                 .unwrap()
@@ -565,7 +635,7 @@ mod tests {
             op: "test".into(),
             cause: None,
         };
-        reconcile(&ctx, &j, &mut Facts::default(), &Config::default()).unwrap();
+        reconcile(&ctx, &j, &mut Facts::default()).unwrap();
         assert!(j.read_state().unwrap().resources[0].released);
     }
     #[test]
@@ -629,7 +699,7 @@ mod tests {
         };
         let mut facts = Facts::default();
         for _ in 0..4 {
-            reconcile(&ctx, &j, &mut facts, &Config::default()).unwrap();
+            reconcile(&ctx, &j, &mut facts).unwrap();
         }
         let entries = j.read_after(0).unwrap();
         assert_eq!(entries.iter().filter(|e| matches!(e.typed(), Kind::ReconcileFinding { code, .. } if code == "person_terminal_in_owned_space")).count(), 2);
@@ -730,7 +800,7 @@ mod tests {
                 op: "test".into(),
                 cause: None,
             };
-            reconcile(&ctx, &j, &mut Facts::default(), &Config::default()).unwrap();
+            reconcile(&ctx, &j, &mut Facts::default()).unwrap();
             let state = j.read_state().unwrap();
             assert_eq!(
                 state
@@ -865,7 +935,7 @@ mod tests {
             op: "test".into(),
             cause: None,
         };
-        reconcile(&ctx, &j, &mut Facts::default(), &Config::default()).unwrap();
+        reconcile(&ctx, &j, &mut Facts::default()).unwrap();
         let state = j.read_state().unwrap();
         assert_eq!(state.intents.len(), 1);
         assert_eq!(state.intents.values().next().unwrap().r.name, "legacy");

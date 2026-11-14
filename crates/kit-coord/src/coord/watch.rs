@@ -483,7 +483,7 @@ pub async fn run(ctx: Ctx) -> Result<Value> {
                         _ => break,
                     },
                     _ = tick.tick() => { if let Err(e) = core.tick(&ctx, &j, &cfg) { eprintln!("watch tick: {e:#}"); } },
-                    _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts, &cfg) { eprintln!("watch reconcile: {e:#}"); } },
+                    _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts) { eprintln!("watch reconcile: {e:#}"); } },
                     _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal, &mut replacement)?,
                 }
             }
@@ -508,7 +508,7 @@ pub async fn run(ctx: Ctx) -> Result<Value> {
             tokio::select! {
                 _ = &mut delay => break,
                 _ = tick.tick() => { if let Err(e) = core.tick(&ctx, &j, &cfg) { eprintln!("watch tick: {e:#}"); } },
-                _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts, &cfg) { eprintln!("watch reconcile: {e:#}"); } },
+                _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts) { eprintln!("watch reconcile: {e:#}"); } },
                 _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal, &mut replacement)?,
             }
         }

@@ -1002,7 +1002,6 @@ mod tests {
                         &ctx,
                         &ctx.journal()?,
                         &mut super::super::rules::Facts::default(),
-                        &ctx.config()?,
                     )?;
                 }
                 write_heartbeat(
