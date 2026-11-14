@@ -350,9 +350,6 @@ kit-coord does not read manager state or depend on an installed updater.
 - **Roles and coordinator brief:** compiled defaults move with kit-coord;
   running sessions retain their initial context until the person replaces them.
 - **Mod:** matching generation-specific assets/runtime, never cross-mod imports.
-- **Initial extraction:** clean replacement with fresh sessions. Old journals,
-  receipt envelopes, CLI namespaces and schemas have no migration guarantee.
-  See [the exact installation guide](coordinator/monorepo-p2.md).
 
 ## 7. Coordinator session
 

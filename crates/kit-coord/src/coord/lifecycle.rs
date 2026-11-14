@@ -21,7 +21,6 @@ use super::{
     place, role, views,
 };
 
-pub const HEARTBEAT_EVERY_MS: u64 = 5_000;
 pub const HEARTBEAT_STALE_MS: u64 = 30_000;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Heartbeat {
@@ -383,9 +382,6 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         },
     )
 }
-pub fn start_coordinator(ctx: &Ctx, j: &Journal, reason: &str) -> Result<()> {
-    start_with_tab(ctx, j, reason, None)
-}
 pub fn restart_coordinator(ctx: &Ctx, j: &Journal, reason: &str) -> Result<()> {
     let address = j
         .read_state()?
@@ -639,7 +635,7 @@ pub fn down(ctx: &Ctx) -> Result<Value> {
 }
 pub fn handoff(ctx: &Ctx, c: &Caller, note: Option<&str>) -> Result<Value> {
     ensure!(
-        matches!(c, Caller::Coordinator { .. }),
+        matches!(c, Caller::Coordinator),
         "only the coordinator may request handoff"
     );
     append(

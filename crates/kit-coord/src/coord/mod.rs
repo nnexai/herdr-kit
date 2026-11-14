@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 pub mod adapter;
 pub mod brief;
 pub mod caller;
@@ -158,9 +156,9 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
         caller::resolve(ctx.hc.as_ref())?
     };
     let person = matches!(caller, Caller::Person { .. });
-    let coordinator = matches!(caller, Caller::Coordinator { .. });
+    let coordinator = matches!(caller, Caller::Coordinator);
     let delegate = matches!(caller, Caller::Delegate { .. });
-    let watcher = matches!(caller, Caller::Watcher { .. });
+    let watcher = matches!(caller, Caller::Watcher);
     let allowed = if read_only {
         true
     } else {

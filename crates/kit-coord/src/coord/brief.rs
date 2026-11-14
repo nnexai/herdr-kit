@@ -15,12 +15,6 @@ Reporting (fixed by the coordinator system):
 - Do not start other agents, create spaces or worktrees, or close anything. Do not report with `hc send`.
 - After reporting, stop and wait: a follow-up may arrive in this session."#;
 
-pub const DELEGATE_NUDGE: &str = r#"Reminder from the coordinator system: your last turn ended without a report. Report now with {cli} report done|blocked|question --summary "<one line>" (see the end of your first message)."#;
-
-pub fn inbox_nudge(n: usize) -> String {
-    format!("inbox: {n} new")
-}
-
 fn footer(cli: &str, result: &Path) -> String {
     FOOTER
         .replace("{result}", &result.to_string_lossy())
@@ -102,7 +96,6 @@ mod tests {
         assert!(first.contains("/bin/kit --data-dir /x report done"));
         assert!(first.contains("/tmp/result.md"));
         assert!(follow_up("task", "kit", result).starts_with("task\n\n---"));
-        assert_eq!(inbox_nudge(3), "inbox: 3 new");
         assert_eq!(for_argv("x".repeat(96 * 1024), result).len(), 96 * 1024);
         assert_eq!(
             for_argv("x".repeat(96 * 1024 + 1), result),

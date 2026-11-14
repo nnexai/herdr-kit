@@ -82,13 +82,10 @@ impl Locked {
             })
             .collect()
     }
-    fn active_files(&self, state: &State) -> Result<BTreeMap<PathBuf, FileReceipt>> {
-        Ok(state.files.clone())
-    }
     fn verify_active(&self, state: &State) -> Result<()> {
-        for (target, receipt) in self.active_files(state)? {
+        for (target, receipt) in &state.files {
             ensure!(
-                file_hash(&target)?.as_deref() == Some(&receipt.hash),
+                file_hash(target)?.as_deref() == Some(&receipt.hash),
                 "managed file drift detected: {}",
                 target.display()
             );
@@ -110,9 +107,6 @@ impl Locked {
                 }
             }
         Ok(())
-    }
-    fn owns_mod(&self, state: &State, target: &Path) -> Result<bool> {
-        Ok(state.mod_owners.contains_key(target))
     }
     fn apply_mod(&self, change: &ModChange) -> Result<()> {
         ensure!(
@@ -184,6 +178,12 @@ impl Locked {
                 ensure!(file_hash(&next.source)?.as_deref() == Some(&next.hash), "release file drift detected");
             }
         }
+        for (path, expected) in &transaction.obsolete_deployments {
+            ensure!(
+                file_hash(path)?.as_ref().is_none_or(|actual| actual == expected),
+                "superseded deployment drift detected"
+            );
+        }
         for change in &transaction.mods { self.apply_mod(change)?; }
         for ready in [false, true] {
             for change in &transaction.files {
@@ -193,6 +193,19 @@ impl Locked {
             }
         }
         self.save(&transaction.state)?;
+        for path in transaction.obsolete_deployments.keys() {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            let parent = path.parent().context("missing deployment parent")?;
+            if parent.exists() {
+                File::open(parent)?.sync_all()?;
+                if fs::read_dir(parent)?.next().is_none() {
+                    fs::remove_dir(parent)?;
+                    File::open(parent.parent().context("missing deployments directory")?)?.sync_all()?;
+                }
+            }
+        }
         fs::remove_file(journal_path(&self.data))?;
         File::open(&self.data)?.sync_all()?;
         Ok(())
@@ -205,7 +218,7 @@ impl Locked {
     ) -> Result<Transaction> {
         self.verify_active(old)?;
         let home = next.app_home.clone().context("missing target")?;
-        let old_files = self.active_files(old)?;
+        let old_files = &old.files;
         next.selection = selection;
         next.files.clear();
         let mut mods = Vec::new();
@@ -301,7 +314,7 @@ impl Locked {
             no_links(&change.target)?;
             if change.target.exists() {
                 ensure!(
-                    self.owns_mod(old, &change.target)?,
+                    old.mod_owners.contains_key(&change.target),
                     "mod target already exists without ownership"
                 );
                 ensure!(tree(&change.target)? == change.hashes, "mod drift detected");
@@ -325,10 +338,10 @@ impl Locked {
             });
         }
         for (target, receipt) in old_files {
-            if !next.files.contains_key(&target) {
+            if !next.files.contains_key(target) {
                 files.push(FileChange {
-                    target,
-                    old_hash: Some(receipt.hash),
+                    target: target.clone(),
+                    old_hash: Some(receipt.hash.clone()),
                     next: None,
                 });
             }
@@ -340,18 +353,23 @@ impl Locked {
                 .context("missing selected package receipt")?
                 .activated = true;
         }
-        next.previous = old.current.clone();
-        next.previous_selection = (!old.selection.is_empty()).then(|| old.selection.clone());
         next.current = next.selection
             .get("kit-manager")
             .or_else(|| next.selection.get("herdr-kit"))
             .or_else(|| next.selection.values().next())
             .cloned();
+        let deployments = self.data.join("deployments");
+        let obsolete_deployments = old.files.values()
+            .filter(|file| file.source.starts_with(&deployments)
+                && !next.files.values().any(|next| next.source == file.source))
+            .map(|file| (file.source.clone(), file.hash.clone()))
+            .collect();
         Ok(Transaction {
             schema_version: 1,
             state: next,
             files,
             mods,
+            obsolete_deployments,
         })
     }
     fn activate(&self, transaction: Transaction) -> Result<State> {
@@ -627,7 +645,7 @@ fn result(state: &State, available: Option<&str>, status: &str) -> Value {
             );
         }
     }
-    json!({"state":status,"current_revision":state.current,"available_revision":available,"previous_revision":state.previous,"source":state.source,"targets":{"app_home":state.app_home},"next_check":state.next_check,"components":state.selection,"previous_components":state.previous_selection,"resolved_mods":mods})
+    json!({"state":status,"current_revision":state.current,"available_revision":available,"source":state.source,"targets":{"app_home":state.app_home},"next_check":state.next_check,"components":state.selection,"resolved_mods":mods})
 }
 fn activated(mut value: Value, old: &State, next: &State, changed: bool) -> Value {
     let coord = |state: &State| state.selection.get("kit-coord").cloned();
@@ -707,30 +725,13 @@ pub fn source(data: &Path, repo: Option<&Path>) -> Result<Value> {
 }
 pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value> {
     ensure!(
-        matches!(action, "check" | "apply" | "maintain" | "rollback"),
+        matches!(action, "check" | "apply" | "maintain"),
         "unknown update action"
     );
     let lock = Locked::open(data)?;
     let mut state = lock.state()?;
     ensure!(state.current.is_some(), "suite is not installed");
     lock.verify_active(&state)?;
-    if action == "rollback" {
-        ensure!(
-            components.is_empty(),
-            "rollback restores the complete prior selection"
-        );
-        let rev = state.previous.clone().context("no previous release")?;
-        let selection = state.previous_selection.clone().context("no previous selection")?;
-        let transaction = lock.prepare(&state, state.clone(), selection)?;
-        let old = state;
-        let state = lock.activate(transaction)?;
-        return Ok(activated(
-            result(&state, Some(&rev), "rolled_back"),
-            &old,
-            &state,
-            true,
-        ));
-    }
     if action == "maintain" && now() < state.next_check {
         return Ok(activated(
             result(&state, None, "not_due"),

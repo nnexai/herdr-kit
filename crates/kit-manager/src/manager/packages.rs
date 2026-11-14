@@ -165,7 +165,6 @@ pub(super) struct PackageReceipt {
     pub binary_hash: Option<String>,
     pub mods: BTreeMap<String, BTreeMap<String, String>>,
     pub layout_hash: Option<String>,
-    #[serde(default)]
     pub activated: bool,
 }
 
@@ -175,7 +174,6 @@ pub(super) struct FileReceipt {
     pub hash: String,
     pub executable: bool,
     // Readiness descriptors are applied after every binary/mod/layout target.
-    #[serde(default)]
     pub ready: bool,
 }
 
@@ -199,6 +197,7 @@ pub(super) struct Transaction {
     pub state: State,
     pub files: Vec<FileChange>,
     pub mods: Vec<ModChange>,
+    pub obsolete_deployments: BTreeMap<PathBuf, String>,
 }
 
 pub(super) fn project_layout(

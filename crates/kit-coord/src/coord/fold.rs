@@ -23,6 +23,7 @@ fn counter(value: &str, counter: &mut u64) {
         *counter = (*counter).max(n.saturating_add(1));
     }
 }
+#[cfg(test)]
 pub fn fold<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> State {
     let mut state = State::default();
     for entry in entries {

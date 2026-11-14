@@ -10,7 +10,7 @@ fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
     if forbidden {
         json!({"state":"skipped","reason":"forbidden_caller","message":message})
     } else {
-        json!({"state":if message.contains("unrecognized subcommand") || message.contains("unexpected argument") {"unsupported"} else {"failed"},"message":message})
+        json!({"state":"failed","message":message})
     }
 }
 
@@ -54,5 +54,6 @@ mod tests {
         assert_eq!(skipped["reason"], "forbidden_caller");
         assert_eq!(activation_failure(Some(1), refusal)["state"], "failed");
         assert_eq!(activation_failure(Some(3), br#"{"error":{"code":"operation_failed","message":"failed"}}"#)["state"], "failed");
+        assert_eq!(activation_failure(Some(2), b"unrecognized subcommand").get("state"), Some(&json!("failed")));
     }
 }

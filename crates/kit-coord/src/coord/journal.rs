@@ -43,6 +43,7 @@ pub struct LogPage {
 }
 
 impl Journal {
+    #[cfg(test)]
     pub fn open(paths: &CoordPaths) -> Result<Self> {
         Self::with_context(paths, super::new_op()?, None)
     }
@@ -310,6 +311,7 @@ impl Drop for Locked<'_> {
         let _ = FileExt::unlock(&self.file);
     }
 }
+#[cfg(test)]
 pub fn transact<T>(
     j: &Journal,
     actor: &Actor,

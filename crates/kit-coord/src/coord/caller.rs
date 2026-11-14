@@ -10,26 +10,22 @@ pub enum Caller {
     Person {
         terminal: Option<String>,
     },
-    Coordinator {
-        terminal: String,
-    },
+    Coordinator,
     Delegate {
         terminal: String,
         task: TaskId,
         ws: WsId,
     },
-    Watcher {
-        terminal: String,
-    },
+    Watcher,
 }
 impl Caller {
     pub fn actor(&self) -> Actor {
         match self {
             Self::Person { terminal: None } => Actor::Cli,
             Self::Person { terminal: Some(_) } => Actor::User,
-            Self::Coordinator { .. } => Actor::Coordinator,
+            Self::Coordinator => Actor::Coordinator,
             Self::Delegate { task, .. } => Actor::Task(task.clone()),
-            Self::Watcher { .. } => Actor::Watcher,
+            Self::Watcher => Actor::Watcher,
         }
     }
 }
@@ -61,8 +57,8 @@ fn resolve_terminal(hc: &dyn Hc, terminal: Option<String>) -> Result<Caller> {
         })?;
     if term.managed() {
         match term.label("coord.role") {
-            Some("coordinator") => return Ok(Caller::Coordinator { terminal }),
-            Some("watcher") => return Ok(Caller::Watcher { terminal }),
+            Some("coordinator") => return Ok(Caller::Coordinator),
+            Some("watcher") => return Ok(Caller::Watcher),
             Some("delegate") => {
                 let task = term.label("coord.task").ok_or_else(|| {
                     error::not_ready("hc_unavailable", "delegate terminal has no task label")

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Remove the rollback command, prior-selection receipt fields, obsolete
+  activation fallback and dead coordinator helpers; stop hiding dead-code warnings.
+- Remove superseded extraction/migration plans and duplicated role/fixture docs.
+  Canonical roles and fixtures live with kit-coord. Preserve immutable generations
+  still potentially pinned by running actors or independently owned layouts.
+- Manager receipt format changes are clean cuts, not automatic conversions.
+- Delete superseded owned deployment snapshots after activation, with
+  drift refusal and idempotent crash recovery; preserve unowned siblings.
 - Complete the mechanical P2–P4 split into independent kit-coord and kit-usage
   CLI/mod packages, optional kit-manager, kit-coord-ui (coord-only dependency),
   and the herdr-kit layout. No kit-core or legacy CLI aliases.
@@ -16,8 +24,6 @@
 - Let `task send` steer an already-ready working OMP delegate via paste+Enter,
   report steering/new-turn delivery in JSON, and retain startup/permission
   refusals. Update the coordinator prompt and add the CLI regression.
-- Record the earlier P0/P1 baseline; their migration/compatibility deployment
-  gates are superseded by the person's clean-replace decision.
 
 - Add the standalone `kit-coord-ui` Rail / Mission Log: a native coordinator
   conversation with truthful turn state, elapsed time, question draft pills,

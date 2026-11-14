@@ -56,7 +56,6 @@ enum UpdateCommand {
     Check,
     Apply,
     Maintain,
-    Rollback,
 }
 
 
@@ -90,7 +89,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             UpdateCommand::Check => "check",
             UpdateCommand::Apply => "apply",
             UpdateCommand::Maintain => "maintain",
-            UpdateCommand::Rollback => "rollback",
         }, &components),
     }?;
     if activation_command && value.get("coord_changed").and_then(serde_json::Value::as_bool) == Some(true) {

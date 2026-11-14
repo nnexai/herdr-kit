@@ -1058,7 +1058,7 @@ pub fn task_close(
     reason: &str,
     outcome: Option<TaskOutcome>,
 ) -> Result<Value> {
-    if matches!(c, Caller::Coordinator { .. }) && outcome.is_none() {
+    if matches!(c, Caller::Coordinator) && outcome.is_none() {
         return Err(refuse(
             "outcome_required",
             "coordinator must specify an outcome",

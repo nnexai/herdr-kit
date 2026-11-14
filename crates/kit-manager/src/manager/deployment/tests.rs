@@ -286,3 +286,52 @@ fn independent_usage_update_keeps_coordinator_readiness_unchanged() {
     assert_eq!(next.selection["kit-coord"], a);
     assert!(!next.selection.contains_key("kit-manager"));
 }
+
+#[test]
+fn activation_removes_only_superseded_owned_deployments_and_replays_cleanup() {
+    for extra_file in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let lock = Locked::open(&temp.path().join("data")).unwrap();
+        let home = temp.path().join("app");
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        let mut first = empty_state(&home);
+        component_release(&lock, &mut first, &a);
+        let first = lock.activate(lock.prepare(
+            &State::default(), first, selected(BUNDLE, &a),
+        ).unwrap()).unwrap();
+        let old_source = first.files[&layout(&home)].source.clone();
+        let extra = old_source.parent().unwrap().join("personal.txt");
+        if extra_file {
+            fs::write(&extra, "unowned").unwrap();
+        }
+        let mut next = first.clone();
+        component_release(&lock, &mut next, &b);
+        let transaction = lock.prepare(&first, next, selected(BUNDLE, &b)).unwrap();
+        assert!(transaction.obsolete_deployments.contains_key(&old_source));
+        save(&journal_path(&lock.data), &transaction).unwrap();
+        fs::write(&old_source, "edited deployment").unwrap();
+        assert!(lock.recover().is_err());
+        assert!(!mod_path(&home, "kit-coord", &b).exists());
+        fs::copy(layout(&home), &old_source).unwrap();
+        lock.recover().unwrap();
+        // Replay the crash prefix after cleanup, before journal removal.
+        save(&journal_path(&lock.data), &transaction).unwrap();
+        lock.recover().unwrap();
+        lock.verify_active(&lock.state().unwrap()).unwrap();
+        for path in transaction.obsolete_deployments.keys() {
+            assert!(!path.exists());
+        }
+        for file in transaction.state.files.values() {
+            assert!(file.source.exists());
+        }
+        if extra_file {
+            assert_eq!(fs::read_to_string(extra).unwrap(), "unowned");
+        } else {
+            assert!(!old_source.parent().unwrap().exists());
+        }
+        // These paths can still be pinned by a running actor or another layout.
+        assert!(release(&lock.data, &a).join("kit-coord").exists());
+        assert!(mod_path(&home, "kit-coord", &a).exists());
+    }
+}

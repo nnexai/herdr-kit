@@ -1,9 +1,7 @@
 # Modular Herdr kit packages
 
-The person's clean-replace decision supersedes the original phased migration:
-P2–P4 ship together. There are no old command aliases, legacy receipt envelopes,
-old-writer support, journal migrations or pre-workspace rollback adapters.
-P5 remains separately authorized.
+`kit-coord` and `kit-usage` are independent capabilities composed by the
+herdr-kit layout. P5 release work remains separately authorized.
 
 ## Independent packages
 
@@ -112,65 +110,4 @@ paste-plus-Enter send, guarded by `--if working`. Its JSON includes
 `delivery: "steering", steered: true`; idle/resumed delivery says
 `delivery: "new_turn", steered: false`. Never-ready agents, startup dialogs,
 blocked states and permission prompts still refuse; no force flag is used.
-
-## Clean replacement, at the person's quiet moment
-
-This is a new installation, not an old-data migration. The person stops the
-old coordinator/watcher from their ordinary unmanaged terminal using the old
-installed `herdr-kit coord down`, then quits the Herdr GUI normally. Do not
-restart Core. The coordinator cannot perform its own lifecycle replacement.
-No drain choreography, footer rewrite or cross-version recovery gate is needed.
-Old sessions/journals are archived, not imported; start a fresh coordinator.
-
-After that explicit quiet-moment authorization, the appointed main-checkout
-owner checks main is clean, integrates main into coord/monorepo, and merges:
-
-```sh
-MAIN=/path/to/herdr-kit
-WORK=/home/user/.herdr/worktrees/herdr-kit/coord-monorepo
-test -z "$(git -C "$MAIN" status --porcelain)"
-test "$(git -C "$MAIN" branch --show-current)" = main
-git -C "$WORK" merge main
-git -C "$MAIN" merge coord/monorepo
-cd "$MAIN"
-cargo build --locked --release
-REV=$(git rev-parse HEAD)
-```
-
-The person or expressly appointed install owner then performs the clean replace
-(these are not commands to run from a managed coordinator/delegate terminal):
-
-```sh
-DATA=/home/user/.local/share/herdr-kit
-APP_HOME=/home/user/.config/herdr-app
-BACKUP="$DATA-before-clean-cut-$(date +%Y%m%d-%H%M%S)"
-# Wait for any manager operation; never kill it.
-flock "$DATA/manager.lock" true
-mv "$DATA" "$BACKUP"
-mv "$APP_HOME/layouts/herdr-kit.json" "$BACKUP/herdr-kit-layout.json"
-if test -e "$APP_HOME/layouts/.state/herdr-kit.json"; then
-  mv "$APP_HOME/layouts/.state/herdr-kit.json" "$BACKUP/herdr-kit-layout-state.json"
-fi
-"$MAIN/target/release/herdr-kit" --data-dir "$DATA" install \
-  --source "$MAIN" --revision "$REV" --app-home "$APP_HOME"
-```
-
-Old immutable mod generations can remain unused; none is a new CLI alias.
-No unrelated layout, keys, settings or credentials is changed. The archive is
-for safekeeping, not an automatically supported legacy rollback.
-The person reopens Herdr, selects `herdr-kit`, and starts both fresh actors:
-
-```sh
-herdr-app
-# Once the GUI is open:
-herdr-app do layout.switch --name herdr-kit
-"$DATA/bin/kit-coord" --data-dir "$DATA" up
-"$DATA/bin/kit-coord" --data-dir "$DATA" status --json
-"$DATA/bin/kit-coord" --data-dir "$DATA" board --json
-```
-
-The install owner can build/install and inspect health after authorization.
-The person owns stopping/restarting the coordinator and watcher, and quitting/
-reopening the GUI. Do not run an old live task's footer after replacement;
-this task's final report must be read before the quiet moment.
 

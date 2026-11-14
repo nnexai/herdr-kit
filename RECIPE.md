@@ -52,7 +52,7 @@ outcome and rating records support `kit-coord stats --json`. See
 - `crates/kit-coord/`: independent kit-coord CLI, roles and fixtures.
 - `crates/kit-usage/`: independent OMP usage adapter/cache and CLI.
 - `crates/kit-manager/src/manager/`: selected committed-source builds, receipts,
-  recoverable owned-artifact activation and complete-selection rollback.
+  recoverable owned-artifact activation and drift refusal.
 - `kit-packages.json`: package ownership, mod/runtime bindings and default bundle.
 - `mods/herdr-kit-bar/`: host chrome, published-readout composition and optional maintenance.
 - `herdr.exec`: explicit argv to the pinned release executable.
@@ -71,7 +71,7 @@ trusts the local source repository; it is not a remote release downloader.
 
 Rust and pure JS behavior checks pass; `herdr-app check` passes; an isolated
 native window shows real usage and details with no errors. A new committed
-local-source revision updates executable and managed assets together, rollback
-restores the prior generation, and edited/unowned files are preserved. The
+local-source revision updates executable and managed assets together, and
+edited/unowned files are preserved. There is no rollback command. The
 selected live instance then shows the verified named layout without restarting
 Core or ending existing terminals.

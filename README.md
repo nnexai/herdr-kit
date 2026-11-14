@@ -47,7 +47,6 @@ working files. Nothing is fetched, pulled, reset, stashed, or pushed.
 <data-dir>/bin/herdr-kit source
 <data-dir>/bin/herdr-kit update check
 <data-dir>/bin/herdr-kit update apply
-<data-dir>/bin/herdr-kit update rollback
 ```
 
 `source --repo /absolute/repository` explicitly changes that trust decision.
@@ -65,8 +64,11 @@ Each immutable release contains the executable and matching native assets.
 Mods have revision-specific names, and their generated runtime calls the exact
 matching executable. A single atomic layout replacement activates a staged
 mod generation; native file discovery settles asynchronously. Activation has
-an on-disk recovery journal. Old generations remain available for rollback and
-for personal layouts still referencing them. No automatic release deletion.
+an on-disk recovery journal. There is no rollback command. Immutable executable
+and mod generations remain because running actors and independently owned layouts
+can still pin their absolute paths; activation alone does not prove they are unused.
+Superseded owned layout/descriptor sources in `deployments/` are removed after
+activation, with cleanup included in crash recovery. Unowned files are preserved.
 
 After activation, the coordinator hook reports `skipped` with reason
 `forbidden_caller` when the invoking caller is not authorized to start it.
@@ -103,14 +105,12 @@ capability installs the updater or another layout.
 
 `update apply --component NAME` changes only selected components; omit it to
 update the owned set. UI/coordinator dependency pins advance together.
-Ordinary rollback restores the previous current-format selection, not a legacy
-installation. Runtime bindings and layout projection are structural; protocol
-keys are never globally renamed. Drift and unowned collisions refuse replacement.
+Runtime bindings and layout projection are structural; protocol keys are never
+globally renamed. Drift and unowned collisions refuse replacement.
 
-The initial modular deployment is a **clean replacement**, not a migration.
-The person stops the old coordinator/watcher and reopens fresh ones; see the
-[exact package/install guide](docs/coordinator/monorepo-p2.md). Legacy receipt
-envelopes, old-writer round trips, old namespaces and migration gates are removed.
+Manager receipts contain only the current selection and artifact ownership.
+Receipts from a different format require an explicitly authorized clean
+installation; there is no automatic conversion or compatibility reader.
 
 ## Usage statusbar
 
@@ -146,11 +146,10 @@ The coordinator helps a person organize agent work in workstreams and tasks.
 It keeps the coordinator and its watcher visible in Herdr terminals, with a
 status icon that can start the watcher when it is not running.
 
-Use [the standalone package and clean-install guide](docs/coordinator/monorepo-p2.md)
+Use [the standalone package guide](docs/coordinator/monorepo-p2.md)
 to include only kit-coord in another layout, without usage, this layout or an
-installed updater. It keeps the existing parent data root and `coord/` paths.
-Explicit overrides are `KIT_COORD_DATA_DIR`, `KIT_COORD_HC` and
-`KIT_COORD_HERDR_APP`; old capability environment names are not aliases.
+installed updater. Explicit overrides are `KIT_COORD_DATA_DIR`, `KIT_COORD_HC`
+and `KIT_COORD_HERDR_APP`.
 
 ```sh
 <data-dir>/bin/kit-coord up
@@ -279,12 +278,7 @@ same-user process sandbox. No secret-store commands ship today.
 Unit checks are the two commands above; native acceptance additionally needs
 `herdr-app check` and a real window/screenshot in an isolated app home/core.
 Never test update/recovery experiments against a personal running installation.
-Initial Linux delivery passed 12 Rust behavior tests and 6 JS model tests, plus
-native `herdr-app check` and real OMP usage in an isolated Herdr App 0.1.15 /
-Core 0.1.20 window. The source-update smoke built a committed 0.1.1 executable
-from an installed 0.1.0 source, verified rollback to 0.1.0, automatic maintenance
-back to the new revision, and preservation of modified managed files and
-unrelated configuration. Native macOS verification remains unperformed.
+Native macOS verification remains unperformed.
 
 The usage parser/scheduling and view calculations adapt MIT-licensed Cockpit
 by Konni Hartmann. Repository packaging follows Herdr's documented layout/mod
