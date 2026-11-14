@@ -412,7 +412,10 @@ fn stream_line_received(outage: &mut bool) {
 }
 const STREAM_RETRY: Duration = Duration::from_secs(2);
 
-fn replacement_command(root: &std::path::Path, active: &crate::deployment::Active) -> std::process::Command {
+fn replacement_command(
+    root: &std::path::Path,
+    active: &crate::deployment::Active,
+) -> std::process::Command {
     let mut command = std::process::Command::new(&active.executable);
     command.arg("--data-dir").arg(root).arg("watch");
     command
@@ -541,20 +544,42 @@ fn prepare_heartbeat(
         j.lock()?.append(
             &Actor::Watcher,
             ctx.now(),
-            vec![(None, None, Kind::WatcherStopped { reason: "release_changed".into() })],
+            vec![(
+                None,
+                None,
+                Kind::WatcherStopped {
+                    reason: "release_changed".into(),
+                },
+            )],
         )?;
         return Ok(Some(replacement_command(&ctx.root, &active)));
     }
     Ok(None)
 }
-fn heartbeat_step(ctx: &Ctx, j: &Journal, core: &Core, terminal: &Option<String>, replacement: &mut crate::deployment::Replacement) -> Result<()> {
+fn heartbeat_step(
+    ctx: &Ctx,
+    j: &Journal,
+    core: &Core,
+    terminal: &Option<String>,
+    replacement: &mut crate::deployment::Replacement,
+) -> Result<()> {
     if let Some(mut command) = prepare_heartbeat(ctx, j, core, terminal, replacement)? {
         use std::os::unix::process::CommandExt;
         let error = command.exec();
         replacement.reject(format!("coordinator deployment exec failed: {error}"));
-        j.lock()?.append(&Actor::Watcher, ctx.now(), vec![(None, None, Kind::WatcherStarted {
-            pid: std::process::id(), terminal: terminal.clone(), release: core.release.clone(),
-        })])?;
+        j.lock()?.append(
+            &Actor::Watcher,
+            ctx.now(),
+            vec![(
+                None,
+                None,
+                Kind::WatcherStarted {
+                    pid: std::process::id(),
+                    terminal: terminal.clone(),
+                    release: core.release.clone(),
+                },
+            )],
+        )?;
         // An exec race must not kill the singleton or retry an unchanged target.
         prepare_heartbeat(ctx, j, core, terminal, replacement)?;
     }
@@ -655,38 +680,80 @@ mod tests {
         ctx.paths.ensure().unwrap();
         let j = ctx.journal().unwrap();
         let core = Core {
-            facts: Facts { events_ok: true, ..Facts::default() },
+            facts: Facts {
+                events_ok: true,
+                ..Facts::default()
+            },
             release: crate::deployment::BUILD_REVISION.into(),
-            started_ms: 123, loaded_seq: 0,
-            pending: BTreeMap::new(), retry_after: BTreeMap::new(),
+            started_ms: 123,
+            loaded_seq: 0,
+            pending: BTreeMap::new(),
+            retry_after: BTreeMap::new(),
         };
         let terminal = Some("watcher-terminal".into());
         let mut replacement = crate::deployment::Replacement::default();
-        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
-        std::fs::write(root.join("state.json"), br#"{"current":"unrelated-usage-update"}"#).unwrap();
-        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
+        assert!(
+            prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement)
+                .unwrap()
+                .is_none()
+        );
+        std::fs::write(
+            root.join("state.json"),
+            br#"{"current":"unrelated-usage-update"}"#,
+        )
+        .unwrap();
+        assert!(
+            prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement)
+                .unwrap()
+                .is_none()
+        );
         assert!(j.read_after(0).unwrap().is_empty());
         let candidate = root.join("immutable-coordinator");
         let revision = "b".repeat(40);
         std::fs::create_dir(root.join("kit-coord")).unwrap();
-        std::fs::write(root.join("kit-coord/active.json"), json!({
-            "schema_version":1, "revision":revision, "executable":candidate,
-        }).to_string()).unwrap();
-        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
+        std::fs::write(
+            root.join("kit-coord/active.json"),
+            json!({
+                "schema_version":1, "revision":revision, "executable":candidate,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(
+            prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement)
+                .unwrap()
+                .is_none()
+        );
         let hb = lifecycle::read_heartbeat(&ctx.paths).unwrap().unwrap();
         assert_eq!(hb.release, core.release);
-        assert_eq!((hb.started_ms, hb.beat_ms, hb.events_ok), (123, 42_000, true));
+        assert_eq!(
+            (hb.started_ms, hb.beat_ms, hb.events_ok),
+            (123, 42_000, true)
+        );
         assert!(hb.deployment_error.is_some());
         assert!(j.read_after(0).unwrap().is_empty());
-        std::fs::write(&candidate, format!("#!/bin/sh\necho 'kit-coord 0.1.0 ({revision})'\n")).unwrap();
+        std::fs::write(
+            &candidate,
+            format!("#!/bin/sh\necho 'kit-coord 0.1.0 ({revision})'\n"),
+        )
+        .unwrap();
         std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let command = prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().unwrap();
+        let command = prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement)
+            .unwrap()
+            .unwrap();
         assert_eq!(command.get_program(), candidate.as_os_str());
-        assert_eq!(command.get_args().collect::<Vec<_>>(), [
-            std::ffi::OsStr::new("--data-dir"), root.as_os_str(), std::ffi::OsStr::new("watch"),
-        ]);
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                std::ffi::OsStr::new("--data-dir"),
+                root.as_os_str(),
+                std::ffi::OsStr::new("watch"),
+            ]
+        );
         let entries = j.read_after(0).unwrap();
-        assert!(matches!(entries.as_slice(), [entry] if matches!(entry.typed(), Kind::WatcherStopped { reason } if reason == "release_changed")));
+        assert!(
+            matches!(entries.as_slice(), [entry] if matches!(entry.typed(), Kind::WatcherStopped { reason } if reason == "release_changed"))
+        );
     }
     #[tokio::test]
     async fn scripted_tick_rechecks_readiness_before_nudge() {
@@ -1010,7 +1077,11 @@ mod tests {
             ws: ws.clone(),
         };
         place::report(&ctx, &caller, ReportKind::Done, "done", None).unwrap();
-        assert!(prepare_heartbeat(&ctx, &j, &core, &None, &mut Default::default()).unwrap().is_none());
+        assert!(
+            prepare_heartbeat(&ctx, &j, &core, &None, &mut Default::default())
+                .unwrap()
+                .is_none()
+        );
         assert!(release::release_task_tab(&ctx, &j, &Actor::Watcher, &task).is_err());
         assert_eq!(core.pending.len(), 1);
         assert!(

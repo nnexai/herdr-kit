@@ -32,8 +32,7 @@ pub fn follow_up(brief: &str, cli: &str, result: &Path) -> String {
 pub fn coordinator_first(role: &Role, cli: &str, startup_read: &str) -> String {
     const LIMIT: usize = 32 * 1024;
     let read = if startup_read.len() > LIMIT {
-        let notice =
-            format!("\n\nStartup read truncated; run `{cli} board` for the full board.");
+        let notice = format!("\n\nStartup read truncated; run `{cli} board` for the full board.");
         let mut end = LIMIT.saturating_sub(notice.len());
         while !startup_read.is_char_boundary(end) {
             end -= 1;

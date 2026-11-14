@@ -334,17 +334,27 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
                         ws: None,
                         task: None,
                     });
-                } else if let Some((task, item)) = state.tasks.values().filter_map(|t| {
-                    let item = t.blocked.as_ref()?;
-                    let waiting_on_person = state.questions.values().any(|q| {
-                        q.answered.is_none() && q.task.as_ref() == Some(&t.id) && q.asked_seq >= item.seq
-                    });
-                    let interval = cfg.blocked_reminder_secs.max(1)
-                        .saturating_mul(1u64 << item.reminders.min(63))
-                        .min(cfg.blocked_reminder_cap_secs.max(1));
-                    (!waiting_on_person && elapsed(now_ms, Some(item.last_reminded_ms), interval))
+                } else if let Some((task, item)) = state
+                    .tasks
+                    .values()
+                    .filter_map(|t| {
+                        let item = t.blocked.as_ref()?;
+                        let waiting_on_person = state.questions.values().any(|q| {
+                            q.answered.is_none()
+                                && q.task.as_ref() == Some(&t.id)
+                                && q.asked_seq >= item.seq
+                        });
+                        let interval = cfg
+                            .blocked_reminder_secs
+                            .max(1)
+                            .saturating_mul(1u64 << item.reminders.min(63))
+                            .min(cfg.blocked_reminder_cap_secs.max(1));
+                        (!waiting_on_person
+                            && elapsed(now_ms, Some(item.last_reminded_ms), interval))
                         .then_some((t, item))
-                }).min_by_key(|(t, item)| (item.last_reminded_ms, &t.id)) {
+                    })
+                    .min_by_key(|(t, item)| (item.last_reminded_ms, &t.id))
+                {
                     out.push(Action::Send {
                         terminal: address.into(),
                         text: format!("Blocked delegate {} still needs attention: {}. Run kit board; ask the person with kit ask --task {} if needed.", task.id.as_str(), item.text, task.id.as_str()),

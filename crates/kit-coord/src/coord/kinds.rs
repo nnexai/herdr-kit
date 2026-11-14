@@ -342,7 +342,11 @@ pub enum Kind {
         working_ms: Option<u64>,
     },
     #[serde(rename = "coord.sent")]
-    CoordSent { text: String, terminal: String, qid: Option<String> },
+    CoordSent {
+        text: String,
+        terminal: String,
+        qid: Option<String>,
+    },
     #[serde(rename = "rating")]
     Rating {
         target: String,

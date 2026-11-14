@@ -64,7 +64,9 @@ pub fn apply(s: &mut State, e: &Entry) {
     if let Some(task) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) {
         task.last_event_ms = e.ts_ms;
     }
-    let prior_episode = e.task.as_ref()
+    let prior_episode = e
+        .task
+        .as_ref()
         .and_then(|id| s.tasks.get(id))
         .and_then(|t| t.blocked.as_ref())
         .map(|item| item.seq);
@@ -355,7 +357,10 @@ pub fn apply(s: &mut State, e: &Entry) {
             t.stalled_ms = None;
             t.reported_seq = Some(e.seq);
             t.attention = None;
-            if matches!(outcome, super::kinds::Outcome::Blocked | super::kinds::Outcome::Question) {
+            if matches!(
+                outcome,
+                super::kinds::Outcome::Blocked | super::kinds::Outcome::Question
+            ) {
                 block(t, e, t.summary.clone().unwrap_or_default(), outcome);
             } else {
                 t.blocked = None;
@@ -488,12 +493,19 @@ pub fn apply(s: &mut State, e: &Entry) {
             } else {
                 t.attention = Some(state);
                 if state == AttentionState::Blocked {
-                    block(t, e, msg.unwrap_or_else(|| "Delegate is waiting on the person.".into()), super::kinds::Outcome::Blocked);
+                    block(
+                        t,
+                        e,
+                        msg.unwrap_or_else(|| "Delegate is waiting on the person.".into()),
+                        super::kinds::Outcome::Blocked,
+                    );
                 }
             }
         }
         Kind::TaskBlockedReminder { task, episode_seq } => {
-            if let Some(item) = s.tasks.get_mut(&task)
+            if let Some(item) = s
+                .tasks
+                .get_mut(&task)
                 .and_then(|t| t.blocked.as_mut())
                 .filter(|item| item.seq == episode_seq)
             {
@@ -756,7 +768,10 @@ pub fn apply(s: &mut State, e: &Entry) {
                 ts_ms: e.ts_ms,
             });
             if let Some(t) = q.task.as_ref().and_then(|id| s.tasks.get_mut(id)) {
-                if t.blocked.as_ref().is_some_and(|item| item.seq <= q.asked_seq) {
+                if t.blocked
+                    .as_ref()
+                    .is_some_and(|item| item.seq <= q.asked_seq)
+                {
                     t.blocked = None;
                 }
             }

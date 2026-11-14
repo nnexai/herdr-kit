@@ -33,7 +33,12 @@ pub struct Counts {
 pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention> {
     let mut items = Vec::new();
     for (qid, q) in state.questions.iter().filter(|(_, q)| q.answered.is_none()) {
-        if q.task.as_ref().and_then(|id| state.tasks.get(id)).and_then(|t| t.blocked.as_ref()).is_some_and(|item| q.asked_seq >= item.seq) {
+        if q.task
+            .as_ref()
+            .and_then(|id| state.tasks.get(id))
+            .and_then(|t| t.blocked.as_ref())
+            .is_some_and(|item| q.asked_seq >= item.seq)
+        {
             continue;
         }
         items.push(Attention {
@@ -55,7 +60,12 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
             });
             items.push(Attention {
                 id: format!("blocked-{}", item.seq),
-                kind: if item.outcome == Outcome::Question { "task_question" } else { "task_blocked" }.into(),
+                kind: if item.outcome == Outcome::Question {
+                    "task_question"
+                } else {
+                    "task_blocked"
+                }
+                .into(),
                 ws: Some(t.ws.clone()),
                 task: Some(t.id.clone()),
                 since_ms: item.since_ms,
@@ -124,8 +134,9 @@ pub fn counts(state: &State, attention_len: usize) -> Counts {
             .tasks
             .values()
             .filter(|t| {
-                t.blocked.is_none() && (t.state == TaskState::Placed
-                    || (t.state == TaskState::Running && t.stalled.is_none()))
+                t.blocked.is_none()
+                    && (t.state == TaskState::Placed
+                        || (t.state == TaskState::Running && t.stalled.is_none()))
             })
             .count(),
         needs_you: attention_len,
@@ -195,10 +206,14 @@ pub fn board_text(state: &State, now_ms: u64, all: bool) -> String {
         let task = item.task.as_ref().and_then(|id| state.tasks.get(id));
         out.push_str(&format!(
             "- {}: {} — tab {}, terminal {}, since {} ({} min ago)\n",
-            item.task.as_ref().map(|id| id.as_str()).unwrap_or("Coordinator"),
+            item.task
+                .as_ref()
+                .map(|id| id.as_str())
+                .unwrap_or("Coordinator"),
             item.text,
             task.and_then(|t| t.tab.as_deref()).unwrap_or("unknown"),
-            task.and_then(|t| t.terminal.as_deref()).unwrap_or("unavailable"),
+            task.and_then(|t| t.terminal.as_deref())
+                .unwrap_or("unavailable"),
             item.since_ms,
             now_ms.saturating_sub(item.since_ms) / 60_000,
         ));
@@ -216,7 +231,11 @@ pub fn board_text(state: &State, now_ms: u64, all: bool) -> String {
             out.push_str(&format!("Retained: {}\n", r.reason));
         }
         for t in w.tasks.iter().filter_map(|id| state.tasks.get(id)) {
-            let label = if t.blocked.is_some() { "Needs you".to_owned() } else { format!("{:?}", t.state) };
+            let label = if t.blocked.is_some() {
+                "Needs you".to_owned()
+            } else {
+                format!("{:?}", t.state)
+            };
             out.push_str(&format!("- {}: {} ({label})", t.id.as_str(), t.title));
             if let Some(summary) = &t.summary {
                 out.push_str(&format!(" — {summary}"));

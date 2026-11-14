@@ -1,4 +1,6 @@
 pub mod adapter;
+#[cfg(test)]
+mod blocked_tests;
 pub mod brief;
 pub mod caller;
 pub mod cli;
@@ -23,8 +25,6 @@ pub mod state;
 pub mod stats;
 pub mod views;
 pub mod watch;
-#[cfg(test)]
-mod blocked_tests;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
