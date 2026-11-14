@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Collect unused generations containing Herdr-generated `jsconfig.json` inside
+  nested mod roots, using the same exact-name exception as per-mod receipts.
+  Other unreceipted files still prevent collection.
 - Avoid repeated retained-workstream inbox wakeups on unchanged reconcile
   passes, and stop recording new terminal turns after a task is closed.
 

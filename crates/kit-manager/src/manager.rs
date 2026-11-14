@@ -127,8 +127,9 @@ fn tree(root: &Path) -> Result<BTreeMap<String, String>> {
                     .strip_prefix(root)?
                     .to_str()
                     .context("non-UTF8 managed path")?;
-                // Herdr creates these editor support files itself.
-                if rel == "jsconfig.json" || rel.ends_with(".d.ts") {
+                // Herdr creates these editor support files at each mod root,
+                // including mods nested inside a release tree.
+                if path.ends_with("jsconfig.json") || rel.ends_with(".d.ts") {
                     continue;
                 }
                 out.insert(rel.to_owned(), file_hash(&path)?.context("missing file")?);

@@ -94,6 +94,41 @@ fn unused_generations_remove_mods_caches_releases_and_ownership_not_siblings() {
 }
 
 #[test]
+fn generated_mod_configs_allow_cleanup_but_other_extra_files_do_not() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let home = temp.path().join("app");
+    let a = "a".repeat(40);
+    let old = first(&lock, &home, &a);
+    let release_mod = release(&lock.data, &a).join("mods/kit-coord");
+    let app_mod = mod_path(&home, "kit-coord", &a);
+    // Native checking generates these after the mod receipt omits them.
+    for dir in [&release_mod, &app_mod] {
+        fs::write(dir.join("jsconfig.json"), "{}").unwrap();
+    }
+    let pinned_path = release(&lock.data, &a).join("kit-coord");
+    let state = second(&lock, &old, &"b".repeat(40), &[pinned_path]);
+    let extra = release_mod.join("jsconfig.json.bak");
+    fs::write(&extra, "keep").unwrap();
+    let state = activate(&lock, Transaction::maintenance(state), &[]);
+    assert!(release(&lock.data, &a).exists());
+    assert_eq!(fs::read_to_string(&extra).unwrap(), "keep");
+    fs::remove_file(extra).unwrap();
+    // Other JSON/editor files must not inherit the exact-name exemption.
+    for filename in ["extra.json", "tsconfig.json"] {
+        let extra = release_mod.join(filename);
+        fs::write(&extra, "keep").unwrap();
+        assert!(lock.generation_plan(&state, &[]).is_empty());
+        fs::remove_file(extra).unwrap();
+    }
+    let next = activate(&lock, Transaction::maintenance(state), &[]);
+    assert!(!release(&lock.data, &a).exists());
+    assert!(!app_mod.exists());
+    assert!(!next.package_releases.contains_key(&a));
+    lock.verify_active(&next).unwrap();
+}
+
+#[test]
 fn external_nested_layout_pins_generation_until_later_maintenance() {
     let temp = tempfile::tempdir().unwrap();
     let lock = Locked::open(&temp.path().join("data")).unwrap();
