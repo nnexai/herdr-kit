@@ -192,12 +192,21 @@ pub(super) struct ModChange {
 }
 
 #[derive(Serialize, Deserialize)]
+pub(super) struct GenerationCleanup {
+    pub revision: String,
+    // Exact snapshots cover mutable mod data and host-generated support files.
+    pub roots: BTreeMap<PathBuf, BTreeMap<String, String>>,
+    pub mods: Vec<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
 pub(super) struct Transaction {
     pub schema_version: u32,
     pub state: State,
     pub files: Vec<FileChange>,
     pub mods: Vec<ModChange>,
     pub obsolete_deployments: BTreeMap<PathBuf, String>,
+    pub cleanup: Option<Vec<GenerationCleanup>>,
 }
 
 pub(super) fn project_layout(

@@ -1,6 +1,6 @@
 use super::*;
 
-fn component_release(lock: &Locked, state: &mut State, rev: &str) {
+pub(super) fn component_release(lock: &Locked, state: &mut State, rev: &str) {
     let catalog: Catalog = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../kit-packages.json"
@@ -44,19 +44,19 @@ fn component_release(lock: &Locked, state: &mut State, rev: &str) {
             .insert(id, receipt);
     }
 }
-fn selected(ids: &[&str], rev: &str) -> BTreeMap<String, String> {
+pub(super) fn selected(ids: &[&str], rev: &str) -> BTreeMap<String, String> {
     ids.iter()
         .map(|id| (id.to_string(), rev.to_owned()))
         .collect()
 }
-const BUNDLE: &[&str] = &[
+pub(super) const BUNDLE: &[&str] = &[
     "kit-manager",
     "kit-coord",
     "kit-coord-ui",
     "kit-usage",
     "herdr-kit",
 ];
-fn empty_state(home: &Path) -> State {
+pub(super) fn empty_state(home: &Path) -> State {
     fs::create_dir_all(home).unwrap();
     State {
         app_home: Some(home.to_path_buf()),
@@ -202,6 +202,9 @@ fn retained_activated_release_cannot_be_rebuilt_as_incomplete_staging() {
                 .unwrap(),
         )
         .unwrap();
+    // An independently owned layout still pins this release after deselection.
+    save(&first.app_home.as_ref().unwrap().join("layouts/personal.json"),
+        &json!({"content":{"mod":name("kit-coord", &a)}})).unwrap();
     let mut second = first.clone();
     component_release(&lock, &mut second, &b);
     let mut second = lock
@@ -314,10 +317,10 @@ fn activation_removes_only_superseded_owned_deployments_and_replays_cleanup() {
         assert!(lock.recover().is_err());
         assert!(!mod_path(&home, "kit-coord", &b).exists());
         fs::copy(layout(&home), &old_source).unwrap();
-        lock.recover().unwrap();
+        lock.recover_with_processes(|| Some(Vec::new())).unwrap();
         // Replay the crash prefix after cleanup, before journal removal.
         save(&journal_path(&lock.data), &transaction).unwrap();
-        lock.recover().unwrap();
+        lock.recover_with_processes(|| Some(Vec::new())).unwrap();
         lock.verify_active(&lock.state().unwrap()).unwrap();
         for path in transaction.obsolete_deployments.keys() {
             assert!(!path.exists());
@@ -330,8 +333,7 @@ fn activation_removes_only_superseded_owned_deployments_and_replays_cleanup() {
         } else {
             assert!(!old_source.parent().unwrap().exists());
         }
-        // These paths can still be pinned by a running actor or another layout.
-        assert!(release(&lock.data, &a).join("kit-coord").exists());
-        assert!(mod_path(&home, "kit-coord", &a).exists());
+        assert!(!release(&lock.data, &a).exists());
+        assert!(!mod_path(&home, "kit-coord", &a).exists());
     }
 }

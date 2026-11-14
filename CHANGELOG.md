@@ -5,11 +5,16 @@
 - Remove the rollback command, prior-selection receipt fields, obsolete
   activation fallback and dead coordinator helpers; stop hiding dead-code warnings.
 - Remove superseded extraction/migration plans and duplicated role/fixture docs.
-  Canonical roles and fixtures live with kit-coord. Preserve immutable generations
-  still potentially pinned by running actors or independently owned layouts.
+  Canonical roles and fixtures live with kit-coord.
 - Manager receipt format changes are clean cuts, not automatic conversions.
 - Delete superseded owned deployment snapshots after activation, with
   drift refusal and idempotent crash recovery; preserve unowned siblings.
+- Sweep superseded receipt-owned mod folders, matching mod-data directories and
+  release generations after activation and on maintenance (including not-due
+  checks). Keep selected revisions, layout/process pins and uncertain visibility
+  or ownership; journal exact cleanup trees for partial-deletion crash recovery.
+- Document the clean manager ownership cutover required by installed rollback-era
+  receipts, preserving the coordinator's journal, configuration, roles and sessions.
 - Complete the mechanical P2–P4 split into independent kit-coord and kit-usage
   CLI/mod packages, optional kit-manager, kit-coord-ui (coord-only dependency),
   and the herdr-kit layout. No kit-core or legacy CLI aliases.

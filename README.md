@@ -64,11 +64,30 @@ Each immutable release contains the executable and matching native assets.
 Mods have revision-specific names, and their generated runtime calls the exact
 matching executable. A single atomic layout replacement activates a staged
 mod generation; native file discovery settles asynchronously. Activation has
-an on-disk recovery journal. There is no rollback command. Immutable executable
-and mod generations remain because running actors and independently owned layouts
-can still pin their absolute paths; activation alone does not prove they are unused.
-Superseded owned layout/descriptor sources in `deployments/` are removed after
-activation, with cleanup included in crash recovery. Unowned files are preserved.
+an on-disk recovery journal. There is no rollback command. After activation,
+the manager sweeps superseded receipt-owned mod folders, their matching app-home
+`data/<mod>-<revision>` directories, and immutable `releases/<revision>` trees.
+An entire revision is retained while any selected component, any JSON layout
+(including independently owned/nested layouts), or a running executable/cwd
+still uses it. Retained generations are retried on later installs/updates and
+`update maintain`, even when the source check is not due.
+
+Collection is conservative: a complete process-path census is required. Linux
+uses `/proc/*/{exe,cwd}`; other systems require a successful, diagnostic-free
+`lsof` census. Permission failures (including non-dumpable processes), unavailable
+process information, unreadable/malformed layouts, symlinks, managed drift or
+unknown release files retain the generation. Linux process-namespace visibility
+must cover all consumers. No privileges are acquired and argv is not treated as
+proof. On restricted hosts, cleanup can remain deferred; a stderr diagnostic
+identifies incomplete process visibility. A snapshot is not a cross-process
+launch lock: do not concurrently introduce references to retired generations.
+
+Before deletion, exact tree snapshots are persisted in the activation journal.
+Recovery accepts already-removed files but refuses changed/added files, rechecks
+liveness, and retires receipts only after deletion. A newly busy generation
+during recovery leaves the journal pending rather than deleting its remaining
+files. Superseded owned layout/descriptor sources in `deployments/` are also
+removed after activation. Unowned sibling files/directories are preserved.
 
 After activation, the coordinator hook reports `skipped` with reason
 `forbidden_caller` when the invoking caller is not authorized to start it.
@@ -111,6 +130,19 @@ globally renamed. Drift and unowned collisions refuse replacement.
 Manager receipts contain only the current selection and artifact ownership.
 Receipts from a different format require an explicitly authorized clean
 installation; there is no automatic conversion or compatibility reader.
+
+The currently installed pre-pruning receipts still contain removed rollback
+fields (`previous`, `previous_selection`); the new manager deliberately rejects
+them. Redeployment therefore requires an explicitly authorized **clean manager
+installation/ownership cutover**, not `update apply` with the old writer and not
+editing those fields away. Preserve the complete `coord/` tree in place:
+coordinator journal, configuration, role overrides, task/session files and all
+other coordinator state. Preserve live immutable executables at their existing
+paths, independently owned layouts and all user app state. Only proven
+manager-owned targets may be released for a fresh install; old generations
+without ownership in the fresh receipt are not automatically adopted/deleted.
+Do not remove `seen.json`, restart live actors, or run an activation hook that
+would restart them as part of that cutover.
 
 ## Usage statusbar
 

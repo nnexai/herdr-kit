@@ -1,5 +1,7 @@
 use super::*;
 
+mod generations;
+
 struct Locked {
     data: PathBuf,
     _lock: File,
@@ -158,10 +160,23 @@ impl Locked {
         Ok(())
     }
     fn recover(&self) -> Result<()> {
-        let Some(transaction): Option<Transaction> = read_json(&journal_path(&self.data))? else {
+        if !journal_path(&self.data).exists() { return Ok(()); }
+        self.recover_with_processes(generations::process_paths)
+    }
+    fn recover_with_processes(&self, processes: impl Fn() -> Option<Vec<PathBuf>>) -> Result<()> {
+        let Some(mut transaction): Option<Transaction> = read_json(&journal_path(&self.data))? else {
             return Ok(());
         };
         ensure!(transaction.schema_version == 1, "unsupported activation journal");
+        if transaction.cleanup.is_some() {
+            self.verify_active(&transaction.state)?;
+            let census = processes();
+            let state = self.finish_generations(&transaction, census.as_deref())?;
+            self.save(&state)?;
+            fs::remove_file(journal_path(&self.data))?;
+            File::open(&self.data)?.sync_all()?;
+            return Ok(());
+        }
         self.selected_receipts(&transaction.state)?;
         for change in &transaction.mods {
             ensure!(tree(&change.source)? == change.hashes, "release mod drift detected");
@@ -206,6 +221,17 @@ impl Locked {
                 }
             }
         }
+        let census = processes();
+        if census.is_none() && transaction.state.package_releases.iter().any(|(rev, packages)|
+            !transaction.state.selection.values().any(|selected| selected == rev)
+                && packages.values().any(|receipt| receipt.activated)) {
+            eprintln!("generation cleanup deferred: incomplete process executable/cwd visibility");
+        }
+        transaction.cleanup = Some(self.generation_plan(&transaction.state, census.as_deref()));
+        save(&journal_path(&self.data), &transaction)?;
+        let census = processes();
+        let state = self.finish_generations(&transaction, census.as_deref())?;
+        self.save(&state)?;
         fs::remove_file(journal_path(&self.data))?;
         File::open(&self.data)?.sync_all()?;
         Ok(())
@@ -370,6 +396,7 @@ impl Locked {
             files,
             mods,
             obsolete_deployments,
+            cleanup: None,
         })
     }
     fn activate(&self, transaction: Transaction) -> Result<State> {
@@ -682,7 +709,7 @@ pub fn install(
     let ids = lock.build(&mut next, &rev, components)?;
     let selection = ids.into_iter().map(|id| (id, rev.clone())).collect();
     if old.selection == selection && old.current.is_some() {
-        lock.save(&next)?;
+        let next = lock.sweep_generations(next)?;
         return Ok(activated(
             result(&next, Some(&rev), "current"),
             &old,
@@ -732,6 +759,9 @@ pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value>
     let mut state = lock.state()?;
     ensure!(state.current.is_some(), "suite is not installed");
     lock.verify_active(&state)?;
+    if action == "maintain" || action == "apply" {
+        state = lock.sweep_generations(state)?;
+    }
     if action == "maintain" && now() < state.next_check {
         return Ok(activated(
             result(&state, None, "not_due"),
