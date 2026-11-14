@@ -1,7 +1,10 @@
 # herdr-kit modular monorepo: feasibility, package design and cutover
 
-Status: execution approved by the person; each phase merge/deployment and the
-person-owned drained cutover still require explicit authorization.
+Status: package split approved. The person's subsequent clean-replace directive
+supersedes the migration, compatibility and per-phase deployment gates below:
+P2–P4 execute together, with cargo/JS tests, one standalone native smoke and a
+quick suite-layout check. No old-writer/migration/reverse gates. P5 remains
+separately authorized. Current install instructions: [package guide](monorepo-p2.md).
 Evidence baseline: main at `8afa371dc185deeb27027c00b270b5a39971cf17` (2026-11-13).
 Source references below refer to that baseline, not to future file locations.
 “Observed” means source/history or the explicitly listed local commands; “Proposed”

@@ -34,21 +34,10 @@ impl Locked {
         Ok(this)
     }
     fn state(&self) -> Result<State> {
-        state::load(&self.data)
+        read_json(&state_path(&self.data)).map(|state| state.unwrap_or_default())
     }
     fn save(&self, state: &State) -> Result<()> {
-        state::store(&self.data, state)
-    }
-    fn verify_legacy(&self, state: &State, rev: &str) -> Result<()> {
-        let expected = state
-            .releases
-            .get(rev)
-            .context("missing legacy release receipt")?;
-        ensure!(
-            &tree(&release(&self.data, rev))? == expected,
-            "release drift detected"
-        );
-        Ok(())
+        save(&state_path(&self.data), state)
     }
     fn verify_package(&self, rev: &str, receipt: &PackageReceipt) -> Result<()> {
         let root = release(&self.data, rev);
@@ -93,34 +82,7 @@ impl Locked {
             })
             .collect()
     }
-    fn legacy_files(&self, state: &State, rev: &str) -> Result<BTreeMap<PathBuf, FileReceipt>> {
-        self.verify_legacy(state, rev)?;
-        let home = state.app_home.as_ref().context("missing install target")?;
-        let root = release(&self.data, rev);
-        [
-            (layout(home), root.join("layout.json"), false),
-            (bootstrap(&self.data), root.join("herdr-kit"), true),
-        ]
-        .into_iter()
-        .map(|(target, source, executable)| {
-            Ok((
-                target,
-                FileReceipt {
-                    hash: file_hash(&source)?.context("missing release file")?,
-                    source,
-                    executable,
-                    ready: false,
-                },
-            ))
-        })
-        .collect()
-    }
     fn active_files(&self, state: &State) -> Result<BTreeMap<PathBuf, FileReceipt>> {
-        if state.selection.is_empty() && state.files.is_empty() {
-            if let Some(rev) = &state.current {
-                return self.legacy_files(state, rev);
-            }
-        }
         Ok(state.files.clone())
     }
     fn verify_active(&self, state: &State) -> Result<()> {
@@ -135,21 +97,6 @@ impl Locked {
                 "release file drift detected"
             );
         }
-        if state.selection.is_empty() {
-            if let Some(rev) = &state.current {
-                self.verify_legacy(state, rev)?;
-                for (base, source) in release_mods(&release(&self.data, rev))? {
-                    ensure!(
-                        tree(&mod_path(
-                            state.app_home.as_ref().context("missing target")?,
-                            &base,
-                            rev
-                        ))? == tree(&source)?,
-                        "mod drift detected"
-                    );
-                }
-            }
-        } else {
             for (_, rev, receipt) in self.selected_receipts(state)? {
                 for (base, hashes) in &receipt.mods {
                     ensure!(
@@ -162,25 +109,10 @@ impl Locked {
                     );
                 }
             }
-        }
         Ok(())
     }
     fn owns_mod(&self, state: &State, target: &Path) -> Result<bool> {
-        if state.mod_owners.contains_key(target) {
-            return Ok(true);
-        }
-        if let Some(home) = &state.app_home {
-            for rev in &state.managed_mods {
-                self.verify_legacy(state, rev)?;
-                if release_mods(&release(&self.data, rev))?
-                    .iter()
-                    .any(|(base, _)| mod_path(home, base, rev) == target)
-                {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        Ok(state.mod_owners.contains_key(target))
     }
     fn apply_mod(&self, change: &ModChange) -> Result<()> {
         ensure!(
@@ -232,111 +164,35 @@ impl Locked {
         Ok(())
     }
     fn recover(&self) -> Result<()> {
-        let Some(journal): Option<Journal> = read_json(&journal_path(&self.data))? else {
+        let Some(transaction): Option<Transaction> = read_json(&journal_path(&self.data))? else {
             return Ok(());
         };
-        match journal {
-            Journal::Components(transaction) => {
-                ensure!(
-                    transaction.schema_version == 2,
-                    "unsupported activation journal"
-                );
-                if !transaction.state.selection.is_empty() {
-                    self.selected_receipts(&transaction.state)?;
-                }
-                // Refuse drift anywhere before publishing the first target.
-                for change in &transaction.mods {
-                    ensure!(
-                        tree(&change.source)? == change.hashes,
-                        "release mod drift detected"
-                    );
-                    no_links(&change.target)?;
-                    if change.target.exists() {
-                        ensure!(
-                            tree(&change.target)? == change.hashes,
-                            "mod collision or drift detected"
-                        );
-                    }
-                }
-                for change in &transaction.files {
-                    let current = file_hash(&change.target)?;
-                    ensure!(
-                        current == change.old_hash
-                            || current == change.next.as_ref().map(|n| n.hash.clone()),
-                        "managed file collision or drift detected"
-                    );
-                    if let Some(next) = &change.next {
-                        ensure!(
-                            file_hash(&next.source)?.as_deref() == Some(&next.hash),
-                            "release file drift detected"
-                        );
-                    }
-                }
-                for change in &transaction.mods {
-                    self.apply_mod(change)?;
-                }
-                for ready in [false, true] {
-                    for change in &transaction.files {
-                        if change.next.as_ref().is_some_and(|n| n.ready) == ready {
-                            self.apply_file(change)?;
-                        }
-                    }
-                }
-                self.save(&transaction.state)?;
-            }
-            Journal::Legacy(journal) => {
-                let state = state::merge_history(&self.data, journal.state)?;
-                let state = &state;
-                let rev = state
-                    .current
-                    .as_ref()
-                    .context("invalid legacy activation journal")?;
-                self.verify_legacy(state, rev)?;
-                let home = state.app_home.as_ref().context("missing legacy target")?;
-                let files = self.legacy_files(state, rev)?;
-                // Validate all legacy targets before resuming its old transaction.
-                for (target, next) in &files {
-                    let old = if *target == layout(home) {
-                        &journal.old_layout
-                    } else {
-                        &journal.old_binary
-                    };
-                    let actual = file_hash(target)?;
-                    ensure!(
-                        &actual == old || actual.as_ref() == Some(&next.hash),
-                        "legacy target drift detected"
-                    );
-                }
-                let mods = release_mods(&release(&self.data, rev))?;
-                for (base, source) in &mods {
-                    let target = mod_path(home, base, rev);
-                    no_links(&target)?;
-                    if target.exists() {
-                        ensure!(tree(&target)? == tree(source)?, "legacy mod drift detected");
-                    }
-                }
-                for (base, source) in mods {
-                    self.apply_mod(&ModChange {
-                        target: mod_path(home, &base, rev),
-                        hashes: tree(&source)?,
-                        source,
-                    })?;
-                }
-                for (target, next) in files {
-                    let old_hash = if target == layout(home) {
-                        journal.old_layout.clone()
-                    } else {
-                        journal.old_binary.clone()
-                    };
-                    self.apply_file(&FileChange {
-                        target,
-                        old_hash,
-                        next: Some(next),
-                    })?;
-                }
-                self.save(state)?;
+        ensure!(transaction.schema_version == 1, "unsupported activation journal");
+        self.selected_receipts(&transaction.state)?;
+        for change in &transaction.mods {
+            ensure!(tree(&change.source)? == change.hashes, "release mod drift detected");
+            no_links(&change.target)?;
+            if change.target.exists() {
+                ensure!(tree(&change.target)? == change.hashes, "mod collision or drift detected");
             }
         }
+        for change in &transaction.files {
+            let current = file_hash(&change.target)?;
+            ensure!(current == change.old_hash || current == change.next.as_ref().map(|n| n.hash.clone()),
+                "managed file collision or drift detected");
+            if let Some(next) = &change.next {
+                ensure!(file_hash(&next.source)?.as_deref() == Some(&next.hash), "release file drift detected");
+            }
+        }
+        for change in &transaction.mods { self.apply_mod(change)?; }
+        for ready in [false, true] {
+            for change in &transaction.files {
+                if change.next.as_ref().is_some_and(|n| n.ready) == ready {
+                    self.apply_file(change)?;
+                }
+            }
+        }
+        self.save(&transaction.state)?;
         fs::remove_file(journal_path(&self.data))?;
         File::open(&self.data)?.sync_all()?;
         Ok(())
@@ -346,7 +202,6 @@ impl Locked {
         old: &State,
         mut next: State,
         selection: BTreeMap<String, String>,
-        legacy: Option<&str>,
     ) -> Result<Transaction> {
         self.verify_active(old)?;
         let home = next.app_home.clone().context("missing target")?;
@@ -354,16 +209,6 @@ impl Locked {
         next.selection = selection;
         next.files.clear();
         let mut mods = Vec::new();
-        if let Some(rev) = legacy {
-            next.files = self.legacy_files(&next, rev)?;
-            for (base, source) in release_mods(&release(&self.data, rev))? {
-                mods.push(ModChange {
-                    target: mod_path(&home, &base, rev),
-                    hashes: tree(&source)?,
-                    source,
-                });
-            }
-        } else {
             let mut bindings = BTreeMap::new();
             let mut layout_source = None;
             let mut files = BTreeMap::<PathBuf, FileReceipt>::new();
@@ -380,7 +225,7 @@ impl Locked {
                     if let Some(other) = files.insert(target, file.clone()) {
                         ensure!(
                             other.source == file.source,
-                            "selected generations share a legacy binary; update them together until their vertical extraction"
+                            "selected binaries have multiple owners"
                         );
                     }
                 }
@@ -399,14 +244,14 @@ impl Locked {
             if let Some(source) = layout_source {
                 let mut value: Value = serde_json::from_slice(&fs::read(source)?)?;
                 let mut known = std::collections::BTreeSet::from_iter(
-                    LEGACY_MODS.iter().map(|s| s.to_string()),
-                );
+                    ["kit-coord", "kit-coord-ui", "kit-usage", "herdr-kit-bar"].map(str::to_owned));
                 for packages in next.package_releases.values() {
                     for package in packages.values() {
                         known.extend(package.mods.keys().cloned());
                     }
                 }
-                project_layout(&mut value, &known, &bindings);
+                let manager = next.selection.contains_key("kit-manager").then(|| bootstrap(&self.data));
+                project_layout(&mut value, &known, &bindings, manager.as_deref(), &self.data);
                 let bytes = serde_json::to_vec_pretty(&value)?;
                 let digest = hash(&bytes);
                 let source = self
@@ -452,7 +297,6 @@ impl Locked {
                 }
             }
             next.files = files;
-        }
         for change in &mods {
             no_links(&change.target)?;
             if change.target.exists() {
@@ -498,22 +342,20 @@ impl Locked {
         }
         next.previous = old.current.clone();
         next.previous_selection = (!old.selection.is_empty()).then(|| old.selection.clone());
-        next.current = legacy.map(str::to_owned).or_else(|| {
-            next.selection
-                .get("kit-manager")
-                .or_else(|| next.selection.get("herdr-kit"))
-                .or_else(|| next.selection.values().next())
-                .cloned()
-        });
+        next.current = next.selection
+            .get("kit-manager")
+            .or_else(|| next.selection.get("herdr-kit"))
+            .or_else(|| next.selection.values().next())
+            .cloned();
         Ok(Transaction {
-            schema_version: 2,
+            schema_version: 1,
             state: next,
             files,
             mods,
         })
     }
     fn activate(&self, transaction: Transaction) -> Result<State> {
-        save(&journal_path(&self.data), &Journal::Components(transaction))?;
+        save(&journal_path(&self.data), &transaction)?;
         self.recover()?;
         self.state()
     }
@@ -526,11 +368,7 @@ impl Locked {
                     .is_some_and(|b| b.name == binary)
                     && r.binary_hash.as_deref() == Some(digest)
             })
-        }) || state
-            .releases
-            .get(rev)
-            .and_then(|r| r.get(binary))
-            .is_some_and(|h| h == digest)
+        })
     }
     fn build(&self, state: &mut State, rev: &str, requested: &[String]) -> Result<Vec<String>> {
         ensure!(
@@ -540,12 +378,6 @@ impl Locked {
                     .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
             "revision must be a full lowercase commit id"
         );
-        if state.releases.contains_key(rev) {
-            self.verify_legacy(state, rev)?;
-            bail!(
-                "legacy release is immutable; component migration requires a new committed revision"
-            );
-        }
         if let Some(packages) = state.package_releases.get(rev) {
             for receipt in packages.values().filter(|r| r.activated) {
                 self.verify_package(rev, receipt)?;
@@ -591,7 +423,7 @@ impl Locked {
         no_links(&final_dir)?;
         if final_dir.exists() {
             ensure!(
-                state.releases.contains_key(rev) || state.package_releases.contains_key(rev),
+                state.package_releases.contains_key(rev),
                 "release target exists without receipt"
             );
         }
@@ -674,20 +506,14 @@ impl Locked {
             for base in &definition.mods {
                 let dir = staged.join("mods").join(base);
                 copy_tree(&source.join("mods").join(base), &dir)?;
-                let binary = definition
-                    .binary
-                    .as_ref()
-                    .or_else(|| {
-                        definition
-                            .runtime_package
-                            .as_ref()
-                            .and_then(|id| catalog.packages.get(id))
-                            .and_then(|package| package.binary.as_ref())
-                    })
-                    .context("missing mod executable")?;
+                let binary = definition.binary.as_ref().or_else(|| {
+                    definition.runtime_package.as_ref()
+                        .and_then(|id| catalog.packages.get(id))
+                        .and_then(|package| package.binary.as_ref())
+                });
                 let mut runtime = format!(
                     "export const BINARY = {};\nexport const DATA_DIR = {};\nexport const RELEASE = {};\nexport const MOD_NAME = {};\n",
-                    serde_json::to_string(&final_dir.join(&binary.name))?,
+                    serde_json::to_string(&binary.map(|binary| final_dir.join(&binary.name)))?,
                     serde_json::to_string(&self.data)?,
                     serde_json::to_string(rev)?,
                     serde_json::to_string(&name(base, rev))?
@@ -804,13 +630,7 @@ fn result(state: &State, available: Option<&str>, status: &str) -> Value {
     json!({"state":status,"current_revision":state.current,"available_revision":available,"previous_revision":state.previous,"source":state.source,"targets":{"app_home":state.app_home},"next_check":state.next_check,"components":state.selection,"previous_components":state.previous_selection,"resolved_mods":mods})
 }
 fn activated(mut value: Value, old: &State, next: &State, changed: bool) -> Value {
-    let coord = |state: &State| {
-        if state.selection.is_empty() {
-            state.current.clone()
-        } else {
-            state.selection.get("kit-coord").cloned()
-        }
-    };
+    let coord = |state: &State| state.selection.get("kit-coord").cloned();
     value["activated"] = json!(changed);
     value["coord_changed"] = json!(changed && coord(next).is_some() && coord(old) != coord(next));
     value
@@ -841,15 +661,6 @@ pub fn install(
     } else {
         revision(next.source.as_ref().unwrap())?
     };
-    if old.selection.is_empty() && old.current.as_deref() == Some(&rev) && components.is_empty() {
-        lock.save(&next)?;
-        return Ok(activated(
-            result(&next, Some(&rev), "current"),
-            &old,
-            &next,
-            false,
-        ));
-    }
     let ids = lock.build(&mut next, &rev, components)?;
     let selection = ids.into_iter().map(|id| (id, rev.clone())).collect();
     if old.selection == selection && old.current.is_some() {
@@ -861,7 +672,7 @@ pub fn install(
             false,
         ));
     }
-    let transaction = lock.prepare(&old, next, selection, None)?;
+    let transaction = lock.prepare(&old, next, selection)?;
     let next = lock.activate(transaction)?;
     Ok(activated(
         result(&next, Some(&rev), "installed"),
@@ -909,11 +720,8 @@ pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value>
             "rollback restores the complete prior selection"
         );
         let rev = state.previous.clone().context("no previous release")?;
-        let transaction = if let Some(selection) = state.previous_selection.clone() {
-            lock.prepare(&state, state.clone(), selection, None)?
-        } else {
-            lock.prepare(&state, state.clone(), BTreeMap::new(), Some(&rev))?
-        };
+        let selection = state.previous_selection.clone().context("no previous selection")?;
+        let transaction = lock.prepare(&state, state.clone(), selection)?;
         let old = state;
         let state = lock.activate(transaction)?;
         return Ok(activated(
@@ -949,11 +757,7 @@ pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value>
         } else {
             components.to_vec()
         };
-        let changed = if state.selection.is_empty() {
-            state.current.as_deref() != Some(&rev)
-        } else {
-            ids.iter().any(|id| state.selection.get(id) != Some(&rev))
-        };
+        let changed = ids.iter().any(|id| state.selection.get(id) != Some(&rev));
         if action == "check" {
             return Ok(activated(
                 result(
@@ -973,7 +777,7 @@ pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value>
             for id in built {
                 selection.insert(id, rev.clone());
             }
-            let transaction = lock.prepare(&old, state.clone(), selection, None)?;
+            let transaction = lock.prepare(&old, state.clone(), selection)?;
             state = lock.activate(transaction)?;
         }
         if action == "maintain" {

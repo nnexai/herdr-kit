@@ -1,13 +1,12 @@
 mod manager;
 mod paths;
-mod usage;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about = "Local toolkit and native Herdr layout/mod suite")]
+#[command(version, about = "Optional local-source manager for Herdr kit packages")]
 struct Cli {
     /// Independent suite data, installation receipts and release store.
     #[arg(long, env = "HERDR_KIT_DATA_DIR", global = true)]
@@ -18,11 +17,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Read anonymous OMP subscription usage.
-    Usage {
-        #[command(subcommand)]
-        command: UsageCommand,
-    },
     /// Install the suite from a trusted local Git repository.
     Install {
         #[arg(long)]
@@ -56,17 +50,6 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
-enum UsageCommand {
-    Snapshot {
-        #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        agents_working: bool,
-        #[arg(long, env = "HERDR_KIT_OMP_EXECUTABLE")]
-        omp_executable: Option<PathBuf>,
-    },
-}
 
 #[derive(Clone, Copy, Subcommand)]
 enum UpdateCommand {
@@ -76,10 +59,10 @@ enum UpdateCommand {
     Rollback,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+
+fn main() {
     let cli = Cli::parse();
-    match run(cli).await {
+    match run(cli) {
         Ok(value) => println!("{}", serde_json::to_string(&value).expect("serializable response")),
         Err(error) => {
             let message: String = error.to_string().chars().filter(|c| !c.is_control()).take(512).collect();
@@ -96,14 +79,10 @@ fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
     else { Ok(std::env::current_dir().context("current directory unavailable")?.join(root)) }
 }
 
-async fn run(cli: Cli) -> Result<serde_json::Value> {
+fn run(cli: Cli) -> Result<serde_json::Value> {
     let root = data_root(cli.data_dir)?;
     let activation_command = matches!(&cli.command, Command::Install { .. } | Command::Update { .. });
     let mut value = match cli.command {
-        Command::Usage { command: UsageCommand::Snapshot { agents_working, omp_executable, .. } } => {
-            serde_json::to_value(usage::snapshot(&root.join("usage"), agents_working, omp_executable.as_deref()).await?)
-                .context("usage response could not be encoded")
-        }
         Command::Install { app_home, source, components, revision } => manager::install(&root, &app_home, &source, &components, revision.as_deref()),
         Command::Source { repo } => manager::source(&root, repo.as_deref()),
         Command::Status { .. } => manager::status(&root),

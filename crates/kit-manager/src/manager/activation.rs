@@ -1,4 +1,4 @@
-//! Bounded subprocess adapter, including retained pre-extraction rollback inputs.
+//! Bounded coordinator activation adapter. Caller identity is preserved.
 use super::*;
 use std::thread;
 
@@ -17,17 +17,12 @@ fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
 pub fn after_activation(root: &Path) -> Value {
     if !root.join("coord/config.json").exists() { return json!({"state":"disabled"}); }
     let result = (|| -> Result<Value> {
-        let state = state::load(root)?;
-        let binary = if state.selection.is_empty() {
-            "herdr-kit"
-        } else if let Some(revision) = state.selection.get("kit-coord") {
-            &state.package_releases.get(revision).and_then(|packages| packages.get("kit-coord"))
-                .and_then(|receipt| receipt.definition.binary.as_ref()).context("missing selected coordinator executable")?.name
-        } else { return Ok(json!({"state":"skipped","reason":"coordinator_not_selected"})); };
-        let mut command = Command::new(root.join("bin").join(binary));
+        let state: State = read_json(&state_path(root))?.context("suite is not installed")?;
+        if !state.selection.contains_key("kit-coord") {
+            return Ok(json!({"state":"skipped","reason":"coordinator_not_selected"}));
+        }
+        let mut command = Command::new(root.join("bin/kit-coord"));
         command.arg("--data-dir").arg(root);
-        // A retained legacy selection is a rollback artifact, never a new CLI alias.
-        if binary == "herdr-kit" { command.arg("coord"); }
         let mut child = command.args(["up", "--if-enabled"])
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
         let deadline = Instant::now() + Duration::from_secs(120);

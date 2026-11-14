@@ -96,6 +96,11 @@ pub trait Hc {
     fn get(&self, terminal: &str) -> Result<Option<Term>>;
     fn list(&self, all: bool, label: Option<(&str, &str)>) -> Result<Vec<String>>;
     fn send(&self, terminal: &str, text: &str) -> Result<SendOutcome>;
+    fn steer(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
+        let mut command = self.send_command(terminal, text);
+        command.args(["--if", "working"]);
+        json(&checked(execute(command, 90)?)?)
+    }
     fn send_command(&self, terminal: &str, text: &str) -> Command;
     fn label(&self, terminal: &str, labels: &[(&str, &str)]) -> Result<()>;
     fn kill(&self, terminal: &str) -> Result<()>;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset } from '../mods/herdr-kit-usage/model.js';
+import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset } from '../mods/kit-usage/model.js';
 const now = 10_000_000;
 const limit = (x={}) => ({id:'a',window:'5h',tier:null,unit:'percent',used_fraction:0.5,used:null,limit:null,remaining:null,unlimited:false,level:'ok',resets_at_ms:now+3600000,...x});
 const provider = (name,limits,extra={}) => ({provider:name,state:'available',error:null,fetched_at_ms:now-1000,stale:false,accounts:[{fetched_at_ms:now-1000,limits}],...extra});

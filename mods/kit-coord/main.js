@@ -3,7 +3,7 @@ import { ScrollHandle, InputState } from 'gpui-base';
 import { agents, props, openOverlay, closeOverlay, nextCommand, run, setShared } from 'herdr';
 import { MOD_NAME } from './runtime.js';
 import { store } from './store.js';
-import { boardModel, timelineModel, timelineWindow, moveSelection, reconcileSelection, actionCommand } from './model.js';
+import { boardModel, timelineModel, timelineWindow, moveSelection, reconcileSelection, actionCommand, statusbarModel } from './model.js';
 import { renderStatus } from './ui-status.js';
 import { renderBoard } from './ui-board.js';
 import { renderTimeline } from './ui-timeline.js';
@@ -13,6 +13,7 @@ export default class Coordinator extends View {
   init(_p, cx) {
     const p = props() || {};
     this.details = p.view === 'board' || (!p.view && !!p.overlay);
+    this.source = p.view === 'source';
     this.closed = false; this.width = 280; this.store = store;
     this.focus = cx.focus_handle(); this.scroll = ScrollHandle.new();
     this.ui = { view: p.tab === 'timeline' ? 'timeline' : 'board', selectedKey: null,
@@ -37,7 +38,33 @@ export default class Coordinator extends View {
         store.refresh(cx, 'status', true); store.watch(cx, this);
         cx.timer.every(20000, cx => { if (!this.closed) store.refresh(cx, 'status'); });
         cx.timer.every(60000, cx => cx.notify());
-        cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.openBoard('board'); else if (command === 'clear-context') store.restart(cx); else if (command === 'restart-now') store.restart(cx, true); else if (command === 'restart') { this.openBoard('board'); if (!store.restartPending) store.restart(cx); } else if (command === 'timeline') { if (store.overlay && !store.overlay.closed) store.overlay.key({key:'t'},cx,true); else this.openBoard('timeline'); } else if (command === 'focus') this.focus.focus(); else if (store.overlay && !store.overlay.closed) { const keys = {up:'up',down:'down',home:'home',end:'end','page-up':'pageup','page-down':'pagedown',right:'right',left:'left',space:'space',enter:'enter',board:'b',refresh:'r',all:'a',log:'l',peek:'p',scope:'s',copy:'c','clear-scope':'x',filter:'/'}; const key = keys[command]; if (key) store.overlay.key({key}, cx, true); } setShared('herdr-kit.coord.command', ++commandRevision); } });
+        cx.spawn(async cx => {
+          while (!this.closed) {
+            const command = await nextCommand();
+            if (this.closed) break;
+            if (command === 'show') this.openBoard('board');
+            else if (command === 'start-coordinator') store.up(cx);
+            else if (command === 'reread-status') store.refresh(cx, 'status', true);
+            else if (command === 'clear-context') store.restart(cx);
+            else if (command === 'restart-now') store.restart(cx, true);
+            else if (command === 'restart') {
+              this.openBoard('board');
+              if (!store.restartPending) store.restart(cx);
+            } else if (command === 'timeline') {
+              if (store.overlay && !store.overlay.closed) store.overlay.key({key:'t'}, cx, true);
+              else this.openBoard('timeline');
+            } else if (command === 'focus') this.focus.focus();
+            else if (store.overlay && !store.overlay.closed) {
+              const keys = {up:'up',down:'down',home:'home',end:'end',
+                'page-up':'pageup','page-down':'pagedown',right:'right',left:'left',
+                space:'space',enter:'enter',board:'b',refresh:'r',all:'a',log:'l',
+                peek:'p',scope:'s',copy:'c','clear-scope':'x',filter:'/'};
+              const key = keys[command];
+              if (key) store.overlay.key({key}, cx, true);
+            }
+            setShared('herdr-kit.coord.command', ++commandRevision);
+          }
+        });
       }
     }
   }
@@ -125,6 +152,13 @@ export default class Coordinator extends View {
     if (index >= 0) this.selectionIndex = index;
   }
   render() {
+    if (!this.details) {
+      const vm = statusbarModel(store.status, {width:80, now:Date.now(), starting:store.starting, failed:store.failed, failures:store.failures, lastOkMs:store.status?.generated_at_ms, error:store.error});
+      const readout = {schema_version:1, mod:MOD_NAME, ...vm, icon_path:`mods/${MOD_NAME}/${vm.icon}`};
+      const encoded = JSON.stringify(readout);
+      if (encoded !== this.published) { this.published = encoded; setShared('herdr-kit.coord.readout.v1',readout); }
+    }
+    if (this.source) return div().w(0).h(0);
     if (!store.restartPending || store.status?.state !== 'running') this.confirmRestart = false;
     this.ui.now = Date.now(); this.ui.liveAgents = new Map(agents().map(a => [a.address,a.status]));
     this.reconcile();

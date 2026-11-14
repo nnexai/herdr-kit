@@ -1,11 +1,11 @@
-import { View, div, svg } from 'gpui-kit';
+import { View, div } from 'gpui-kit';
 import { h_flex, v_flex, Button, ScrollHandle } from 'gpui-base';
-import { agents, spaces, theme, props, shared, setShared, exec, openOverlay, closeOverlay, nextCommand } from 'herdr';
+import { agents, theme, props, shared, setShared, exec, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { BINARY, DATA_DIR, MOD_NAME } from './runtime.js';
 import { decodeSnapshot, views, summary, bestSegment, usedFraction, value, label, credits, pace, staleLimit, span, reset, errorText, formatTime, formatDateTime } from './model.js';
 
 const KEY = 'herdr-kit.usage.snapshot.v1';
-let strips = 0, inflight = false, maintaining = false, validated = false, dialog = null;
+let strips = 0, inflight = false, validated = false, dialog = null;
 const args = () => DATA_DIR ? ['--data-dir', DATA_DIR] : [];
 const working = () => agents().some(a => a.status === 'working');
 function readShared() { try { const s = shared(KEY); return s ? decodeSnapshot(JSON.stringify(s)) : null; } catch (_) { return null; } }
@@ -19,12 +19,12 @@ export default class Usage extends View {
   init(_p,cx) {
     const p = props() ?? {};
     this.details = p.view === 'details' || (!p.view && !!p.overlay);
+    this.source = p.view === 'source';
     this.handle = cx.focus_handle(); this.width = 1000; this.lastRead = 0; this.collectingSince = 0; this.lastWorking = working(); this.failed = false; this.closed = false;
     if (this.details) { this.scroll = ScrollHandle.new(); this.scrollFocus = cx.focus_handle(); this.scrollIndex = 0; }
     if (this.details) { if (p?.overlay) dialog = p.overlay; this.handle.focus(); }
     else strips++;
     if (!this.details || strips === 0) this.read(cx);
-    if (!this.details) { this.maintain(cx); cx.timer.every(21600000, cx => this.maintain(cx)); }
     cx.timer.every(3000, cx => {
       const active = !this.details || strips === 0;
       if (!active) return;
@@ -45,16 +45,12 @@ export default class Usage extends View {
     this.lastRead = Date.now(); inflight = true;
     cx.spawn(async cx => {
       try {
-        const result = await exec(BINARY,[...args(),'usage','snapshot','--json',...(working() ? ['--agents-working'] : [])],{timeout:45000});
+        const result = await exec(BINARY,[...args(),'snapshot','--json',...(working() ? ['--agents-working'] : [])],{timeout:45000});
         if (result.code !== 0) throw new Error('unavailable');
         const snapshot = decodeSnapshot(result.stdout); validated = true; this.failed = false; setShared(KEY,snapshot);
       } catch (_) { this.failed = true; validated = false; }
       finally { inflight = false; cx.notify(); }
     });
-  }
-  maintain(cx) {
-    if (maintaining) return; maintaining = true;
-    cx.spawn(async () => { try { await exec(BINARY,[...args(),'update','maintain'],{timeout:600000}); } catch (_) {} finally { maintaining = false; } });
   }
   statusbar(snapshot,offline,t,now) {
     const all = views(snapshot,now,offline);
@@ -63,7 +59,17 @@ export default class Usage extends View {
     const worst = summary(all);
     const selected = worst && (bestSegment(worst.segments,true) || bestSegment(worst.segments));
     const description = fullLabel(all,offline);
-    const readout = Button.new('usage-readout').track_focus(this.handle).tab_index(0)
+    const amount = selected ? value(selected.limit)+(selected.stale ? ' ~' : '') : worst?.provider.state === 'unsupported' ? 'n/a' : '—';
+    const readout = {
+      schema_version:1, mod:MOD_NAME, label:description,
+      state:snapshot ? 'ready' : this.failed ? 'unavailable' : 'loading',
+      provider:worst?.name ?? null, amount, additional:Math.max(0,visible.length-1),
+      role:selected?.used > .95 ? 'blocked' : selected?.used > .8 ? 'working' : 'dim',
+    };
+    const encoded = JSON.stringify(readout);
+    if (encoded !== this.published) { this.published = encoded; setShared('herdr-kit.usage.readout.v1',readout); }
+    if (this.source) return div().w(0).h(0);
+    const button = Button.new('usage-readout').track_focus(this.handle).tab_index(0)
       .w(Math.min(narrow ? 120 : 200, Math.max(0, this.width - 16))).flex_shrink_0().h(26).px(6).items_center().justify_end().overflow_hidden()
       .bg(t.chrome).rounded(3).border(1)
       .border_color(this.handle.is_focused() ? t.accent : t.chrome)
@@ -71,32 +77,18 @@ export default class Usage extends View {
       .text_size(11.8).text_color(t.dim).tooltip(description)
       .accessibility_label(description).on_click(() => this.open());
     if (!snapshot) {
-      readout.child(this.failed ? 'Limits unavailable' : 'Limits …');
+      button.child(this.failed ? 'Limits unavailable' : 'Limits …');
     } else if (!visible.length) {
-      readout.child('Limits');
+      button.child('Limits');
     } else {
-      const amount = selected ? value(selected.limit)+(selected.stale ? ' ~' : '') : worst?.provider.state === 'unsupported' ? 'n/a' : '—';
-      readout.child(h_flex().gap(5).items_center()
+      button.child(h_flex().gap(5).items_center()
         .child('Limits')
         .when(!narrow && Boolean(worst),el => el.child(div().text_color(t.muted).child(worst.name)))
         .child(div().text_color(selected?.used > .8 ? segmentColor(selected,t) : t.dim).child(amount))
         .when(visible.length > 1 && this.width >= 120,el => el.child(`+${visible.length-1}`)));
     }
-    const space = spaces().find(s => s.active);
-    const list = agents();
-    const needs = list.filter(a => a.status === 'blocked').length;
-    const statusLabel = (icon,text) => h_flex().min_w(0).gap(6).items_center()
-      .child(svg(`mods/${MOD_NAME}/${icon}.svg`).size(13))
-      .child(div().flex_1().min_w(0).truncate().child(text));
-    const left = h_flex().flex_1().min_w(0).gap(8).items_center().overflow_hidden()
-      .child(statusLabel(space?.machine ? 'server' : 'monitor',space?.machine ?? 'This computer').flex_initial())
-      .when(Boolean(space?.branch),el => el.child(div().max_w(160).min_w(0).flex_initial().child(statusLabel('branch',space.branch))))
-      .child(h_flex().flex_shrink_0().gap(6).items_center()
-        .child(div().size(6).rounded(3).bg(t.dim)).child(`${list.length} agents`)
-        .when(needs > 0,el => el.child(div().text_color(t.blocked).child(`· ${needs} needs you`))));
-    return h_flex().size_full().px(8).gap(8).items_center().bg(t.chrome)
-      .border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted)
-      .child(left).child(readout);
+    return h_flex().size_full().items_center().justify_end().bg(t.chrome)
+      .border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted).child(button);
   }
   detailLimit(l, account, p, offline, t, now) {
     const stale = offline || p.stale || p.error !== null || staleLimit(l,account.fetched_at_ms,now), used = usedFraction(l), estimate = pace(l,now,stale), r = reset(l.resets_at_ms,now), c = credits(l,true);

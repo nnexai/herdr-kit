@@ -3,8 +3,8 @@
 A local Rust workspace with native JavaScript mods and a personal layout for
 [Herdr](https://herdr.dev). The approved modular extraction separates coordinator,
 usage and optional installation/update ownership without a mandatory kit-core.
-`kit-coord` now builds its own CLI and native mod; `kit-manager` retains the
-`herdr-kit` installer and legacy usage commands until the P3 usage cutover.
+`kit-coord` and `kit-usage` each own their CLI and native mod; optional
+`kit-manager` produces the `herdr-kit` installer. The layout composes them.
 This is not a Herdr fork or browser frontend.
 
 ![Herdr kit usage](preview.png)
@@ -17,7 +17,7 @@ Node is only needed for the pure model tests.
 
 ```sh
 cargo test --locked
-node --test tests/usage.test.js
+node --test tests/*.test.js
 cargo build --locked --release
 # Installation uses committed source, including Cargo.lock.
 ./target/release/herdr-kit install --source "$PWD" \
@@ -56,11 +56,10 @@ Cargo can access its configured dependency registry when a build needs it.
 This is a trusted **local source-build channel**, not an unsigned remote binary
 updater. Internet release downloads and release signing are not implemented.
 
-The usage strip requests maintenance at startup and every six hours. Rust
-allows a check once daily after success (one-hour failure backoff), under a
-cross-process manager lock. A new committed revision is automatically built
-and applied; unchanged or not-due checks do not rebuild. Maintenance checks
-stop when no mod is running. Usage reads never trigger update work.
+When selected, the layout bar requests optional manager maintenance at startup
+and every six hours. Rust schedules daily checks with one-hour failure backoff
+under a cross-process manager lock. Capability-only installs never request
+updates. Neither coordinator nor usage requires an installed manager.
 
 Each immutable release contains the executable and matching native assets.
 Mods have revision-specific names, and their generated runtime calls the exact
@@ -71,7 +70,7 @@ for personal layouts still referencing them. No automatic release deletion.
 
 After activation, the coordinator hook reports `skipped` with reason
 `forbidden_caller` when the invoking caller is not authorized to start it.
-This does not assert that the coordinator is running; inspect `coord status`
+This does not assert that the coordinator is running; inspect `kit-coord status`
 for its current state. Other hook failures remain failures.
 
 The tool records content hashes. Modified managed layouts, mods, executables
@@ -81,7 +80,7 @@ layout click state are not owned by the updater. One app home is registered
 per data directory; use an explicit separate data directory for an independent
 installation.
 
-### Selected component installation (P1)
+### Selected component installation
 
 `kit-packages.json` declares artifact ownership and the default `herdr-kit`
 bundle. Omit `--component` to install the existing complete suite. An exact
@@ -99,25 +98,19 @@ The JSON response returns `components` and `resolved_mods`; the external layout
 owner chooses when to reference that exact generation. `kit-coord`, `kit-usage`,
 `kit-coord-ui`, `kit-manager` and layout assets (`herdr-kit`) are separately
 selected. `kit-coord-ui` requires only kit-coord, never kit-usage; selecting it
-includes its declared coordinator dependency at the same pinned revision. In this
-transitional P1 release, capability selections still supply the **direct legacy**
-`herdr-kit` executable and retain their existing mod bases. This is packaging
-independence, not the final standalone `kit-coord`/`kit-usage` acceptance proof.
+includes its coordinator dependency at the same pinned revision. Neither
+capability installs the updater or another layout.
 
-`update apply --component NAME` limits changes to an already selected package;
-omitting it updates the owned selection. While multiple P1 components share the
-legacy binary, incompatible revision combinations refuse activation: update
-that shared set together until its vertical extraction. Rollback always restores
-the complete previous selection. Retained immutable mods are not deleted.
-Runtime injection and layout reference selection are structural; JS protocol
-keys are never globally renamed. Owned file/mod drift and even identical unowned
-collisions refuse replacement. No install switches layouts or starts an agent
-unless the selected coordinator's existing enabled activation policy applies.
+`update apply --component NAME` changes only selected components; omit it to
+update the owned set. UI/coordinator dependency pins advance together.
+Ordinary rollback restores the previous current-format selection, not a legacy
+installation. Runtime bindings and layout projection are structural; protocol
+keys are never globally renamed. Drift and unowned collisions refuse replacement.
 
-The first incompatible workspace deployment requires a person-owned source
-freeze and the verified new manager. See the
-[P1 release runbook](docs/coordinator/monorepo-p1.md); do not let the old installed
-builder consume the new source format.
+The initial modular deployment is a **clean replacement**, not a migration.
+The person stops the old coordinator/watcher and reopens fresh ones; see the
+[exact package/install guide](docs/coordinator/monorepo-p2.md). Legacy receipt
+envelopes, old-writer round trips, old namespaces and migration gates are removed.
 
 ## Usage statusbar
 
@@ -132,10 +125,10 @@ Rust runs `omp usage --json --redact --no-extensions`, then keeps only anonymous
 allowlisted quotas for Codex, Claude and Copilot. OMP owns authentication and
 may refresh its existing credentials; herdr-kit does not read credentials or
 make separate provider quota calls. Override source discovery with
-`HERDR_KIT_OMP_EXECUTABLE` or `usage snapshot --omp-executable PATH`.
+`KIT_USAGE_OMP_EXECUTABLE` or `kit-usage snapshot --omp-executable PATH`.
 
 ```sh
-<data-dir>/bin/herdr-kit usage snapshot --json --agents-working
+<data-dir>/bin/kit-usage snapshot --json --agents-working
 ```
 
 Source checks are spaced five minutes while idle, one minute after success
@@ -153,7 +146,7 @@ The coordinator helps a person organize agent work in workstreams and tasks.
 It keeps the coordinator and its watcher visible in Herdr terminals, with a
 status icon that can start the watcher when it is not running.
 
-Use [the standalone package and cutover guide](docs/coordinator/monorepo-p2.md)
+Use [the standalone package and clean-install guide](docs/coordinator/monorepo-p2.md)
 to include only kit-coord in another layout, without usage, this layout or an
 installed updater. It keeps the existing parent data root and `coord/` paths.
 Explicit overrides are `KIT_COORD_DATA_DIR`, `KIT_COORD_HC` and
@@ -227,7 +220,7 @@ kit-coord say --text 'A message for the coordinator'
 `say` is person-only and always targets the recorded coordinator, never a
 delegate. It sends the text unchanged through supported `hc send`, under the
 same terminal lock as watcher delivery. `--question QID` records an answer
-only after confirmed delivery. Use `coord task send` for delegates.
+only after confirmed delivery. Use `kit-coord task send` for delegates.
 
 `conversation` projects the exact current coordinator OMP session's active
 branch. It excludes thinking, tool results, intermediate tool-use replies,
@@ -240,18 +233,18 @@ coordinator is unavailable, it keeps the draft and shows a clear state.
 
 State lives under `<data-dir>/coord/`, including the append-only journal,
 configuration, roles and task files. Use `--role coord-design` on
-`coord task start` for UI/UX and visual design: it starts `omp --model @design`,
+`kit-coord task start` for UI/UX and visual design: it starts `omp --model @design`,
 so OMP resolves the person's configured design model without naming a model
 for every task. `coord-deep` uses `@slow` for open technical problems, not the
 design model role.
 
-`coord roles` lists effective roles and model selectors; `coord roles
+`kit-coord roles` lists effective roles and model selectors; `kit-coord roles
 coord-design` shows its commands without launching anything. Built-in roles
 can be overridden with files in `coord/roles/`, or new named roles can select
 any OMP `@role` or explicit model. See [roles and models](docs/coordinator-spec.md#roles-and-models)
 for a complete role-file example, resume rules and statistics limitations.
 Autostart is controlled by coordinator configuration. The watcher is a
-`coord watch` subcommand running in an hc terminal, not a hidden service.
+`kit-coord watch` subcommand running in an hc terminal, not a hidden service.
 
 The coordinator never closes spaces created by the person, never types into
 startup dialogs, and does not reopen a coordinator tab the person closed.
@@ -264,12 +257,13 @@ and safety rules.
 
 - `Cargo.toml`: workspace, shared dependency versions and lockfile; no kit-core.
 - `kit-packages.json`: explicit packages, binary/mod/layout ownership and bundle.
-- `crates/kit-manager/src/main.rs`: manager CLI and legacy usage until P3.
+- `crates/kit-manager/src/main.rs`: optional installation/update CLI only.
 - `crates/kit-coord/`: independent coordinator CLI, engine, roles and fixtures.
 - `mods/kit-coord/`: independent native status, Board and Timeline.
-- `crates/kit-manager/src/usage*`: direct legacy usage implementation until P3.
+- `crates/kit-usage/`: independent usage CLI, bounded OMP adapter and cache.
 - `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
-- `mods/herdr-kit-usage/`: native GPUI presentation and pure view model.
+- `mods/kit-usage/`: native GPUI presentation and pure view model.
+- `mods/herdr-kit-bar/`: host chrome, readout composition and optional maintenance.
 - `layouts/herdr-kit.json`: managed personal layout, built-in mods reused.
 
 Independent capabilities belong in their own vertical packages, not behind an

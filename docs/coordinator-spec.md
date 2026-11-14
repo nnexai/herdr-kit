@@ -263,6 +263,11 @@ Rules that follow:
 
 - The first message always goes in the start command, never as a send after launch.
 - Nothing is ever sent to a terminal until it has completed its first turn (`turn` ≥ 1). This applies to nudges and to `task send`.
+- Once ready, a working OMP delegate accepts `task send` immediately as a
+  paste-plus-Enter steering message, guarded by `hc send --if working`.
+  JSON distinguishes `delivery: "steering"` / `steered: true` from
+  `delivery: "new_turn"` / `steered: false`. Blocked/permission prompts remain
+  person-owned and refuse delivery; no force flag is used.
 - A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person. The system does not answer dialogs.
 - Role files may carry harness flags that avoid dialogs where the harness offers them.
 
@@ -335,14 +340,19 @@ output is readable with `hc read`, and it is visible like any other terminal.
 
 ### Updates
 
-herdr-kit already builds and activates new releases on its own. The
-coordinator parts follow that without a separate mechanism:
+kit-coord does not read manager state or depend on an installed updater.
 
-- **Watcher:** its heartbeat records the release it runs from. `kit-coord up` compares that with the active release and, if they differ, ends the old watcher and starts the new one in the same tab. `update apply` and `update rollback` run `kit-coord up` after activation, so the watcher is replaced immediately. This is safe at any moment because the watcher holds no state.
-- **CLI used by agents:** agents call the stable `<data-dir>/bin/herdr-kit` path, so they pick up the new release on their next call.
-- **Roles and the coordinator brief:** built-in defaults change with the release; a running session keeps what it started with. The coordinator picks them up at its next restart; the update appends a `decision` entry so the reason for a requested handoff is visible.
-- **Mod:** replaced by the existing generation mechanism.
-- **Journal:** every entry carries a format version. A new release must read all older entries; it never rewrites them.
+- **Watcher:** records its actual embedded build revision and reads only the
+  public `R/kit-coord/active.json` descriptor. A changed ready target is execed
+  from its immutable path in the same terminal; invalid targets degrade health.
+- **CLI used by agents:** generated commands use stable `R/bin/kit-coord`, or
+  the actual executable in a manual standalone install.
+- **Roles and coordinator brief:** compiled defaults move with kit-coord;
+  running sessions retain their initial context until the person replaces them.
+- **Mod:** matching generation-specific assets/runtime, never cross-mod imports.
+- **Initial extraction:** clean replacement with fresh sessions. Old journals,
+  receipt envelopes, CLI namespaces and schemas have no migration guarantee.
+  See [the exact installation guide](coordinator/monorepo-p2.md).
 
 ## 7. Coordinator session
 

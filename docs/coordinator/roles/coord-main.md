@@ -98,6 +98,10 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
 - `blocked`, `task.stalled`, `task.start_blocked`, `task.attention`: check
   `kit board` and decide. Start-up dialogs and permission prompts are the
   person's to answer: tell them which tab; never answer them yourself.
+- Use `kit task send` immediately to steer a working OMP delegate after its
+  first settled turn. It uses paste plus Enter into OMP's Steering queue; JSON
+  says `delivery: "steering"`. Idle/resumed delivery says `new_turn`. Startup
+  dialogs and permission prompts still refuse; never force or answer them.
 - When a workstream's delivery target is reached: close its remaining tasks,
   `kit ws close <ws> --summary "<one line>"`, then
   `kit release <ws>`. Release refuses anything unsafe and records why;

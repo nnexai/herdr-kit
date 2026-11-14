@@ -124,6 +124,52 @@ fn delegate_start_report_and_send_readiness() {
 }
 
 #[test]
+fn task_send_steers_working_omp_after_readiness_but_not_startup_or_permission_prompts() {
+    let h = Harness::new();
+    let ws = h.open();
+    let task = format!("{ws}-t1");
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Complete the task").unwrap();
+    let roles = h.root().join("data/coord/roles");
+    fs::create_dir_all(&roles).unwrap();
+    fs::write(roles.join("test.md"), "---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nInstructions\n").unwrap();
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value = serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    term["status"]["state"] = json!("working");
+    term["turn"] = json!(0);
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+    h.ok(&["task","start","--ws",&ws,"--rung","3","--reason","work","--brief",brief.to_str().unwrap(),"--role","test","--space","existing","--reject","1=no","--reject","2=no"]);
+    let startup = h.run(&["task","send",&task,"--text","not yet"]);
+    assert_eq!(startup.status.code(), Some(4));
+    assert!(!h.calls("hc").lines().any(|line| line.contains("\tsend\t")));
+    term["turn"] = json!(1);
+    h.queue("hc", "get", &term);
+    h.queue("hc", "send", &json!({"turn":1,"started":false,"status":"working"}));
+    let steered = h.ok(&["task","send",&task,"--text","also check the tests"]);
+    assert_eq!(steered["delivery"], "steering");
+    assert_eq!(steered["steered"], true);
+    let calls = h.calls("hc");
+    let send = calls.lines().find(|line| line.contains("\tsend\t")).unwrap();
+    assert!(send.contains("also check the tests"));
+    assert!(calls.contains("\t--if\tworking\n"), "{calls}");
+    assert!(!calls.contains("--force"));
+    term["status"]["state"] = json!("blocked");
+    h.queue("hc", "get", &term);
+    let blocked = h.run(&["task","send",&task,"--text","never answer this prompt"]);
+    assert_eq!(blocked.status.code(), Some(3));
+    assert_eq!(serde_json::from_slice::<Value>(&blocked.stderr).unwrap()["error"]["code"], "agent_blocked");
+    assert_eq!(h.calls("hc").lines().filter(|line| line.contains("\tsend\t")).count(), 1);
+    term["status"]["state"] = json!("idle");
+    h.queue("hc", "get", &term);
+    let next = h.ok(&["task","send",&task,"--text","next task"]);
+    assert_eq!(next["delivery"], "new_turn");
+    assert_eq!(next["steered"], false);
+}
+
+#[test]
 fn compact_run_with_failed_get_keeps_recovery_intents() {
     let h=Harness::new(); let ws=h.open();
     let roles=h.root().join("data/coord/roles"); fs::create_dir_all(&roles).unwrap();

@@ -1,6 +1,5 @@
-//! Trusted local-source component builds and recoverable owned-artifact activation.
-//! Capability engines remain direct legacy implementations until their vertical
-//! extraction phases. A component-only install never owns a consumer layout.
+//! Trusted local-source component builds and owned-artifact activation.
+//! Component installs do not own consumer layouts.
 
 use anyhow::{Context, Result, bail, ensure};
 use fs2::FileExt;
@@ -17,51 +16,26 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod packages;
 mod activation;
 pub use activation::after_activation;
-mod state;
 use packages::*;
 
 const DAY: u64 = 86_400;
 const BACKOFF: u64 = 3_600;
-const LEGACY_MODS: &[&str] = &["herdr-kit-usage", "herdr-kit-coord", "kit-coord-ui"];
-const LEGACY_MOD: &str = "herdr-kit-usage";
 
 #[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct State {
     source: Option<PathBuf>,
     app_home: Option<PathBuf>,
     current: Option<String>,
     previous: Option<String>,
-    #[serde(default)]
-    releases: BTreeMap<String, BTreeMap<String, String>>,
-    #[serde(default)]
-    managed_mods: Vec<String>,
-    #[serde(default)]
     next_check: u64,
-    #[serde(default)]
     selection: BTreeMap<String, String>,
-    #[serde(default)]
     previous_selection: Option<BTreeMap<String, String>>,
-    #[serde(default)]
     package_releases: BTreeMap<String, BTreeMap<String, PackageReceipt>>,
-    #[serde(default)]
     files: BTreeMap<PathBuf, FileReceipt>,
-    #[serde(default)]
     mod_owners: BTreeMap<PathBuf, BTreeMap<String, String>>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct LegacyJournal {
-    state: State,
-    old_layout: Option<String>,
-    old_binary: Option<String>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum Journal {
-    Components(Transaction),
-    Legacy(LegacyJournal),
-}
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
@@ -223,28 +197,6 @@ fn layout(home: &Path) -> PathBuf { home.join("layouts/herdr-kit.json") }
 fn bootstrap(data: &Path) -> PathBuf { data.join("bin/herdr-kit") }
 fn mod_path(home: &Path, base: &str, rev: &str) -> PathBuf { home.join("mods").join(name(base, rev)) }
 
-fn release_mods(release_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
-    let mods = release_dir.join("mods");
-    no_links(&mods)?;
-    if mods.exists() {
-        let mut result = Vec::new();
-        for entry in fs::read_dir(&mods)? {
-            let entry = entry?;
-            ensure!(entry.file_type()?.is_dir(), "invalid release mod");
-            let base = entry.file_name().into_string().map_err(|_| anyhow::anyhow!("invalid release mod name"))?;
-            ensure!(LEGACY_MODS.contains(&base.as_str()), "unknown legacy release mod: {base}");
-            result.push((base, entry.path()));
-        }
-        result.sort_by(|a, b| a.0.cmp(&b.0));
-        ensure!(!result.is_empty(), "missing release mods");
-        Ok(result)
-    } else {
-        let legacy = release_dir.join("mod");
-        no_links(&legacy)?;
-        ensure!(legacy.is_dir(), "missing release mods");
-        Ok(vec![(LEGACY_MOD.to_owned(), legacy)])
-    }
-}
 
 mod deployment;
 pub use deployment::{install, source, status, update};

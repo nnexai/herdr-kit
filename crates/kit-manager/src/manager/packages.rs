@@ -46,29 +46,8 @@ pub(super) fn identifier(value: &str) -> Result<()> {
 impl Catalog {
     pub fn load(source: &Path) -> Result<Self> {
         let path = source.join("kit-packages.json");
-        let catalog: Self = if path.exists() {
-            serde_json::from_slice(&fs::read(path)?)?
-        } else {
-            // Committed pre-workspace source is a supported rollback input, not
-            // a runtime alias. Its direct engines still belong to herdr-kit.
-            let mut old: Self =
-                serde_json::from_str(include_str!("legacy-packages.json"))?;
-            for package in old.packages.values_mut() {
-                if let Some(binary) = &mut package.binary {
-                    binary.cargo_package = "herdr-kit".into();
-                }
-            }
-            old.packages.retain(|_, package| {
-                package
-                    .mods
-                    .iter()
-                    .all(|base| source.join("mods").join(base).is_dir())
-            });
-            for packages in old.bundles.values_mut() {
-                packages.retain(|id| old.packages.contains_key(id));
-            }
-            old
-        };
+        let catalog: Self = serde_json::from_slice(&fs::read(path)
+            .context("committed kit-packages.json is required")?)?;
         ensure!(
             catalog.schema_version == 1,
             "unsupported package catalog schema"
@@ -83,8 +62,9 @@ impl Catalog {
             ensure!(
                 package.mods.is_empty()
                     || package.binary.is_some()
-                    || package.runtime_package.is_some(),
-                "mod package requires an executable binding"
+                    || package.runtime_package.is_some()
+                    || package.layout.is_some(),
+                "capability mod package requires an executable binding"
             );
             for base in &package.mods {
                 identifier(base)?;
@@ -225,17 +205,27 @@ pub(super) fn project_layout(
     value: &mut Value,
     known: &std::collections::BTreeSet<String>,
     bindings: &BTreeMap<String, String>,
+    manager: Option<&Path>,
+    data: &Path,
 ) -> bool {
     if let Some(base) = value.pointer("/content/mod").and_then(Value::as_str) {
         if known.contains(base) {
             let Some(name) = bindings.get(base) else {
                 return false;
             };
+            if base == "herdr-kit-bar" {
+                value["content"]["props"] = json!({
+                    "coord_mod": bindings.get("kit-coord"),
+                    "usage_mod": bindings.get("kit-usage"),
+                    "manager": manager,
+                    "data_dir": data,
+                });
+            }
             value["content"]["mod"] = json!(name);
         }
     }
     if let Some(children) = value.get_mut("children").and_then(Value::as_array_mut) {
-        children.retain_mut(|child| project_layout(child, known, bindings));
+        children.retain_mut(|child| project_layout(child, known, bindings, manager, data));
     }
     true
 }

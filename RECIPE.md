@@ -1,9 +1,9 @@
 # Herdr Kit
 
 A native Herdr workbench with a compact bottom-right subscription readout and
-agent coordinator. P1 packages the existing command in a Rust workspace with
-selected-artifact installation; independent capability cutovers follow the
-[approved monorepo plan](docs/coordinator/standalone-mod-plan.md).
+agent coordinator. Independent kit-coord and kit-usage packages work without
+each other or the optional manager. The layout composes their readouts; see the
+[package guide](docs/coordinator/monorepo-p2.md).
 
 ![Herdr Kit](preview.png)
 
@@ -27,14 +27,13 @@ anonymous snapshot instead of creating another collection loop. Escape or
 Close dismisses it without terminal input. Changing Spaces does not retarget
 local usage to a remote machine.
 
-A separate gentle maintenance invocation checks the configured trusted local
-Git source and builds only committed revisions. Rust schedules it once a day.
-It updates the single tool, managed mods and default layout as a versioned
-suite. User clones and personal settings/shortcuts remain untouched.
+Only the layout integration requests optional manager maintenance. It checks
+the trusted local Git source and builds selected committed packages. Neither
+capability requires or invokes an updater. User layouts/settings stay untouched.
 
 The coordinator keeps workstreams, tasks, decisions and reports in an
-append-only local journal. The person controls it with `coord up`, `coord down`
-and `coord status`; the status icon can start its visible watcher terminal.
+append-only local journal. The person controls it with `kit-coord up`, `kit-coord down`
+and `kit-coord status`; the status icon can start its visible watcher terminal.
 People and the coordinator manage work, delegates report on their own tasks,
 and the board, log, inbox, roles and statistics are readable by all callers.
 Only the person changes configuration or rates outcomes. The data directory's
@@ -48,13 +47,14 @@ outcome and rating records support `kit-coord stats --json`. See
 ## Built from
 
 - `layouts/herdr-kit.json`: custom layout retaining built-in mod references.
-- `mods/herdr-kit-usage`: native GPUI View, pure JS model, deployment runtime.
+- `mods/kit-usage`: native GPUI View, pure JS model, deployment runtime.
 - `mods/kit-coord`: native coordinator status, board and timeline.
 - `crates/kit-coord/`: independent kit-coord CLI, roles and fixtures.
-- `crates/kit-manager/src/usage*`: direct legacy OMP adapter/cache during P1.
+- `crates/kit-usage/`: independent OMP usage adapter/cache and CLI.
 - `crates/kit-manager/src/manager/`: selected committed-source builds, receipts,
   recoverable owned-artifact activation and complete-selection rollback.
 - `kit-packages.json`: package ownership, mod/runtime bindings and default bundle.
+- `mods/herdr-kit-bar/`: host chrome, published-readout composition and optional maintenance.
 - `herdr.exec`: explicit argv to the pinned release executable.
 - `herdr.openOverlay`, `props`, `theme`, `shared`, `nextCommand`: native UI.
 

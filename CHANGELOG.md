@@ -2,31 +2,22 @@
 
 ## Unreleased
 
-- Extract the independent `kit-coord` crate/CLI and native mod, keeping journal,
-  state, sessions and custom-role paths intact. Remove manager's coordinator
-  namespace and engine; retain usage on its legacy CLI until P3.
-- Bind coordinator identity to its actual build revision and public readiness
-  descriptor, not updater state. Validate watcher replacement targets, preserve
-  a degraded live watcher on invalid targets, and publish readiness last.
-- Migrate Mission Log, roles, prompts, report footers, watcher argv and bounded
-  manager hook together, with explicit kit-coord environment overrides and a
-  separately authorized person-drained live cutover.
-
-- Package the existing `herdr-kit` executable as workspace member `kit-manager`,
-  retaining direct legacy capability commands until their vertical cutovers.
-- Add committed component/bundle manifests, explicit selected installs and
-  full-revision pins, structural layout/runtime bindings, per-package receipts
-  and complete-selection rollback without claiming external layouts.
-- Preserve package ownership in canonical `package-state.json` across retained
-  legacy writers, with fingerprint-bound deployment recovery and readiness-last
-  multi-file crash recovery; missing activated releases remain drift, not repair.
-- Recover old and multi-artifact activation journals, refuse drift/unowned
-  collisions, and document person-owned source freeze and quiet main merge
-  controls for the first workspace deployment.
-
-- Record approved modular-monorepo P0 contracts and disposable native baseline:
-  populated Board/Timeline/Limits, missing-mod isolation, zero-space source
-  carrier lifecycle/command behavior, and person-owned cutover prerequisites.
+- Complete the mechanical P2–P4 split into independent kit-coord and kit-usage
+  CLI/mod packages, optional kit-manager, kit-coord-ui (coord-only dependency),
+  and the herdr-kit layout. No kit-core or legacy CLI aliases.
+- Move host chrome, readout composition and optional maintenance into the
+  layout's small bar. Capability producers keep their lifecycle and publish
+  generation-bound presentation snapshots; Limits remains flush right.
+- Remove legacy receipt envelopes, old-writer sidecars, catalog fallbacks,
+  migration journals and legacy rollback code. The initial modular deployment
+  is a person-arranged clean replacement with fresh coordinator/watcher.
+- Keep coordinator identity on its own build/ready descriptor, not manager state;
+  migrate prompts, reports, watcher argv and environment overrides together.
+- Let `task send` steer an already-ready working OMP delegate via paste+Enter,
+  report steering/new-turn delivery in JSON, and retain startup/permission
+  refusals. Update the coordinator prompt and add the CLI regression.
+- Record the earlier P0/P1 baseline; their migration/compatibility deployment
+  gates are superseded by the person's clean-replace decision.
 
 - Add the standalone `kit-coord-ui` Rail / Mission Log: a native coordinator
   conversation with truthful turn state, elapsed time, question draft pills,

@@ -819,7 +819,10 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
     };
     if let Some(term) = live {
         let _terminal_guard = ctx.terminal_lock(&term.address)?;
-        send_guard(&term)?;
+        let steered = term.live() && term.word() == Some("working")
+            && term.turn >= 1 && term.reported
+            && term.status.as_ref().and_then(|status| status.app.as_deref()) == Some("omp");
+        if !steered { send_guard(&term)?; }
         fs::write(&path, &message)?;
         let mut l = j.lock()?;
         let current = l
@@ -863,7 +866,11 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
             )],
         )?;
         drop(l);
-        let sent_result = ctx.hc.send(&term.address, &message);
+        let sent_result = if steered {
+            ctx.hc.steer(&term.address, &message)
+        } else {
+            ctx.hc.send(&term.address, &message)
+        };
         let sent = match sent_result {
             Ok(sent) => sent,
             Err(e) => {
@@ -880,7 +887,7 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
                 return Err(e);
             }
         };
-        return Ok(json!({"task":task,"sent":true,"turn":sent.turn,"started":sent.started}));
+        return Ok(json!({"task":task,"sent":true,"delivery":if steered {"steering"} else {"new_turn"},"steered":steered,"turn":sent.turn,"started":sent.started}));
     }
     let session = t
         .session
@@ -1041,7 +1048,7 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
         )],
     )?;
     Ok(
-        json!({"task":task,"state":"running","terminal":launched.term.address,"space":space,"tab":launched.tab,"session":launched.session.and_then(|s|s.id)}),
+        json!({"task":task,"state":"running","delivery":"new_turn","steered":false,"terminal":launched.term.address,"space":space,"tab":launched.tab,"session":launched.session.and_then(|s|s.id)}),
     )
 }
 pub fn task_close(
