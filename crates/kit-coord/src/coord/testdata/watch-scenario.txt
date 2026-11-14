@@ -1,0 +1,2455 @@
+
+== +0s the watcher starts; the coordinator and four delegates are running, a fifth task never launched
+#1 +0ms "watcher" watcher.started - - {"pid":4000,"release":"r0","terminal":"w0"}
+#2 +0ms "watcher" watcher.stopped - - {"reason":"release_changed"}
+#3 +0ms "watcher" watcher.started - - {"pid":4001,"release":"r1"}
+#4 +0ms "cli" res.created - - {"folder":"<root>/coord/home","label":"coordinator","name":"sp-coord","type":"space"}
+#5 +0ms "cli" res.created - - {"name":"c1","space":"sp-coord","tab":"tab-c1","type":"tab"}
+#6 +0ms "cli" coord.session_started - - {"brief":"<root>/brief-c","created_ms":1799999999000,"pid":100,"reason":"start","release":"r1","role":"coord-main","space":"sp-coord","tab":"tab-c1","terminal":"c1"}
+#7 +0ms "coordinator" ws.opened ws-aaaaaa - {"delivery_branch":"main","delivery_target":"merged into main","purpose":"Scenario repository","repo":"<root>/repo","request":"Ship it","title":"Ship feature"}
+#8 +0ms "coordinator" task.placed ws-aaaaaa ws-aaaaaa-t1 {"brief":"<root>/brief","brief_bytes":12,"harness":"omp","reason":"scenario","rejected":[{"reason":"no session","rung":1}],"role":"omp-default","rung":2,"session":{"dir":"<root>/sessions/a1","id":"session-a1","mode":"dir"},"title":"Implement feature"}
+#9 +0ms "coordinator" res.created ws-aaaaaa ws-aaaaaa-t1 {"base":"main","name":"feature","repo":"<root>/repo","type":"branch"}
+#10 +0ms "coordinator" res.created ws-aaaaaa ws-aaaaaa-t1 {"branch":"feature","name":"<root>/trees/feature","repo":"<root>/repo","type":"worktree"}
+#11 +0ms "coordinator" res.created ws-aaaaaa ws-aaaaaa-t1 {"folder":"<root>/trees/feature","label":"repo · Ship feature","name":"sp-a","type":"space"}
+#12 +0ms "coordinator" res.created ws-aaaaaa ws-aaaaaa-t1 {"name":"d1","space":"sp-a","tab":"tab-d1","type":"tab"}
+#13 +0ms "coordinator" task.started ws-aaaaaa ws-aaaaaa-t1 {"created_ms":1799999999000,"cwd":"<root>/trees/feature","pid":201,"resumed":false,"session":{"dir":"<root>/sessions/a1","id":"session-a1","mode":"dir"},"space":"sp-a","tab":"tab-d1","tab_name":"task","terminal":"d1"}
+#14 +0ms "coordinator" ws.opened ws-bbbbbb - {"title":"Research"}
+#15 +0ms "coordinator" res.adopted ws-bbbbbb - {"folder":"<root>/person","name":"sp-person","type":"space"}
+#16 +0ms "coordinator" task.placed ws-bbbbbb ws-bbbbbb-t1 {"brief":"<root>/brief","brief_bytes":12,"harness":"omp","reason":"scenario","rejected":[{"reason":"no session","rung":1}],"role":"omp-default","rung":2,"session":null,"title":"Survey options"}
+#17 +0ms "coordinator" res.created ws-bbbbbb ws-bbbbbb-t1 {"name":"d2","space":"sp-person","tab":"tab-d2","type":"tab"}
+#18 +0ms "coordinator" task.started ws-bbbbbb ws-bbbbbb-t1 {"created_ms":1799999999000,"cwd":"<root>/person","pid":202,"resumed":false,"space":"sp-person","tab":"tab-d2","tab_name":"task","terminal":"d2"}
+#19 +0ms "coordinator" task.placed ws-bbbbbb ws-bbbbbb-t2 {"brief":"<root>/brief","brief_bytes":12,"harness":"omp","reason":"scenario","rejected":[{"reason":"no session","rung":1}],"role":"omp-default","rung":2,"session":null,"title":"Measure baseline"}
+#20 +0ms "coordinator" res.created ws-bbbbbb ws-bbbbbb-t2 {"name":"d3","space":"sp-person","tab":"tab-d3","type":"tab"}
+#21 +0ms "coordinator" task.started ws-bbbbbb ws-bbbbbb-t2 {"created_ms":1799999999000,"cwd":"<root>/person","pid":203,"resumed":false,"space":"sp-person","tab":"tab-d3","tab_name":"task","terminal":"d3"}
+#22 +0ms "coordinator" task.placed ws-bbbbbb ws-bbbbbb-t4 {"brief":"<root>/brief","brief_bytes":12,"harness":"omp","reason":"scenario","rejected":[{"reason":"no session","rung":1}],"role":"omp-default","rung":2,"session":{"id":"session-b4","mode":"dir"},"title":"Write summary"}
+#23 +0ms "coordinator" res.created ws-bbbbbb ws-bbbbbb-t4 {"name":"d4","space":"sp-person","tab":"tab-d4","type":"tab"}
+#24 +0ms "coordinator" task.started ws-bbbbbb ws-bbbbbb-t4 {"created_ms":1799999999000,"cwd":"<root>/person","pid":204,"resumed":false,"session":{"id":"session-b4","mode":"dir"},"space":"sp-person","tab":"tab-d4","tab_name":"task","terminal":"d4"}
+#25 +0ms "coordinator" task.placed ws-bbbbbb ws-bbbbbb-t3 {"brief":"<root>/brief","brief_bytes":12,"harness":"omp","reason":"scenario","rejected":[{"reason":"no session","rung":1}],"role":"omp-default","rung":2,"session":null,"title":"Never launched"}
+#26 +0ms "coordinator" res.intent ws-bbbbbb ws-bbbbbb-t3 {"name":"ws-bbbbbb-t3","space":"sp-person","type":"tab"}
+
+== +1s first tick records the turns already taken
+rule: Append { ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")), kind: TaskTurn { turn: 1, origin: Person, working_ms: None } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t2")), kind: TaskTurn { turn: 1, origin: Person, working_ms: None } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t4")), kind: TaskTurn { turn: 1, origin: Person, working_ms: None } }
+rule: Append { ws: None, task: None, kind: CoordTurn { turn: 1, origin: Person, working_ms: None } }
+#27 +1000ms "watcher" task.turn ws-aaaaaa ws-aaaaaa-t1 {"origin":"start","turn":1}
+#28 +1000ms "watcher" task.turn ws-bbbbbb ws-bbbbbb-t2 {"origin":"start","turn":1}
+#29 +1000ms "watcher" task.turn ws-bbbbbb ws-bbbbbb-t4 {"origin":"start","turn":1}
+#30 +1000ms "watcher" coord.turn - - {"origin":"start","turn":1}
+
+== +31s a delegate that never started its turn is start-blocked
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskStartBlocked { terminal: "d2", after_secs: 30 } }
+#31 +31000ms "watcher" task.start_blocked ws-bbbbbb ws-bbbbbb-t1 {"after_secs":30,"terminal":"d2"}
+
+== +32s a command holds the coordinator terminal; the inbox nudge waits
+rule: Send { terminal: "c1", text: "inbox: 1 new", record: NudgeSent { target: Coordinator, text: "inbox: 1 new", upto_seq: Some(31) }, ws: None, task: None }
+
+== +33s the coordinator is told about its inbox
+rule: Send { terminal: "c1", text: "inbox: 1 new", record: NudgeSent { target: Coordinator, text: "inbox: 1 new", upto_seq: Some(31) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 1 new
+#32 +33000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 1 new","upto_seq":31}
+
+== +45s the coordinator reads its inbox and finishes a turn
+call: hc get c1
+call: hc get c1
+#33 +45000ms "coordinator" inbox.drained - - {"count":1,"cursor":32}
+rule: Append { ws: None, task: None, kind: CoordTurn { turn: 2, origin: Inbox, working_ms: Some(3000) } }
+#34 +45000ms "watcher" coord.turn - - {"origin":"inbox","turn":2,"working_ms":3000}
+
+== +50s the start-blocked delegate begins working
+call: hc get d2
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskTurn { turn: 1, origin: Start, working_ms: Some(0) } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskAttention { state: Clear, msg: None } }
+#35 +50000ms "watcher" task.turn ws-bbbbbb ws-bbbbbb-t1 {"origin":"start","turn":1,"working_ms":0}
+#36 +50000ms "watcher" task.attention ws-bbbbbb ws-bbbbbb-t1 {"state":"clear"}
+
+== +114s an idle delegate is due a nudge, but its terminal now runs another process
+call: hc get d1
+rule: Send { terminal: "d1", text: "Please report your result or blocker using kit-coord report.", record: NudgeSent { target: Task, text: "Please report your result or blocker using kit-coord report.", upto_seq: None }, ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")) }
+call: hc get d1
+
+== +115s the delegate is nudged; the first delivery fails
+rule: Send { terminal: "d1", text: "Please report your result or blocker using kit-coord report.", record: NudgeSent { target: Task, text: "Please report your result or blocker using kit-coord report.", upto_seq: None }, ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")) }
+call: hc get d1
+call: hc send d1 Please report your result or blocker using kit-coord report.
+call: hc get c1
+call: hc send c1 inbox: 1 new
+#37 +115000ms "watcher" reconcile.finding ws-aaaaaa ws-aaaaaa-t1 {"code":"delivery_failed","summary":"Delivery to d1 failed: hc send failed: draft rejected"}
+#38 +115000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 1 new","upto_seq":37}
+
+== +144s one second before the delivery backoff ends: no retry
+rule: Send { terminal: "d1", text: "Please report your result or blocker using kit-coord report.", record: NudgeSent { target: Task, text: "Please report your result or blocker using kit-coord report.", upto_seq: None }, ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")) }
+
+== +145s the nudge is retried when the backoff ends
+rule: Send { terminal: "d1", text: "Please report your result or blocker using kit-coord report.", record: NudgeSent { target: Task, text: "Please report your result or blocker using kit-coord report.", upto_seq: None }, ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")) }
+call: hc get d1
+call: hc send d1 Please report your result or blocker using kit-coord report.
+#39 +145000ms "watcher" nudge.sent ws-aaaaaa ws-aaaaaa-t1 {"target":"task","text":"Please report your result or blocker using kit-coord report."}
+
+== +444s one second before the nudged delegate counts as stalled
+rule: none
+
+== +445s the nudged delegate stayed silent and is stalled
+rule: Append { ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")), kind: TaskStalled { silent_secs: 300, nudge_seq: 39 } }
+#40 +445000ms "watcher" task.stalled ws-aaaaaa ws-aaaaaa-t1 {"nudge_seq":39,"silent_secs":300}
+rule: Send { terminal: "c1", text: "inbox: 2 new", record: NudgeSent { target: Coordinator, text: "inbox: 2 new", upto_seq: Some(40) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 2 new
+#41 +445000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 2 new","upto_seq":40}
+
+== +500s the delegate reports that it is blocked
+#42 +500000ms "task:ws-aaaaaa-t1" task.reported ws-aaaaaa ws-aaaaaa-t1 {"outcome":"blocked","result":null,"summary":"Need deploy credentials"}
+#43 +500000ms "task:ws-aaaaaa-t1" task.progress ws-aaaaaa ws-aaaaaa-t1 {"summary":"Waiting for credentials"}
+rule: Send { terminal: "c1", text: "inbox: 3 new", record: NudgeSent { target: Coordinator, text: "inbox: 3 new", upto_seq: Some(42) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 3 new
+#44 +500000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 3 new","upto_seq":42}
+
+== +520s the coordinator acknowledges; the blocked item stays
+call: hc get c1
+#45 +520000ms "coordinator" inbox.drained - - {"count":3,"cursor":44}
+rule: Append { ws: None, task: None, kind: CoordTurn { turn: 3, origin: Inbox, working_ms: None } }
+#46 +520000ms "watcher" coord.turn - - {"origin":"inbox","turn":3}
+board: {
+  "attention": [
+    {
+      "id": "blocked-42",
+      "kind": "task_blocked",
+      "options": null,
+      "seq": 42,
+      "since_ms": 1800000500000,
+      "task": "ws-aaaaaa-t1",
+      "text": "Need deploy credentials",
+      "ws": "ws-aaaaaa"
+    }
+  ],
+  "generated_at_ms": 1800000520000,
+  "journal_seq": 46,
+  "schema_version": 1,
+  "workstreams": [
+    {
+      "closed_ms": null,
+      "delivery_target": "merged into main",
+      "id": "ws-aaaaaa",
+      "last_event_ms": 1800000500000,
+      "opened_ms": 1800000000000,
+      "repo": {
+        "name": "repo",
+        "path": "<root>/repo"
+      },
+      "retained": null,
+      "space": {
+        "id": "sp-a",
+        "name": "repo · Ship feature",
+        "owned": true
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-aaaaaa-t1",
+          "last_event_ms": 1800000500000,
+          "model": null,
+          "needs_you": true,
+          "nudges": 1,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": "blocked",
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-a",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "reported",
+          "state_since_ms": 1800000500000,
+          "summary": "Waiting for credentials",
+          "tab_id": "tab-d1",
+          "terminal": "d1",
+          "title": "Implement feature"
+        }
+      ],
+      "title": "Ship feature"
+    },
+    {
+      "closed_ms": null,
+      "delivery_target": null,
+      "id": "ws-bbbbbb",
+      "last_event_ms": 1800000050000,
+      "opened_ms": 1800000000000,
+      "repo": null,
+      "retained": null,
+      "space": {
+        "id": "sp-person",
+        "name": "sp-person",
+        "owned": false
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t1",
+          "last_event_ms": 1800000050000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d2",
+          "terminal": "d2",
+          "title": "Survey options"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t2",
+          "last_event_ms": 1800000001000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 2,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d3",
+          "terminal": "d3",
+          "title": "Measure baseline"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t4",
+          "last_event_ms": 1800000001000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 4,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d4",
+          "terminal": "d4",
+          "title": "Write summary"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t3",
+          "last_event_ms": 1800000000000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 3,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": null,
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": null,
+          "state": "placed",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": null,
+          "terminal": null,
+          "title": "Never launched"
+        }
+      ],
+      "title": "Research"
+    }
+  ]
+}
+board text:
+# Coordinator board
+
+Journal sequence: 46 (at 1800000520000)
+
+## Needs you
+- ws-aaaaaa-t1: Need deploy credentials — tab tab-d1, terminal d1, since 1800000500000 (0 min ago)
+
+## ws-aaaaaa — Ship feature
+- ws-aaaaaa-t1: Implement feature (Needs you) — Waiting for credentials
+
+## ws-bbbbbb — Research
+- ws-bbbbbb-t1: Survey options (Running)
+- ws-bbbbbb-t2: Measure baseline (Running)
+- ws-bbbbbb-t4: Write summary (Running)
+- ws-bbbbbb-t3: Never launched (Placed)
+
+
+== +1099s one second before the first blocked reminder
+rule: none
+
+== +1100s first blocked reminder
+rule: Send { terminal: "c1", text: "Blocked delegate ws-aaaaaa-t1 still needs attention: Need deploy credentials. Run kit board; ask the person with kit ask --task ws-aaaaaa-t1 if needed.", record: TaskBlockedReminder { task: TaskId("ws-aaaaaa-t1"), episode_seq: 42 }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 Blocked delegate ws-aaaaaa-t1 still needs attention: Need deploy credentials. Run kit board; ask the person with kit ask --task ws-aaaaaa-t1 if needed.
+#47 +1100000ms "watcher" task.blocked_reminder - - {"episode_seq":42,"task":"ws-aaaaaa-t1"}
+
+== +2299s the second reminder waits twice as long
+rule: none
+
+== +2300s second blocked reminder
+rule: Send { terminal: "c1", text: "Blocked delegate ws-aaaaaa-t1 still needs attention: Need deploy credentials. Run kit board; ask the person with kit ask --task ws-aaaaaa-t1 if needed.", record: TaskBlockedReminder { task: TaskId("ws-aaaaaa-t1"), episode_seq: 42 }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 Blocked delegate ws-aaaaaa-t1 still needs attention: Need deploy credentials. Run kit board; ask the person with kit ask --task ws-aaaaaa-t1 if needed.
+#48 +2300000ms "watcher" task.blocked_reminder - - {"episode_seq":42,"task":"ws-aaaaaa-t1"}
+
+== +2400s the coordinator asks the person; reminders pause
+#49 +2400000ms "coordinator" question.asked ws-aaaaaa ws-aaaaaa-t1 {"options":["staging","production"],"qid":"q1","text":"Which credentials?"}
+
+== +9000s no reminder while the person is asked
+rule: none
+board: {
+  "attention": [
+    {
+      "id": "blocked-42",
+      "kind": "task_blocked",
+      "options": [
+        "staging",
+        "production"
+      ],
+      "qid": "q1",
+      "seq": 42,
+      "since_ms": 1800000500000,
+      "task": "ws-aaaaaa-t1",
+      "text": "Need deploy credentials",
+      "ws": "ws-aaaaaa"
+    }
+  ],
+  "generated_at_ms": 1800009000000,
+  "journal_seq": 49,
+  "schema_version": 1,
+  "workstreams": [
+    {
+      "closed_ms": null,
+      "delivery_target": "merged into main",
+      "id": "ws-aaaaaa",
+      "last_event_ms": 1800002400000,
+      "opened_ms": 1800000000000,
+      "repo": {
+        "name": "repo",
+        "path": "<root>/repo"
+      },
+      "retained": null,
+      "space": {
+        "id": "sp-a",
+        "name": "repo · Ship feature",
+        "owned": true
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-aaaaaa-t1",
+          "last_event_ms": 1800002400000,
+          "model": null,
+          "needs_you": true,
+          "nudges": 1,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": "blocked",
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-a",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "reported",
+          "state_since_ms": 1800000500000,
+          "summary": "Waiting for credentials",
+          "tab_id": "tab-d1",
+          "terminal": "d1",
+          "title": "Implement feature"
+        }
+      ],
+      "title": "Ship feature"
+    },
+    {
+      "closed_ms": null,
+      "delivery_target": null,
+      "id": "ws-bbbbbb",
+      "last_event_ms": 1800000050000,
+      "opened_ms": 1800000000000,
+      "repo": null,
+      "retained": null,
+      "space": {
+        "id": "sp-person",
+        "name": "sp-person",
+        "owned": false
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t1",
+          "last_event_ms": 1800000050000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d2",
+          "terminal": "d2",
+          "title": "Survey options"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t2",
+          "last_event_ms": 1800000001000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 2,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d3",
+          "terminal": "d3",
+          "title": "Measure baseline"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t4",
+          "last_event_ms": 1800000001000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 4,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "running",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": "tab-d4",
+          "terminal": "d4",
+          "title": "Write summary"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t3",
+          "last_event_ms": 1800000000000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 3,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": null,
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": null,
+          "state": "placed",
+          "state_since_ms": 1800000000000,
+          "summary": null,
+          "tab_id": null,
+          "terminal": null,
+          "title": "Never launched"
+        }
+      ],
+      "title": "Research"
+    }
+  ]
+}
+board text:
+# Coordinator board
+
+Journal sequence: 49 (at 1800009000000)
+
+## Needs you
+- ws-aaaaaa-t1: Need deploy credentials — tab tab-d1, terminal d1, since 1800000500000 (141 min ago)
+
+## ws-aaaaaa — Ship feature
+- ws-aaaaaa-t1: Implement feature (Needs you) — Waiting for credentials
+
+## ws-bbbbbb — Research
+- ws-bbbbbb-t1: Survey options (Running)
+- ws-bbbbbb-t2: Measure baseline (Running)
+- ws-bbbbbb-t4: Write summary (Running)
+- ws-bbbbbb-t3: Never launched (Placed)
+
+
+== +9100s the person answers; the blocked item is resolved
+#50 +9100000ms "user" question.answered - - {"qid":"q1","text":"staging"}
+rule: none
+
+== +9200s a terminal asks for attention while a question is open, then continues
+call: hc get d2
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskAttention { state: Blocked, msg: Some("Approve the plan?") } }
+#51 +9200000ms "watcher" task.attention ws-bbbbbb ws-bbbbbb-t1 {"msg":"Approve the plan?","state":"blocked"}
+#52 +9200000ms "coordinator" question.asked ws-bbbbbb ws-bbbbbb-t1 {"qid":"q2","text":"Approve the plan?"}
+rule: Send { terminal: "c1", text: "inbox: 1 new", record: NudgeSent { target: Coordinator, text: "inbox: 1 new", upto_seq: Some(51) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 1 new
+#53 +9200000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 1 new","upto_seq":51}
+
+== +9256s the waiting terminal sits idle; a blocked delegate is not nudged
+call: hc get d2
+rule: none
+
+== +9260s the terminal continues on its own
+call: hc get d2
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskTurn { turn: 2, origin: Person, working_ms: Some(0) } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskAttention { state: Clear, msg: None } }
+#54 +9260000ms "watcher" task.turn ws-bbbbbb ws-bbbbbb-t1 {"origin":"person","turn":2,"working_ms":0}
+#55 +9260000ms "watcher" task.attention ws-bbbbbb ws-bbbbbb-t1 {"state":"clear"}
+rule: none
+
+== +9300s a terminal reports an error
+call: hc get d3
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t2")), kind: TaskAttention { state: Error, msg: None } }
+#56 +9300000ms "watcher" task.attention ws-bbbbbb ws-bbbbbb-t2 {"state":"error"}
+rule: Send { terminal: "c1", text: "inbox: 2 new", record: NudgeSent { target: Coordinator, text: "inbox: 2 new", upto_seq: Some(56) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 2 new
+#57 +9300000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 2 new","upto_seq":56}
+
+== +9400s one terminal is replaced, one exits, one is removed
+call: hc get d2
+call: hc get d3
+rule: CloseLeftover { task: TaskId("ws-bbbbbb-t1"), terminal: "d2" }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: ReconcileFinding { code: "agent_gone_unresumable", summary: "Agent ws-bbbbbb-t1 ended without a recorded session" } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t1")), kind: TaskDormant { reason: "replaced_after_restart" } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t2")), kind: ReconcileFinding { code: "agent_gone_unresumable", summary: "Agent ws-bbbbbb-t2 ended without a recorded session" } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t2")), kind: TaskDormant { reason: "terminal_finished" } }
+rule: Append { ws: Some(WsId("ws-bbbbbb")), task: Some(TaskId("ws-bbbbbb-t4")), kind: TaskDormant { reason: "terminal_missing" } }
+#58 +9400000ms "watcher" reconcile.finding ws-bbbbbb ws-bbbbbb-t1 {"code":"replaced_terminal_retained","summary":"Retained replaced terminal d2; it may contain a person's work"}
+#59 +9400000ms "watcher" reconcile.finding ws-bbbbbb ws-bbbbbb-t1 {"code":"agent_gone_unresumable","summary":"Agent ws-bbbbbb-t1 ended without a recorded session"}
+#60 +9400000ms "watcher" task.dormant ws-bbbbbb ws-bbbbbb-t1 {"reason":"replaced_after_restart"}
+#61 +9400000ms "watcher" reconcile.finding ws-bbbbbb ws-bbbbbb-t2 {"code":"agent_gone_unresumable","summary":"Agent ws-bbbbbb-t2 ended without a recorded session"}
+#62 +9400000ms "watcher" task.dormant ws-bbbbbb ws-bbbbbb-t2 {"reason":"terminal_finished"}
+#63 +9400000ms "watcher" task.dormant ws-bbbbbb ws-bbbbbb-t4 {"reason":"terminal_missing"}
+rule: Send { terminal: "c1", text: "inbox: 8 new", record: NudgeSent { target: Coordinator, text: "inbox: 8 new", upto_seq: Some(63) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 8 new
+#64 +9400000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 8 new","upto_seq":63}
+
+== +9500s reconcile settles the stale intent and finds a person terminal in an owned space
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get d3
+call: hc get d4
+call: hc get c1
+call: app space.rename {"id":"sp-a","name":"repo · Ship feature"}
+call: hc get d1
+call: hc get p8
+call: app tab.rename {"id":"tab-d1","name":"Implement feature"}
+call: app tab.rename {"id":"tab-d2","name":"Survey options"}
+#65 +9500000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t3 {"name":"ws-bbbbbb-t3","note":"never created","type":"tab"}
+#66 +9500000ms "watcher" task.closed ws-bbbbbb ws-bbbbbb-t3 {"reason":"launch interrupted"}
+#67 +9500000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t2 {"name":"d3","note":"gone","type":"tab"}
+#68 +9500000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t4 {"name":"d4","note":"gone","type":"tab"}
+#69 +9500000ms "watcher" reconcile.finding ws-aaaaaa - {"code":"person_terminal_in_owned_space","summary":"Person terminal in owned space sp-a"}
+
+== +9620s a second reconcile pass repeats nothing
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+
+== +9621s the coordinator began a turn the watcher has not heard of; no nudge
+rule: Send { terminal: "c1", text: "inbox: 9 new", record: NudgeSent { target: Coordinator, text: "inbox: 9 new", upto_seq: Some(69) }, ws: None, task: None }
+call: hc get c1
+
+== +9622s the coordinator is idle again and is nudged
+rule: Send { terminal: "c1", text: "inbox: 9 new", record: NudgeSent { target: Coordinator, text: "inbox: 9 new", upto_seq: Some(69) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 9 new
+#70 +9622000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 9 new","upto_seq":69}
+
+== +9700s the coordinator records the remaining kinds of entries
+#71 +9700000ms "coordinator" task.sent ws-aaaaaa ws-aaaaaa-t1 {"message":"<root>/message","started":true,"terminal":"d1","via":"send"}
+#72 +9700000ms "coordinator" task.note ws-aaaaaa ws-aaaaaa-t1 {"text":"Credentials are in the vault"}
+#73 +9700000ms "coordinator" decision ws-aaaaaa - {"qid":"q1","tier":"digest","what":"Use staging","why":"The person said so"}
+#74 +9700000ms "user" instruction.set - - {"id":"i1","text":"Prefer small commits"}
+#75 +9700000ms "user" instruction.set - - {"id":"i2","text":"Temporary"}
+#76 +9700000ms "user" instruction.set - - {"id":"i2"}
+#77 +9700000ms "coordinator" thread.opened - - {"id":"th1","note":"draft","title":"Release plan"}
+#78 +9700000ms "coordinator" thread.opened - - {"id":"th2","title":"Closed thread"}
+#79 +9700000ms "coordinator" thread.closed - - {"id":"th2","title":"Closed thread"}
+#80 +9700000ms "user" rating - - {"note":"quick","target":"ws-aaaaaa-t1","value":"good"}
+#81 +9700000ms "user" rating - - {"target":"ws-bbbbbb","value":"bad"}
+#82 +9700000ms "user" correction - - {"ref":"ws-aaaaaa-t1","what":"placement","why":"wrong space"}
+#83 +9700000ms "coordinator" scout.result - - {"question":"Where is auth?","summary":"src/auth"}
+#84 +9700000ms "cli" config.changed - - {"key":"stall_secs","new":600,"old":300}
+#85 +9700000ms "user" coord.sent - - {"qid":null,"terminal":"c1","text":"hello"}
+#86 +9700000ms "coordinator" task.launch_details ws-aaaaaa ws-aaaaaa-t1 {"session":{"id":"session-a1b","mode":"dir"},"tab":"tab-d1b","terminal":"d1"}
+#87 +9700000ms "watcher" task.session ws-aaaaaa ws-aaaaaa-t1 {"session":{"id":"session-a1c","mode":"dir"}}
+#88 +9700000ms "coordinator" ws.opened ws-aaaaaa - {"title":"Duplicate"}
+#89 +9700000ms "coordinator" task.progress ws-aaaaaa ws-aaaaaa-t9 {"summary":"unknown task"}
+#90 +9700000ms "user" question.answered - - {"qid":"q9","text":"unknown question"}
+#91 +9700000ms "coordinator" ws.cleaned ws-aaaaaa - {}
+#92 +9700000ms "coordinator" task.reported ws-bbbbbb ws-bbbbbb-t3 {"outcome":"done","result":null,"summary":"closed task"}
+release ws-bbbbbb: error: workstream is open
+call: hc get d1
+rule: Append { ws: Some(WsId("ws-aaaaaa")), task: Some(TaskId("ws-aaaaaa-t1")), kind: TaskTurn { turn: 2, origin: Nudge, working_ms: Some(0) } }
+rule: Send { terminal: "c1", text: "inbox: 13 new", record: NudgeSent { target: Coordinator, text: "inbox: 13 new", upto_seq: Some(82) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 13 new
+#93 +9700000ms "watcher" task.turn ws-aaaaaa ws-aaaaaa-t1 {"origin":"nudge","turn":2,"working_ms":0}
+#94 +9700000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 13 new","upto_seq":82}
+rule: none
+
+== +9800s the delegate reports done and the workstream is closed while the agent is busy
+#95 +9800000ms "task:ws-aaaaaa-t1" task.reported ws-aaaaaa ws-aaaaaa-t1 {"outcome":"done","result":"<root>/result.md","summary":"Feature implemented"}
+#96 +9800000ms "coordinator" task.closed ws-aaaaaa ws-aaaaaa-t1 {"outcome":"accepted","reason":"accepted"}
+#97 +9800000ms "coordinator" ws.closed ws-aaaaaa - {"outcome":"delivered","summary":"Shipped"}
+rule: Send { terminal: "c1", text: "inbox: 14 new", record: NudgeSent { target: Coordinator, text: "inbox: 14 new", upto_seq: Some(95) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 14 new
+#98 +9800000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 14 new","upto_seq":95}
+rule: none
+release ws-aaaaaa: cleaned=false released=[] retained=Some("terminal_operation")
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+#99 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"terminal_operation","detail":"terminal d1 is busy: Resource temporarily unavailable (os error <errno>)","name":"d1","ok":false,"resource":"tab:d1","type":"tab"}
+#100 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#101 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_person_terminal","name":"sp-a","ok":false,"resource":"space:sp-a","type":"space"}
+#102 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"tabs_released","name":"sp-a","ok":false,"resource":"space:sp-a","type":"space"}
+#103 +9800000ms "coordinator" ws.retained ws-aaaaaa - {"checks":[{"detail":"terminal d1 is busy: Resource temporarily unavailable (os error <errno>)","name":"terminal_operation","ok":false}],"reason":"Release blocked: terminal operation.","reason_code":"terminal_operation"}
+release ws-aaaaaa: cleaned=false released=[] retained=Some("agent_busy")
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+#104 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#105 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"idle","name":"d1","ok":false,"resource":"tab:d1","type":"tab"}
+#106 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"result_recorded","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#107 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"session_recorded","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#108 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"nothing_running","name":"d1","ok":false,"resource":"tab:d1","type":"tab"}
+#109 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#110 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_person_terminal","name":"sp-a","ok":false,"resource":"space:sp-a","type":"space"}
+#111 +9800000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"tabs_released","name":"sp-a","ok":false,"resource":"space:sp-a","type":"space"}
+#112 +9800000ms "coordinator" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"idle","ok":false},{"name":"result_recorded","ok":true},{"name":"session_recorded","ok":true},{"name":"nothing_running","ok":false}],"reason":"Release blocked: agent busy.","reason_code":"agent_busy"}
+board: {
+  "attention": [],
+  "generated_at_ms": 1800009800000,
+  "journal_seq": 112,
+  "schema_version": 1,
+  "workstreams": [
+    {
+      "closed_ms": 1800009800000,
+      "delivery_target": "merged into main",
+      "id": "ws-aaaaaa",
+      "last_event_ms": 1800009800000,
+      "opened_ms": 1800000000000,
+      "repo": {
+        "name": "repo",
+        "path": "<root>/repo"
+      },
+      "retained": {
+        "auto_clears": true,
+        "checked_ms": 1800009800000,
+        "checks": [
+          {
+            "detail": null,
+            "name": "owned",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "idle",
+            "ok": false
+          },
+          {
+            "detail": null,
+            "name": "result_recorded",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "session_recorded",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "nothing_running",
+            "ok": false
+          }
+        ],
+        "reason": "Release blocked: agent busy.",
+        "reason_code": "agent_busy",
+        "since_ms": 1800009800000
+      },
+      "space": {
+        "id": "sp-a",
+        "name": "repo · Ship feature",
+        "owned": true
+      },
+      "state": "closed",
+      "summary": "Shipped",
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-aaaaaa-t1",
+          "last_event_ms": 1800009800000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 1,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": "<root>/result.md",
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-a",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "closed",
+          "state_since_ms": 1800009800000,
+          "summary": "Feature implemented",
+          "tab_id": "tab-d1b",
+          "terminal": null,
+          "title": "Implement feature"
+        }
+      ],
+      "title": "Ship feature"
+    },
+    {
+      "closed_ms": null,
+      "delivery_target": null,
+      "id": "ws-bbbbbb",
+      "last_event_ms": 1800009700000,
+      "opened_ms": 1800000000000,
+      "repo": null,
+      "retained": null,
+      "space": {
+        "id": "sp-person",
+        "name": "sp-person",
+        "owned": false
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t1",
+          "last_event_ms": 1800009400000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d2",
+          "terminal": null,
+          "title": "Survey options"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t2",
+          "last_event_ms": 1800009500000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 2,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d3",
+          "terminal": null,
+          "title": "Measure baseline"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t4",
+          "last_event_ms": 1800009500000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 4,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d4",
+          "terminal": null,
+          "title": "Write summary"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t3",
+          "last_event_ms": 1800009700000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 3,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": null,
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": null,
+          "state": "closed",
+          "state_since_ms": 1800009500000,
+          "summary": null,
+          "tab_id": null,
+          "terminal": null,
+          "title": "Never launched"
+        }
+      ],
+      "title": "Research"
+    }
+  ]
+}
+board text:
+# Coordinator board
+
+Journal sequence: 112 (at 1800009800000)
+
+## Needs you
+
+None
+
+## ws-aaaaaa — Ship feature
+Shipped
+Retained: Release blocked: agent busy.
+- ws-aaaaaa-t1: Implement feature (Closed) — Feature implemented
+
+## ws-bbbbbb — Research
+- ws-bbbbbb-t1: Survey options (Dormant)
+- ws-bbbbbb-t2: Measure baseline (Dormant)
+- ws-bbbbbb-t4: Write summary (Dormant)
+- ws-bbbbbb-t3: Never launched (Closed)
+
+
+== +9920s the watcher rechecks the retained workstream
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+#113 +9920000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
+#114 +9920000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"idle","ok":false},{"name":"result_recorded","ok":true},{"name":"session_recorded","ok":true},{"name":"nothing_running","ok":false}],"reason":"Release blocked: agent busy.","reason_code":"agent_busy"}
+
+== +10040s nothing changed, yet the recheck journals both retention reasons again
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+#115 +10040000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
+#116 +10040000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"idle","ok":false},{"name":"result_recorded","ok":true},{"name":"session_recorded","ok":true},{"name":"nothing_running","ok":false}],"reason":"Release blocked: agent busy.","reason_code":"agent_busy"}
+rule: Send { terminal: "c1", text: "inbox: 18 new", record: NudgeSent { target: Coordinator, text: "inbox: 18 new", upto_seq: Some(116) }, ws: None, task: None }
+call: hc get c1
+call: hc send c1 inbox: 18 new
+#117 +10040000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 18 new","upto_seq":116}
+
+== +10160s the agent is idle; its tab is released but a person is in the space
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: hc kill d1
+call: hc rm d1
+call: app ls
+call: app ls
+call: app ls
+call: hc get p8
+#118 +10160000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
+#119 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"idle","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#120 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"nothing_running","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#121 +10160000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"d1","type":"tab"}
+#122 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"tabs_released","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#123 +10160000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"no_person_terminal","ok":false},{"name":"tabs_released","ok":true}],"reason":"Release blocked: in use by person.","reason_code":"in_use_by_person"}
+
+== +10280s the person leaves; the space closes but the worktree is dirty and occupied
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d2
+call: app ls
+call: hc get d2
+call: hc get c1
+call: app ls
+call: app ls
+call: app space.close {"confirmed":true,"id":"sp-a"}
+call: hc list all=false label=None
+call: hc get c1
+call: hc get d2
+call: hc get p7
+call: hc get p9
+#124 +10280000ms "watcher" reconcile.finding ws-aaaaaa - {"code":"person_terminal_cleared","summary":"Person terminal in owned space sp-a"}
+#125 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_person_terminal","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#126 +10280000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"sp-a","type":"space"}
+#127 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#128 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#129 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","detail":"?? notes.txt","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#130 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#131 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#132 +10280000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"detail":"?? notes.txt","name":"clean","ok":false},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: uncommitted files.","reason_code":"uncommitted_files"}
+
+== +10400s the work is committed but not merged
+release ws-aaaaaa: cleaned=false released=[] retained=Some("unpushed_commits")
+call: hc list all=false label=None
+call: hc get c1
+call: hc get d2
+call: hc get p7
+call: hc get p9
+#133 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#134 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#135 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#136 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","detail":"1 unreachable commits","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#137 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#138 +10400000ms "coordinator" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"detail":"1 unreachable commits","name":"reachable","ok":false},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: unpushed commits.","reason_code":"unpushed_commits"}
+
+== +10460s an unchanged recheck journals nothing
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d2
+call: app ls
+call: hc get d2
+call: hc get c1
+call: hc list all=false label=None
+call: hc get c1
+call: hc get d2
+call: hc get p7
+call: hc get p9
+
+== +10520s the branch is merged; a terminal is still inside the worktree
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d2
+call: app ls
+call: hc get d2
+call: hc get c1
+call: hc list all=false label=None
+call: hc get c1
+call: hc get d2
+call: hc get p7
+call: hc get p9
+#139 +10520000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#140 +10520000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: terminal in worktree.","reason_code":"terminal_in_worktree"}
+board: {
+  "attention": [],
+  "generated_at_ms": 1800010520000,
+  "journal_seq": 140,
+  "schema_version": 1,
+  "workstreams": [
+    {
+      "closed_ms": 1800009800000,
+      "delivery_target": "merged into main",
+      "id": "ws-aaaaaa",
+      "last_event_ms": 1800010520000,
+      "opened_ms": 1800000000000,
+      "repo": {
+        "name": "repo",
+        "path": "<root>/repo"
+      },
+      "retained": {
+        "auto_clears": true,
+        "checked_ms": 1800010520000,
+        "checks": [
+          {
+            "detail": null,
+            "name": "owned",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "ws_closed",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "clean",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "reachable",
+            "ok": true
+          },
+          {
+            "detail": null,
+            "name": "no_terminal_inside",
+            "ok": false
+          }
+        ],
+        "reason": "Release blocked: terminal in worktree.",
+        "reason_code": "terminal_in_worktree",
+        "since_ms": 1800010520000
+      },
+      "space": {
+        "id": "sp-a",
+        "name": "repo · Ship feature",
+        "owned": true
+      },
+      "state": "closed",
+      "summary": "Shipped",
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-aaaaaa-t1",
+          "last_event_ms": 1800010520000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 1,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": "<root>/result.md",
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-a",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "closed",
+          "state_since_ms": 1800009800000,
+          "summary": "Feature implemented",
+          "tab_id": "tab-d1b",
+          "terminal": null,
+          "title": "Implement feature"
+        }
+      ],
+      "title": "Ship feature"
+    },
+    {
+      "closed_ms": null,
+      "delivery_target": null,
+      "id": "ws-bbbbbb",
+      "last_event_ms": 1800009700000,
+      "opened_ms": 1800000000000,
+      "repo": null,
+      "retained": null,
+      "space": {
+        "id": "sp-person",
+        "name": "sp-person",
+        "owned": false
+      },
+      "state": "open",
+      "summary": null,
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t1",
+          "last_event_ms": 1800009400000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d2",
+          "terminal": null,
+          "title": "Survey options"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t2",
+          "last_event_ms": 1800009500000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 2,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d3",
+          "terminal": null,
+          "title": "Measure baseline"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t4",
+          "last_event_ms": 1800009500000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 4,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d4",
+          "terminal": null,
+          "title": "Write summary"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t3",
+          "last_event_ms": 1800009700000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 3,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": null,
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": null,
+          "state": "closed",
+          "state_since_ms": 1800009500000,
+          "summary": null,
+          "tab_id": null,
+          "terminal": null,
+          "title": "Never launched"
+        }
+      ],
+      "title": "Research"
+    }
+  ]
+}
+board text:
+# Coordinator board
+
+Journal sequence: 140 (at 1800010520000)
+
+## Needs you
+
+None
+
+## ws-aaaaaa — Ship feature
+Shipped
+Retained: Release blocked: terminal in worktree.
+- ws-aaaaaa-t1: Implement feature (Closed) — Feature implemented
+
+## ws-bbbbbb — Research
+- ws-bbbbbb-t1: Survey options (Dormant)
+- ws-bbbbbb-t2: Measure baseline (Dormant)
+- ws-bbbbbb-t4: Write summary (Dormant)
+- ws-bbbbbb-t3: Never launched (Closed)
+
+
+== +10640s the terminal leaves; worktree and branch are removed
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d2
+call: app ls
+call: hc get d2
+call: hc get c1
+call: hc list all=false label=None
+call: hc get c1
+call: hc get d2
+call: hc get p9
+#141 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#142 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"<root>/trees/feature","type":"worktree"}
+#143 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#144 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"merged","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#145 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"not_checked_out","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#146 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"feature","type":"branch"}
+#147 +10640000ms "watcher" ws.cleaned ws-aaaaaa - {}
+release ws-aaaaaa: cleaned=true released=[] retained=None
+
+== +10700s a workstream whose tab now belongs to another program is retained, then cleaned
+release ws-bbbbbb: cleaned=false released=[] retained=Some("owned")
+call: hc get d2
+call: hc get d2
+#148 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t1 {"outcome":"abandoned","reason":"abandoned"}
+#149 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t2 {"outcome":"superseded","reason":"superseded"}
+#150 +10700000ms "coordinator" ws.closed ws-bbbbbb - {"outcome":"abandoned","summary":"Stopped"}
+#151 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"owned","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#152 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"idle","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#153 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"result_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#154 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"session_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#155 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"nothing_running","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#156 +10700000ms "coordinator" ws.retained ws-bbbbbb - {"checks":[{"name":"owned","ok":false},{"name":"idle","ok":false},{"name":"result_recorded","ok":false},{"name":"session_recorded","ok":false},{"name":"nothing_running","ok":false}],"reason":"Release blocked: owned.","reason_code":"owned"}
+
+== +10820s the replaced terminal is gone
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: app ls
+call: hc get d2
+call: hc get c1
+#157 +10820000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t1 {"name":"d2","note":"gone","type":"tab"}
+#158 +10820000ms "watcher" ws.cleaned ws-bbbbbb - {}
+release ws-bbbbbb: cleaned=true released=[] retained=None
+
+== +10880s an event says the coordinator terminal is gone while hc still has it
+rule: Append { ws: None, task: None, kind: CoordSessionEnded { reason: "terminal_gone", terminal: "c1" } }
+call: hc get c1
+
+== +10900s everything is acknowledged; the coordinator is idle
+call: hc get c1
+#159 +10900000ms "coordinator" inbox.drained - - {"count":23,"cursor":158}
+rule: Append { ws: None, task: None, kind: CoordTurn { turn: 4, origin: Inbox, working_ms: None } }
+#160 +10900000ms "watcher" coord.turn - - {"origin":"inbox","turn":4}
+rule: none
+
+== +39700s eight hours later an idle coordinator would be restarted
+rule: RestartCoordinator { reason: "idle" }
+
+== +39750s a requested handoff would restart it at once
+rule: RestartCoordinator { reason: "handoff" }
+#161 +39750000ms "coordinator" coord.handoff_requested - - {"by":"coordinator","note":"Continue with the release"}
+
+== +39800s the coordinator terminal disappears before the watcher hears of it
+rule: RestartCoordinator { reason: "handoff" }
+tick: error: coordinator terminal missing
+call: hc get c1
+
+== +39801s the watcher learns that the terminal is gone
+rule: Append { ws: None, task: None, kind: CoordSessionEnded { reason: "terminal_gone", terminal: "c1" } }
+call: hc get c1
+#162 +39801000ms "watcher" coord.session_ended - - {"reason":"terminal_gone","terminal":"c1"}
+rule: none
+board: {
+  "attention": [],
+  "generated_at_ms": 1800039801000,
+  "journal_seq": 162,
+  "schema_version": 1,
+  "workstreams": [
+    {
+      "closed_ms": 1800009800000,
+      "delivery_target": "merged into main",
+      "id": "ws-aaaaaa",
+      "last_event_ms": 1800010640000,
+      "opened_ms": 1800000000000,
+      "repo": {
+        "name": "repo",
+        "path": "<root>/repo"
+      },
+      "retained": null,
+      "space": null,
+      "state": "cleaned",
+      "summary": "Shipped",
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-aaaaaa-t1",
+          "last_event_ms": 1800010640000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 1,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": "<root>/result.md",
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-a",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "closed",
+          "state_since_ms": 1800009800000,
+          "summary": "Feature implemented",
+          "tab_id": "tab-d1b",
+          "terminal": null,
+          "title": "Implement feature"
+        }
+      ],
+      "title": "Ship feature"
+    },
+    {
+      "closed_ms": 1800010700000,
+      "delivery_target": null,
+      "id": "ws-bbbbbb",
+      "last_event_ms": 1800010820000,
+      "opened_ms": 1800000000000,
+      "repo": null,
+      "retained": null,
+      "space": null,
+      "state": "cleaned",
+      "summary": "Stopped",
+      "tasks": [
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t1",
+          "last_event_ms": 1800010820000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 1,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "closed",
+          "state_since_ms": 1800010700000,
+          "summary": null,
+          "tab_id": "tab-d2",
+          "terminal": null,
+          "title": "Survey options"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t2",
+          "last_event_ms": 1800010700000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 2,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "closed",
+          "state_since_ms": 1800010700000,
+          "summary": null,
+          "tab_id": "tab-d3",
+          "terminal": null,
+          "title": "Measure baseline"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t4",
+          "last_event_ms": 1800009500000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 4,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": "sp-person",
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": 1800000000000,
+          "state": "dormant",
+          "state_since_ms": 1800009400000,
+          "summary": null,
+          "tab_id": "tab-d4",
+          "terminal": null,
+          "title": "Write summary"
+        },
+        {
+          "brief_path": "<root>/brief",
+          "harness": "omp",
+          "id": "ws-bbbbbb-t3",
+          "last_event_ms": 1800009700000,
+          "model": null,
+          "needs_you": false,
+          "nudges": 0,
+          "number": 3,
+          "placed_ms": 1800000000000,
+          "placement_reason": "scenario",
+          "rejected_rungs": [
+            {
+              "reason": "no session",
+              "rung": 1
+            }
+          ],
+          "report": null,
+          "result_path": null,
+          "role": "omp-default",
+          "rung": 2,
+          "space_id": null,
+          "stalled": false,
+          "start_blocked": false,
+          "started_ms": null,
+          "state": "closed",
+          "state_since_ms": 1800009500000,
+          "summary": null,
+          "tab_id": null,
+          "terminal": null,
+          "title": "Never launched"
+        }
+      ],
+      "title": "Research"
+    }
+  ]
+}
+board text:
+# Coordinator board
+
+Journal sequence: 162 (at 1800039801000)
+
+## Needs you
+
+None
+
+## ws-aaaaaa — Ship feature
+Shipped
+- ws-aaaaaa-t1: Implement feature (Closed) — Feature implemented
+
+## ws-bbbbbb — Research
+Stopped
+- ws-bbbbbb-t1: Survey options (Closed)
+- ws-bbbbbb-t2: Measure baseline (Closed)
+- ws-bbbbbb-t4: Write summary (Dormant)
+- ws-bbbbbb-t3: Never launched (Closed)
+
+startup read:
+## Handoff note
+
+Continue with the release
+
+# Coordinator board
+
+Journal sequence: 162 (at 1800039801000)
+
+## Needs you
+
+None
+
+## Inbox
+
+0 waking entries pending
+
+## Recent decisions
+- Use staging — The person said so
+
+## Standing instructions
+- i1: Prefer small commits
+
+## Open threads
+- th1: Release plan
+
+## Open questions
+
+state: {
+  "fold_version": 6,
+  "last_seq": 162,
+  "last_ts_ms": 1800039801000,
+  "workstreams": {
+    "ws-aaaaaa": {
+      "id": "ws-aaaaaa",
+      "title": "Ship feature",
+      "repo": "<root>/repo",
+      "delivery_target": "merged into main",
+      "delivery_branch": "main",
+      "state": "cleaned",
+      "retained": null,
+      "summary": "Shipped",
+      "opened_ms": 1800000000000,
+      "closed_ms": 1800009800000,
+      "last_event_ms": 1800010640000,
+      "space": null,
+      "cwd": null,
+      "tasks": [
+        "ws-aaaaaa-t1"
+      ],
+      "request": "Ship it",
+      "outcome": "delivered",
+      "rating": null
+    },
+    "ws-bbbbbb": {
+      "id": "ws-bbbbbb",
+      "title": "Research",
+      "repo": null,
+      "delivery_target": null,
+      "delivery_branch": null,
+      "state": "cleaned",
+      "retained": null,
+      "summary": "Stopped",
+      "opened_ms": 1800000000000,
+      "closed_ms": 1800010700000,
+      "last_event_ms": 1800010820000,
+      "space": null,
+      "cwd": null,
+      "tasks": [
+        "ws-bbbbbb-t1",
+        "ws-bbbbbb-t2",
+        "ws-bbbbbb-t4",
+        "ws-bbbbbb-t3"
+      ],
+      "request": null,
+      "outcome": "abandoned",
+      "rating": "bad"
+    }
+  },
+  "tasks": {
+    "ws-aaaaaa-t1": {
+      "id": "ws-aaaaaa-t1",
+      "ws": "ws-aaaaaa",
+      "n": 1,
+      "title": "Implement feature",
+      "state": "closed",
+      "report": "done",
+      "start_blocked": null,
+      "stalled": null,
+      "attention": null,
+      "blocked": null,
+      "start_blocked_ms": null,
+      "stalled_ms": null,
+      "state_since_ms": 1800009800000,
+      "placed_ms": 1800000000000,
+      "started_ms": 1800000000000,
+      "last_event_ms": 1800010640000,
+      "rung": 2,
+      "reason": "scenario",
+      "rejected": [
+        {
+          "rung": 1,
+          "reason": "no session"
+        }
+      ],
+      "role": "omp-default",
+      "harness": "omp",
+      "model": null,
+      "summary": "Feature implemented",
+      "terminal": "d1",
+      "space": "sp-a",
+      "tab": "tab-d1b",
+      "cwd": "<root>/trees/feature",
+      "pid": 201,
+      "created_ms": 1799999999000,
+      "session": {
+        "mode": "dir",
+        "id": "session-a1c"
+      },
+      "brief": "<root>/brief",
+      "result": "<root>/result.md",
+      "nudges": 1,
+      "last_nudge": [
+        39,
+        1800000145000
+      ],
+      "last_activity_seq": 71,
+      "reported_seq": 95,
+      "request": null,
+      "follows": null,
+      "role_hash": "",
+      "brief_bytes": 12,
+      "outcome": "accepted",
+      "rating": "good",
+      "turns": 2,
+      "person_turns": 0,
+      "working_ms": 0
+    },
+    "ws-bbbbbb-t1": {
+      "id": "ws-bbbbbb-t1",
+      "ws": "ws-bbbbbb",
+      "n": 1,
+      "title": "Survey options",
+      "state": "closed",
+      "report": null,
+      "start_blocked": null,
+      "stalled": null,
+      "attention": null,
+      "blocked": null,
+      "start_blocked_ms": null,
+      "stalled_ms": null,
+      "state_since_ms": 1800010700000,
+      "placed_ms": 1800000000000,
+      "started_ms": 1800000000000,
+      "last_event_ms": 1800010820000,
+      "rung": 2,
+      "reason": "scenario",
+      "rejected": [
+        {
+          "rung": 1,
+          "reason": "no session"
+        }
+      ],
+      "role": "omp-default",
+      "harness": "omp",
+      "model": null,
+      "summary": null,
+      "terminal": null,
+      "space": "sp-person",
+      "tab": "tab-d2",
+      "cwd": "<root>/person",
+      "pid": 202,
+      "created_ms": 1799999999000,
+      "session": null,
+      "brief": "<root>/brief",
+      "result": null,
+      "nudges": 0,
+      "last_nudge": null,
+      "last_activity_seq": 18,
+      "reported_seq": null,
+      "request": null,
+      "follows": null,
+      "role_hash": "",
+      "brief_bytes": 12,
+      "outcome": "abandoned",
+      "rating": null,
+      "turns": 2,
+      "person_turns": 1,
+      "working_ms": 0
+    },
+    "ws-bbbbbb-t2": {
+      "id": "ws-bbbbbb-t2",
+      "ws": "ws-bbbbbb",
+      "n": 2,
+      "title": "Measure baseline",
+      "state": "closed",
+      "report": null,
+      "start_blocked": null,
+      "stalled": null,
+      "attention": null,
+      "blocked": null,
+      "start_blocked_ms": null,
+      "stalled_ms": null,
+      "state_since_ms": 1800010700000,
+      "placed_ms": 1800000000000,
+      "started_ms": 1800000000000,
+      "last_event_ms": 1800010700000,
+      "rung": 2,
+      "reason": "scenario",
+      "rejected": [
+        {
+          "rung": 1,
+          "reason": "no session"
+        }
+      ],
+      "role": "omp-default",
+      "harness": "omp",
+      "model": null,
+      "summary": null,
+      "terminal": null,
+      "space": "sp-person",
+      "tab": "tab-d3",
+      "cwd": "<root>/person",
+      "pid": 203,
+      "created_ms": 1799999999000,
+      "session": null,
+      "brief": "<root>/brief",
+      "result": null,
+      "nudges": 0,
+      "last_nudge": null,
+      "last_activity_seq": 21,
+      "reported_seq": null,
+      "request": null,
+      "follows": null,
+      "role_hash": "",
+      "brief_bytes": 12,
+      "outcome": "superseded",
+      "rating": null,
+      "turns": 1,
+      "person_turns": 0,
+      "working_ms": 0
+    },
+    "ws-bbbbbb-t3": {
+      "id": "ws-bbbbbb-t3",
+      "ws": "ws-bbbbbb",
+      "n": 3,
+      "title": "Never launched",
+      "state": "closed",
+      "report": null,
+      "start_blocked": null,
+      "stalled": null,
+      "attention": null,
+      "blocked": null,
+      "start_blocked_ms": null,
+      "stalled_ms": null,
+      "state_since_ms": 1800009500000,
+      "placed_ms": 1800000000000,
+      "started_ms": null,
+      "last_event_ms": 1800009700000,
+      "rung": 2,
+      "reason": "scenario",
+      "rejected": [
+        {
+          "rung": 1,
+          "reason": "no session"
+        }
+      ],
+      "role": "omp-default",
+      "harness": "omp",
+      "model": null,
+      "summary": null,
+      "terminal": null,
+      "space": null,
+      "tab": null,
+      "cwd": null,
+      "pid": null,
+      "created_ms": null,
+      "session": null,
+      "brief": "<root>/brief",
+      "result": null,
+      "nudges": 0,
+      "last_nudge": null,
+      "last_activity_seq": 0,
+      "reported_seq": null,
+      "request": null,
+      "follows": null,
+      "role_hash": "",
+      "brief_bytes": 12,
+      "outcome": null,
+      "rating": null,
+      "turns": 0,
+      "person_turns": 0,
+      "working_ms": 0
+    },
+    "ws-bbbbbb-t4": {
+      "id": "ws-bbbbbb-t4",
+      "ws": "ws-bbbbbb",
+      "n": 4,
+      "title": "Write summary",
+      "state": "dormant",
+      "report": null,
+      "start_blocked": null,
+      "stalled": null,
+      "attention": null,
+      "blocked": null,
+      "start_blocked_ms": null,
+      "stalled_ms": null,
+      "state_since_ms": 1800009400000,
+      "placed_ms": 1800000000000,
+      "started_ms": 1800000000000,
+      "last_event_ms": 1800009500000,
+      "rung": 2,
+      "reason": "scenario",
+      "rejected": [
+        {
+          "rung": 1,
+          "reason": "no session"
+        }
+      ],
+      "role": "omp-default",
+      "harness": "omp",
+      "model": null,
+      "summary": null,
+      "terminal": null,
+      "space": "sp-person",
+      "tab": "tab-d4",
+      "cwd": "<root>/person",
+      "pid": 204,
+      "created_ms": 1799999999000,
+      "session": {
+        "mode": "dir",
+        "id": "session-b4"
+      },
+      "brief": "<root>/brief",
+      "result": null,
+      "nudges": 0,
+      "last_nudge": null,
+      "last_activity_seq": 24,
+      "reported_seq": null,
+      "request": null,
+      "follows": null,
+      "role_hash": "",
+      "brief_bytes": 12,
+      "outcome": null,
+      "rating": null,
+      "turns": 1,
+      "person_turns": 0,
+      "working_ms": 0
+    }
+  },
+  "resources": [
+    {
+      "r": {
+        "type": "space",
+        "name": "sp-coord",
+        "folder": "<root>/coord/home",
+        "label": "coordinator"
+      },
+      "ws": null,
+      "task": null,
+      "owned": true,
+      "released": false,
+      "created_seq": 4,
+      "last_checks": {}
+    },
+    {
+      "r": {
+        "type": "tab",
+        "name": "c1",
+        "space": "sp-coord",
+        "tab": "tab-c1"
+      },
+      "ws": null,
+      "task": null,
+      "owned": true,
+      "released": false,
+      "created_seq": 5,
+      "last_checks": {}
+    },
+    {
+      "r": {
+        "type": "branch",
+        "name": "feature",
+        "repo": "<root>/repo",
+        "base": "main"
+      },
+      "ws": "ws-aaaaaa",
+      "task": "ws-aaaaaa-t1",
+      "owned": true,
+      "released": true,
+      "created_seq": 9,
+      "last_checks": {
+        "merged": [
+          true,
+          null
+        ],
+        "not_checked_out": [
+          true,
+          null
+        ],
+        "owned": [
+          true,
+          null
+        ]
+      }
+    },
+    {
+      "r": {
+        "type": "worktree",
+        "name": "<root>/trees/feature",
+        "repo": "<root>/repo",
+        "branch": "feature"
+      },
+      "ws": "ws-aaaaaa",
+      "task": "ws-aaaaaa-t1",
+      "owned": true,
+      "released": true,
+      "created_seq": 10,
+      "last_checks": {
+        "clean": [
+          true,
+          null
+        ],
+        "no_terminal_inside": [
+          true,
+          null
+        ],
+        "owned": [
+          true,
+          null
+        ],
+        "reachable": [
+          true,
+          null
+        ],
+        "ws_closed": [
+          true,
+          null
+        ]
+      }
+    },
+    {
+      "r": {
+        "type": "space",
+        "name": "sp-a",
+        "folder": "<root>/trees/feature",
+        "label": "repo · Ship feature"
+      },
+      "ws": "ws-aaaaaa",
+      "task": "ws-aaaaaa-t1",
+      "owned": true,
+      "released": true,
+      "created_seq": 11,
+      "last_checks": {
+        "no_person_terminal": [
+          true,
+          null
+        ],
+        "owned": [
+          true,
+          null
+        ],
+        "tabs_released": [
+          true,
+          null
+        ]
+      }
+    },
+    {
+      "r": {
+        "type": "tab",
+        "name": "d1",
+        "space": "sp-a",
+        "tab": "tab-d1b"
+      },
+      "ws": "ws-aaaaaa",
+      "task": "ws-aaaaaa-t1",
+      "owned": true,
+      "released": true,
+      "created_seq": 12,
+      "last_checks": {
+        "idle": [
+          true,
+          null
+        ],
+        "nothing_running": [
+          true,
+          null
+        ],
+        "owned": [
+          true,
+          null
+        ],
+        "result_recorded": [
+          true,
+          null
+        ],
+        "session_recorded": [
+          true,
+          null
+        ],
+        "terminal_operation": [
+          false,
+          "terminal d1 is busy: Resource temporarily unavailable (os error <errno>)"
+        ]
+      }
+    },
+    {
+      "r": {
+        "type": "space",
+        "name": "sp-person",
+        "folder": "<root>/person"
+      },
+      "ws": "ws-bbbbbb",
+      "task": null,
+      "owned": false,
+      "released": false,
+      "created_seq": 15,
+      "last_checks": {}
+    },
+    {
+      "r": {
+        "type": "tab",
+        "name": "d2",
+        "space": "sp-person",
+        "tab": "tab-d2"
+      },
+      "ws": "ws-bbbbbb",
+      "task": "ws-bbbbbb-t1",
+      "owned": true,
+      "released": true,
+      "created_seq": 17,
+      "last_checks": {
+        "idle": [
+          false,
+          null
+        ],
+        "nothing_running": [
+          false,
+          null
+        ],
+        "owned": [
+          false,
+          null
+        ],
+        "result_recorded": [
+          false,
+          null
+        ],
+        "session_recorded": [
+          false,
+          null
+        ]
+      }
+    },
+    {
+      "r": {
+        "type": "tab",
+        "name": "d3",
+        "space": "sp-person",
+        "tab": "tab-d3"
+      },
+      "ws": "ws-bbbbbb",
+      "task": "ws-bbbbbb-t2",
+      "owned": true,
+      "released": true,
+      "created_seq": 20,
+      "last_checks": {}
+    },
+    {
+      "r": {
+        "type": "tab",
+        "name": "d4",
+        "space": "sp-person",
+        "tab": "tab-d4"
+      },
+      "ws": "ws-bbbbbb",
+      "task": "ws-bbbbbb-t4",
+      "owned": true,
+      "released": true,
+      "created_seq": 23,
+      "last_checks": {}
+    }
+  ],
+  "intents": {},
+  "projects": {
+    "<root>/repo": {
+      "purpose": "Scenario repository"
+    }
+  },
+  "coordinator": {
+    "terminal": null,
+    "space": "sp-coord",
+    "tab": "tab-c1",
+    "session": null,
+    "pid": 100,
+    "created_ms": 1799999999000,
+    "role": "coord-main",
+    "model": null,
+    "release": "r1",
+    "started_ms": 1800000000000,
+    "sessions_started": 1,
+    "handoff": [
+      161,
+      "coordinator"
+    ],
+    "handoff_note": "Continue with the release",
+    "turns": 4,
+    "person_turns": 0,
+    "inbox_turns": 3,
+    "working_ms": 3000,
+    "role_hash": ""
+  },
+  "watcher": {
+    "release": "r1",
+    "terminal": null,
+    "pid": 4001,
+    "started_ms": 1800000000000,
+    "stopped_ms": null,
+    "stop_reason": null
+  },
+  "cursor": 158,
+  "waking": [],
+  "last_coordinator_nudge_upto": 116,
+  "questions": {
+    "q1": {
+      "text": "Which credentials?",
+      "options": [
+        "staging",
+        "production"
+      ],
+      "ws": "ws-aaaaaa",
+      "task": "ws-aaaaaa-t1",
+      "asked_seq": 49,
+      "asked_ms": 1800002400000,
+      "answered": {
+        "text": "staging",
+        "seq": 50,
+        "ts_ms": 1800009100000
+      }
+    },
+    "q2": {
+      "text": "Approve the plan?",
+      "options": null,
+      "ws": "ws-bbbbbb",
+      "task": "ws-bbbbbb-t1",
+      "asked_seq": 52,
+      "asked_ms": 1800009200000,
+      "answered": {
+        "text": "Resolved by delegate state change.",
+        "seq": 55,
+        "ts_ms": 1800009260000
+      }
+    }
+  },
+  "instructions": {
+    "i1": "Prefer small commits"
+  },
+  "threads": {
+    "th1": {
+      "id": "th1",
+      "title": "Release plan",
+      "note": "draft",
+      "opened_seq": 77,
+      "opened_ms": 1800009700000
+    }
+  },
+  "decisions": [
+    {
+      "seq": 73,
+      "ts_ms": 1800009700000,
+      "what": "Use staging",
+      "why": "The person said so",
+      "tier": "digest",
+      "qid": "q1",
+      "ws": "ws-aaaaaa",
+      "task": null
+    }
+  ],
+  "counters": {
+    "instruction": 3,
+    "thread": 3,
+    "question": 3
+  },
+  "anomalies": [
+    {
+      "seq": 88,
+      "message": "duplicate workstream"
+    },
+    {
+      "seq": 89,
+      "message": "unknown task"
+    },
+    {
+      "seq": 90,
+      "message": "unknown question"
+    },
+    {
+      "seq": 91,
+      "message": "invalid workstream cleanup"
+    },
+    {
+      "seq": 92,
+      "message": "invalid task report"
+    }
+  ]
+}

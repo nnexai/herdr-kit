@@ -587,6 +587,8 @@ fn heartbeat_step(
 }
 
 #[cfg(test)]
+mod scenario;
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::coord::{
