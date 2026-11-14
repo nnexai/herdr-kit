@@ -46,18 +46,11 @@ enum Command {
     /// Update this executable and managed Herdr assets together.
     Update {
         #[command(subcommand)]
-        command: UpdateCommand,
+        action: manager::UpdateAction,
         /// Update only these already selected components.
         #[arg(long = "component", global = true, value_delimiter = ',')]
         components: Vec<String>,
     },
-}
-
-#[derive(Clone, Copy, Subcommand)]
-enum UpdateCommand {
-    Check,
-    Apply,
-    Maintain,
 }
 
 fn main() {
@@ -74,12 +67,11 @@ fn main() {
                 .filter(|c| !c.is_control())
                 .take(512)
                 .collect();
-            let (code, exit) = ("operation_failed", 1);
             eprintln!(
                 "{}",
-                serde_json::json!({"error":{"code":code,"message":message}})
+                serde_json::json!({"error":{"code":"operation_failed","message":message}})
             );
-            std::process::exit(exit);
+            std::process::exit(1);
         }
     }
 }
@@ -97,10 +89,6 @@ fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
 
 fn run(cli: Cli) -> Result<serde_json::Value> {
     let root = data_root(cli.data_dir)?;
-    let activation_command = matches!(
-        &cli.command,
-        Command::Install { .. } | Command::Update { .. }
-    );
     let mut value = match cli.command {
         Command::Install {
             app_home,
@@ -110,29 +98,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => manager::install(&root, &app_home, &source, &components, revision.as_deref()),
         Command::Source { repo } => manager::source(&root, repo.as_deref()),
         Command::Status { .. } => manager::status(&root),
-        Command::Update {
-            command,
-            components,
-        } => manager::update(
-            &root,
-            match command {
-                UpdateCommand::Check => "check",
-                UpdateCommand::Apply => "apply",
-                UpdateCommand::Maintain => "maintain",
-            },
-            &components,
-        ),
+        Command::Update { action, components } => manager::update(&root, action, &components),
     }?;
-    if activation_command
-        && value
-            .get("coord_changed")
-            .and_then(serde_json::Value::as_bool)
-            == Some(true)
-    {
+    // Only install and update responses carry activation flags.
+    let flag = |key: &str| value.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+    if flag("coord_changed") {
         value["coord"] = manager::after_activation(&root);
-    } else if activation_command
-        && value.get("activated").and_then(serde_json::Value::as_bool) == Some(true)
-    {
+    } else if flag("activated") {
         value["coord"] =
             serde_json::json!({"state":"skipped","reason":"coordinator_not_activated"});
     }

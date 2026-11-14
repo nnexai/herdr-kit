@@ -14,12 +14,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod activation;
+mod deployment;
 mod packages;
 pub use activation::after_activation;
+pub use deployment::{UpdateAction, install, source, status, update};
 use packages::*;
-
-const DAY: u64 = 86_400;
-const BACKOFF: u64 = 3_600;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -248,6 +247,3 @@ fn bootstrap(data: &Path) -> PathBuf {
 fn mod_path(home: &Path, base: &str, rev: &str) -> PathBuf {
     home.join("mods").join(name(base, rev))
 }
-
-mod deployment;
-pub use deployment::{install, source, status, update};

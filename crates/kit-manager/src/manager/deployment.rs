@@ -2,6 +2,10 @@ use super::*;
 
 mod generations;
 
+/// Seconds between scheduled source checks, and the retry delay after a failed one.
+const CHECK_INTERVAL: u64 = 86_400;
+const FAILURE_BACKOFF: u64 = 3_600;
+
 struct Locked {
     data: PathBuf,
     _lock: File,
@@ -802,19 +806,23 @@ pub fn source(data: &Path, repo: Option<&Path>) -> Result<Value> {
     }
     Ok(result(&state, None, "source"))
 }
-pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value> {
-    ensure!(
-        matches!(action, "check" | "apply" | "maintain"),
-        "unknown update action"
-    );
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::Subcommand)]
+pub enum UpdateAction {
+    Check,
+    Apply,
+    Maintain,
+}
+
+pub fn update(data: &Path, action: UpdateAction, components: &[String]) -> Result<Value> {
     let lock = Locked::open(data)?;
     let mut state = lock.state()?;
     ensure!(state.current.is_some(), "suite is not installed");
     lock.verify_active(&state)?;
-    if action == "maintain" || action == "apply" {
+    if action != UpdateAction::Check {
         state = lock.sweep_generations(state)?;
     }
-    if action == "maintain" && now() < state.next_check {
+    if action == UpdateAction::Maintain && now() < state.next_check {
         return Ok(activated(
             result(&state, None, "not_due"),
             &state,
@@ -828,57 +836,62 @@ pub fn update(data: &Path, action: &str, components: &[String]) -> Result<Value>
             "component is not selected: {id}"
         );
     }
-    let work = (|| -> Result<Value> {
-        let rev = revision(
-            state
-                .source
-                .as_ref()
-                .context("no trusted local source configured")?,
-        )?;
-        let ids = if components.is_empty() {
-            state.selection.keys().cloned().collect::<Vec<_>>()
-        } else {
-            components.to_vec()
-        };
-        let changed = ids.iter().any(|id| state.selection.get(id) != Some(&rev));
-        if action == "check" {
-            return Ok(activated(
-                result(
-                    &state,
-                    Some(&rev),
-                    if changed { "available" } else { "current" },
-                ),
-                &state,
-                &state,
-                false,
-            ));
-        }
-        let old = state.clone();
-        if changed {
-            let built = lock.build(&mut state, &rev, &ids)?;
-            let mut selection = state.selection.clone();
-            for id in built {
-                selection.insert(id, rev.clone());
-            }
-            let transaction = lock.prepare(&old, state.clone(), selection)?;
-            state = lock.activate(transaction)?;
-        }
-        if action == "maintain" {
-            state.next_check = now().saturating_add(DAY);
-            lock.save(&state)?;
-        }
-        Ok(activated(
-            result(&state, Some(&rev), "current"),
-            &old,
-            &state,
-            changed,
-        ))
-    })();
-    if action == "maintain" && work.is_err() && !journal_path(&lock.data).exists() {
-        state.next_check = now().saturating_add(BACKOFF);
+    let work = update_from_source(&lock, &mut state, action, components);
+    // A failed scheduled check backs off unless an activation is still pending recovery.
+    if action == UpdateAction::Maintain && work.is_err() && !journal_path(&lock.data).exists() {
+        state.next_check = now().saturating_add(FAILURE_BACKOFF);
         lock.save(&state)?;
     }
     work
+}
+
+fn update_from_source(
+    lock: &Locked,
+    state: &mut State,
+    action: UpdateAction,
+    components: &[String],
+) -> Result<Value> {
+    let rev = revision(
+        state
+            .source
+            .as_ref()
+            .context("no trusted local source configured")?,
+    )?;
+    let ids = if components.is_empty() {
+        state.selection.keys().cloned().collect::<Vec<_>>()
+    } else {
+        components.to_vec()
+    };
+    let changed = ids.iter().any(|id| state.selection.get(id) != Some(&rev));
+    if action == UpdateAction::Check {
+        let status = if changed { "available" } else { "current" };
+        return Ok(activated(
+            result(state, Some(&rev), status),
+            state,
+            state,
+            false,
+        ));
+    }
+    let old = state.clone();
+    if changed {
+        let built = lock.build(state, &rev, &ids)?;
+        let mut selection = state.selection.clone();
+        for id in built {
+            selection.insert(id, rev.clone());
+        }
+        let transaction = lock.prepare(&old, state.clone(), selection)?;
+        *state = lock.activate(transaction)?;
+    }
+    if action == UpdateAction::Maintain {
+        state.next_check = now().saturating_add(CHECK_INTERVAL);
+        lock.save(state)?;
+    }
+    Ok(activated(
+        result(state, Some(&rev), "current"),
+        &old,
+        state,
+        changed,
+    ))
 }
 
 #[cfg(test)]
