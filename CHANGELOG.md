@@ -9,6 +9,10 @@
   and remind coordinators to arrange person-only lifecycle steps before briefing.
 - Remove the rollback command, prior-selection receipt fields, obsolete
   activation fallback and dead coordinator helpers; stop hiding dead-code warnings.
+- Split manager deployment, coordinator placement and reconcile into smaller
+  units, share one bounded process runner and format the Rust workspace with
+  rustfmt. Commands, output and stored formats are unchanged; an oversized Git
+  reply is now reported as `git output exceeds limit`.
 - Remove superseded extraction/migration plans and duplicated role/fixture docs.
   Canonical roles and fixtures live with kit-coord.
 - Manager receipt format changes are clean cuts, not automatic conversions.
