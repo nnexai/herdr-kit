@@ -436,16 +436,13 @@ fn align_space(
             },
         )?;
     }
+    // Once retained, release::recheck owns the reason; replacing it here
+    // would make the two paths alternate when another resource also blocks.
     let closed = rec
         .ws
         .as_ref()
         .and_then(|id| state.workstreams.get(id))
-        .filter(|w| {
-            w.state == WsState::Closed
-                && w.retained
-                    .as_ref()
-                    .is_none_or(|r| r.reason_code != "in_use_by_person")
-        });
+        .filter(|w| w.state == WsState::Closed && w.retained.is_none());
     if let Some(ws) = closed {
         note(
             ctx,

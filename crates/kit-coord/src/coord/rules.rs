@@ -151,6 +151,9 @@ struct Eval<'a> {
 }
 impl<'a> Eval<'a> {
     fn task(&mut self, t: &Task) {
+        if t.state == TaskState::Closed {
+            return;
+        }
         let Some(address) = t.terminal.as_deref() else {
             return;
         };

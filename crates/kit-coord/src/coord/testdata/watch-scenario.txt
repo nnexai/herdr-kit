@@ -749,6 +749,7 @@ call: hc send c1 inbox: 13 new
 rule: none
 
 == +9800s the delegate reports done and the workstream is closed while the agent is busy
+call: hc get d1
 #95 +9800000ms "task:ws-aaaaaa-t1" task.reported ws-aaaaaa ws-aaaaaa-t1 {"outcome":"done","result":"<root>/result.md","summary":"Feature implemented"}
 #96 +9800000ms "coordinator" task.closed ws-aaaaaa ws-aaaaaa-t1 {"outcome":"accepted","reason":"accepted"}
 #97 +9800000ms "coordinator" ws.closed ws-aaaaaa - {"outcome":"delivered","summary":"Shipped"}
@@ -1064,10 +1065,8 @@ call: app ls
 call: app ls
 call: hc get d1
 call: hc get p8
-#113 +9920000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
-#114 +9920000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"idle","ok":false},{"name":"result_recorded","ok":true},{"name":"session_recorded","ok":true},{"name":"nothing_running","ok":false}],"reason":"Release blocked: agent busy.","reason_code":"agent_busy"}
 
-== +10040s nothing changed, yet the recheck journals both retention reasons again
+== +10040s an unchanged recheck does not repeat retention
 reconcile: ok
 call: hc list all=true label=Some(("coord.managed", "1"))
 call: hc get c1
@@ -1085,12 +1084,107 @@ call: app ls
 call: app ls
 call: hc get d1
 call: hc get p8
-#115 +10040000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
-#116 +10040000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"idle","ok":false},{"name":"result_recorded","ok":true},{"name":"session_recorded","ok":true},{"name":"nothing_running","ok":false}],"reason":"Release blocked: agent busy.","reason_code":"agent_busy"}
-rule: Send { terminal: "c1", text: "inbox: 18 new", record: NudgeSent { target: Coordinator, text: "inbox: 18 new", upto_seq: Some(116) }, ws: None, task: None }
+rule: none
+
+== +10060s another unchanged reconcile pass
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
 call: hc get c1
-call: hc send c1 inbox: 18 new
-#117 +10040000ms "watcher" nudge.sent - - {"target":"coordinator","text":"inbox: 18 new","upto_seq":116}
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+rule: none
+
+== +10080s another unchanged reconcile pass
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+rule: none
+
+== +10100s another unchanged reconcile pass
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+rule: none
+
+== +10120s another unchanged reconcile pass
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+rule: none
+
+== +10140s another unchanged reconcile pass
+reconcile: ok
+call: hc list all=true label=Some(("coord.managed", "1"))
+call: hc get c1
+call: hc get d1
+call: hc get d2
+call: app ls
+call: hc get d1
+call: hc get d2
+call: hc get c1
+call: hc get d1
+call: hc get p8
+call: hc get d1
+call: hc get d1
+call: app ls
+call: app ls
+call: hc get d1
+call: hc get p8
+rule: none
 
 == +10160s the agent is idle; its tab is released but a person is in the space
 reconcile: ok
@@ -1112,12 +1206,11 @@ call: app ls
 call: app ls
 call: app ls
 call: hc get p8
-#118 +10160000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"no_person_terminal","ok":false}],"reason":"Person terminal in owned space sp-a","reason_code":"in_use_by_person"}
-#119 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"idle","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
-#120 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"nothing_running","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
-#121 +10160000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"d1","type":"tab"}
-#122 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"tabs_released","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
-#123 +10160000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"no_person_terminal","ok":false},{"name":"tabs_released","ok":true}],"reason":"Release blocked: in use by person.","reason_code":"in_use_by_person"}
+#113 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"idle","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#114 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"nothing_running","name":"d1","ok":true,"resource":"tab:d1","type":"tab"}
+#115 +10160000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"d1","type":"tab"}
+#116 +10160000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"tabs_released","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#117 +10160000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"no_person_terminal","ok":false},{"name":"tabs_released","ok":true}],"reason":"Release blocked: in use by person.","reason_code":"in_use_by_person"}
 
 == +10280s the person leaves; the space closes but the worktree is dirty and occupied
 reconcile: ok
@@ -1135,15 +1228,15 @@ call: hc get c1
 call: hc get d2
 call: hc get p7
 call: hc get p9
-#124 +10280000ms "watcher" reconcile.finding ws-aaaaaa - {"code":"person_terminal_cleared","summary":"Person terminal in owned space sp-a"}
-#125 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_person_terminal","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
-#126 +10280000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"sp-a","type":"space"}
-#127 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#128 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#129 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","detail":"?? notes.txt","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#130 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#131 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#132 +10280000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"detail":"?? notes.txt","name":"clean","ok":false},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: uncommitted files.","reason_code":"uncommitted_files"}
+#118 +10280000ms "watcher" reconcile.finding ws-aaaaaa - {"code":"person_terminal_cleared","summary":"Person terminal in owned space sp-a"}
+#119 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_person_terminal","name":"sp-a","ok":true,"resource":"space:sp-a","type":"space"}
+#120 +10280000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"sp-a","type":"space"}
+#121 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#122 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#123 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","detail":"?? notes.txt","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#124 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#125 +10280000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#126 +10280000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"detail":"?? notes.txt","name":"clean","ok":false},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: uncommitted files.","reason_code":"uncommitted_files"}
 
 == +10400s the work is committed but not merged
 release ws-aaaaaa: cleaned=false released=[] retained=Some("unpushed_commits")
@@ -1152,12 +1245,12 @@ call: hc get c1
 call: hc get d2
 call: hc get p7
 call: hc get p9
-#133 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#134 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#135 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#136 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","detail":"1 unreachable commits","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#137 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#138 +10400000ms "coordinator" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"detail":"1 unreachable commits","name":"reachable","ok":false},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: unpushed commits.","reason_code":"unpushed_commits"}
+#127 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#128 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"ws_closed","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#129 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"clean","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#130 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","detail":"1 unreachable commits","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#131 +10400000ms "coordinator" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":false,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#132 +10400000ms "coordinator" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"detail":"1 unreachable commits","name":"reachable","ok":false},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: unpushed commits.","reason_code":"unpushed_commits"}
 
 == +10460s an unchanged recheck journals nothing
 reconcile: ok
@@ -1186,12 +1279,12 @@ call: hc get c1
 call: hc get d2
 call: hc get p7
 call: hc get p9
-#139 +10520000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#140 +10520000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: terminal in worktree.","reason_code":"terminal_in_worktree"}
+#133 +10520000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"reachable","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#134 +10520000ms "watcher" ws.retained ws-aaaaaa - {"checks":[{"name":"owned","ok":true},{"name":"ws_closed","ok":true},{"name":"clean","ok":true},{"name":"reachable","ok":true},{"name":"no_terminal_inside","ok":false}],"reason":"Release blocked: terminal in worktree.","reason_code":"terminal_in_worktree"}
 board: {
   "attention": [],
   "generated_at_ms": 1800010520000,
-  "journal_seq": 140,
+  "journal_seq": 134,
   "schema_version": 1,
   "workstreams": [
     {
@@ -1433,7 +1526,7 @@ board: {
 board text:
 # Coordinator board
 
-Journal sequence: 140 (at 1800010520000)
+Journal sequence: 134 (at 1800010520000)
 
 ## Needs you
 
@@ -1463,28 +1556,28 @@ call: hc list all=false label=None
 call: hc get c1
 call: hc get d2
 call: hc get p9
-#141 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
-#142 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"<root>/trees/feature","type":"worktree"}
-#143 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
-#144 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"merged","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
-#145 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"not_checked_out","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
-#146 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"feature","type":"branch"}
-#147 +10640000ms "watcher" ws.cleaned ws-aaaaaa - {}
+#135 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"no_terminal_inside","name":"<root>/trees/feature","ok":true,"resource":"worktree:<root>/trees/feature","type":"worktree"}
+#136 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"<root>/trees/feature","type":"worktree"}
+#137 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"owned","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#138 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"merged","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#139 +10640000ms "watcher" res.release_checked ws-aaaaaa ws-aaaaaa-t1 {"check":"not_checked_out","name":"feature","ok":true,"resource":"branch:feature","type":"branch"}
+#140 +10640000ms "watcher" res.released ws-aaaaaa ws-aaaaaa-t1 {"name":"feature","type":"branch"}
+#141 +10640000ms "watcher" ws.cleaned ws-aaaaaa - {}
 release ws-aaaaaa: cleaned=true released=[] retained=None
 
 == +10700s a workstream whose tab now belongs to another program is retained, then cleaned
 release ws-bbbbbb: cleaned=false released=[] retained=Some("owned")
 call: hc get d2
 call: hc get d2
-#148 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t1 {"outcome":"abandoned","reason":"abandoned"}
-#149 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t2 {"outcome":"superseded","reason":"superseded"}
-#150 +10700000ms "coordinator" ws.closed ws-bbbbbb - {"outcome":"abandoned","summary":"Stopped"}
-#151 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"owned","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
-#152 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"idle","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
-#153 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"result_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
-#154 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"session_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
-#155 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"nothing_running","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
-#156 +10700000ms "coordinator" ws.retained ws-bbbbbb - {"checks":[{"name":"owned","ok":false},{"name":"idle","ok":false},{"name":"result_recorded","ok":false},{"name":"session_recorded","ok":false},{"name":"nothing_running","ok":false}],"reason":"Release blocked: owned.","reason_code":"owned"}
+#142 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t1 {"outcome":"abandoned","reason":"abandoned"}
+#143 +10700000ms "coordinator" task.closed ws-bbbbbb ws-bbbbbb-t2 {"outcome":"superseded","reason":"superseded"}
+#144 +10700000ms "coordinator" ws.closed ws-bbbbbb - {"outcome":"abandoned","summary":"Stopped"}
+#145 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"owned","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#146 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"idle","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#147 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"result_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#148 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"session_recorded","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#149 +10700000ms "coordinator" res.release_checked ws-bbbbbb ws-bbbbbb-t1 {"check":"nothing_running","name":"d2","ok":false,"resource":"tab:d2","type":"tab"}
+#150 +10700000ms "coordinator" ws.retained ws-bbbbbb - {"checks":[{"name":"owned","ok":false},{"name":"idle","ok":false},{"name":"result_recorded","ok":false},{"name":"session_recorded","ok":false},{"name":"nothing_running","ok":false}],"reason":"Release blocked: owned.","reason_code":"owned"}
 
 == +10820s the replaced terminal is gone
 reconcile: ok
@@ -1493,8 +1586,8 @@ call: hc get c1
 call: app ls
 call: hc get d2
 call: hc get c1
-#157 +10820000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t1 {"name":"d2","note":"gone","type":"tab"}
-#158 +10820000ms "watcher" ws.cleaned ws-bbbbbb - {}
+#151 +10820000ms "watcher" res.released ws-bbbbbb ws-bbbbbb-t1 {"name":"d2","note":"gone","type":"tab"}
+#152 +10820000ms "watcher" ws.cleaned ws-bbbbbb - {}
 release ws-bbbbbb: cleaned=true released=[] retained=None
 
 == +10880s an event says the coordinator terminal is gone while hc still has it
@@ -1503,9 +1596,9 @@ call: hc get c1
 
 == +10900s everything is acknowledged; the coordinator is idle
 call: hc get c1
-#159 +10900000ms "coordinator" inbox.drained - - {"count":23,"cursor":158}
+#153 +10900000ms "coordinator" inbox.drained - - {"count":18,"cursor":152}
 rule: Append { ws: None, task: None, kind: CoordTurn { turn: 4, origin: Inbox, working_ms: None } }
-#160 +10900000ms "watcher" coord.turn - - {"origin":"inbox","turn":4}
+#154 +10900000ms "watcher" coord.turn - - {"origin":"inbox","turn":4}
 rule: none
 
 == +39700s eight hours later an idle coordinator would be restarted
@@ -1513,7 +1606,7 @@ rule: RestartCoordinator { reason: "idle" }
 
 == +39750s a requested handoff would restart it at once
 rule: RestartCoordinator { reason: "handoff" }
-#161 +39750000ms "coordinator" coord.handoff_requested - - {"by":"coordinator","note":"Continue with the release"}
+#155 +39750000ms "coordinator" coord.handoff_requested - - {"by":"coordinator","note":"Continue with the release"}
 
 == +39800s the coordinator terminal disappears before the watcher hears of it
 rule: RestartCoordinator { reason: "handoff" }
@@ -1523,12 +1616,12 @@ call: hc get c1
 == +39801s the watcher learns that the terminal is gone
 rule: Append { ws: None, task: None, kind: CoordSessionEnded { reason: "terminal_gone", terminal: "c1" } }
 call: hc get c1
-#162 +39801000ms "watcher" coord.session_ended - - {"reason":"terminal_gone","terminal":"c1"}
+#156 +39801000ms "watcher" coord.session_ended - - {"reason":"terminal_gone","terminal":"c1"}
 rule: none
 board: {
   "attention": [],
   "generated_at_ms": 1800039801000,
-  "journal_seq": 162,
+  "journal_seq": 156,
   "schema_version": 1,
   "workstreams": [
     {
@@ -1729,7 +1822,7 @@ board: {
 board text:
 # Coordinator board
 
-Journal sequence: 162 (at 1800039801000)
+Journal sequence: 156 (at 1800039801000)
 
 ## Needs you
 
@@ -1753,7 +1846,7 @@ Continue with the release
 
 # Coordinator board
 
-Journal sequence: 162 (at 1800039801000)
+Journal sequence: 156 (at 1800039801000)
 
 ## Needs you
 
@@ -1776,7 +1869,7 @@ None
 
 state: {
   "fold_version": 6,
-  "last_seq": 162,
+  "last_seq": 156,
   "last_ts_ms": 1800039801000,
   "workstreams": {
     "ws-aaaaaa": {
@@ -2349,7 +2442,7 @@ state: {
     "started_ms": 1800000000000,
     "sessions_started": 1,
     "handoff": [
-      161,
+      155,
       "coordinator"
     ],
     "handoff_note": "Continue with the release",
@@ -2367,9 +2460,9 @@ state: {
     "stopped_ms": null,
     "stop_reason": null
   },
-  "cursor": 158,
+  "cursor": 152,
   "waking": [],
-  "last_coordinator_nudge_upto": 116,
+  "last_coordinator_nudge_upto": 95,
   "questions": {
     "q1": {
       "text": "Which credentials?",

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Avoid repeated retained-workstream inbox wakeups on unchanged reconcile
+  passes, and stop recording new terminal turns after a task is closed.
+
 - Keep blocked/question delegates in a durable Needs you item across inbox
   acknowledgements and coordinator handoffs, with linked-question resolution,
   restart-safe 10-minute-to-4-hour coordinator reminder backoff and a persistent

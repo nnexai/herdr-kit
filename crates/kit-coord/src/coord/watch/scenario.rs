@@ -969,6 +969,9 @@ async fn scripted_watcher_run_matches_recorded_transcript() {
         Some(&a),
         json!({"kind":"ws.closed","data":{"summary":"Shipped","outcome":"delivered"}}),
     );
+    world.borrow_mut().set("d1", "working", 3, 9800);
+    s.event("d1");
+    let closed_seq = s.j.last_seq().unwrap();
     world
         .borrow_mut()
         .term("d1")
@@ -978,6 +981,9 @@ async fn scripted_watcher_run_matches_recorded_transcript() {
         .pid = 4242;
     s.tick().await;
     s.tick().await;
+    assert!(!s.j.read_after(closed_seq).unwrap().iter().any(|entry| {
+        entry.task.as_ref() == Some(&a1) && matches!(entry.typed(), Kind::TaskTurn { .. })
+    }));
     {
         let _busy = s.ctx.terminal_lock("d1").unwrap();
         s.release(&a);
@@ -987,12 +993,21 @@ async fn scripted_watcher_run_matches_recorded_transcript() {
 
     s.step(9920, "the watcher rechecks the retained workstream");
     s.reconcile();
-    s.step(
-        10040,
-        "nothing changed, yet the recheck journals both retention reasons again",
-    );
+    s.step(10040, "an unchanged recheck does not repeat retention");
     s.reconcile();
     s.tick().await;
+    for secs in [10060, 10080, 10100, 10120, 10140] {
+        let before = s.j.last_seq().unwrap();
+        s.step(secs, "another unchanged reconcile pass");
+        s.reconcile();
+        s.tick().await;
+        assert!(!s.j.read_after(before).unwrap().iter().any(|entry| {
+            matches!(
+                entry.typed(),
+                Kind::WsRetained { .. } | Kind::NudgeSent { .. }
+            )
+        }));
+    }
 
     s.step(
         10160,
