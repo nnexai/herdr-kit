@@ -4,7 +4,7 @@ use super::{
     config::Config,
     ids::{TaskId, WsId},
     kinds::{AttentionState, Entry, Kind, NudgeTarget, TurnOrigin},
-    state::{State, TaskState},
+    state::{BlockedEpisode, State, Task, TaskState},
 };
 use std::collections::BTreeMap;
 
@@ -122,82 +122,132 @@ fn turn_info(entries: &[Entry], terminal: &str, task: Option<&TaskId>) -> (u64, 
     (last_turn, origin)
 }
 
-pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<Action> {
-    let mut out = Vec::new();
-    if !facts.initialized {
-        return out;
-    }
-    for t in state.tasks.values() {
+/// Whether `term` is another process than the coordinator session last started
+/// on its address.
+fn coordinator_replaced(entries: &[Entry], address: &str, term: &Term) -> bool {
+    let started = entries.iter().rev().find(|e| {
+        e.kind == "coord.session_started"
+            && e.data.get("terminal").and_then(|v| v.as_str()) == Some(address)
+    });
+    started.is_some_and(|e| {
+        e.data
+            .get("pid")
+            .and_then(|v| v.as_u64())
+            .is_some_and(|p| Some(p) != term.pid.map(u64::from))
+            || e.data
+                .get("created_ms")
+                .and_then(|v| v.as_u64())
+                .is_some_and(|ms| ms != term.created_ms)
+    })
+}
+
+/// The inputs of one evaluation and the actions decided so far.
+struct Eval<'a> {
+    state: &'a State,
+    facts: &'a Facts,
+    cfg: &'a Config,
+    now_ms: u64,
+    out: Vec<Action>,
+}
+impl<'a> Eval<'a> {
+    fn task(&mut self, t: &Task) {
         let Some(address) = t.terminal.as_deref() else {
-            continue;
+            return;
         };
-        let term = facts.terms.get(address);
-        let missing = term.is_none();
+        let term = self.facts.terms.get(address);
+        if self.lost_terminal(t, address, term) {
+            return;
+        }
+        let Some(term) = term else { return };
+        self.turn(Some(&t.id), address, term);
+        if t.state != TaskState::Running {
+            return;
+        }
+        let attention = self.attention(t, term);
+        if t.blocked.is_some() || attention == Some(AttentionState::Blocked) {
+            return;
+        }
+        self.silence(t, address, term);
+    }
+    /// A task that should have a live terminal of its own but has none goes
+    /// dormant. Returns whether that is the case.
+    fn lost_terminal(&mut self, t: &Task, address: &str, term: Option<&Term>) -> bool {
         let finished = term.is_some_and(|v| !v.live());
         let replaced = term.is_some_and(|v| v.live() && t.pid.is_some() && v.pid != t.pid);
-        if matches!(
+        if !matches!(
             t.state,
             TaskState::Placed | TaskState::Running | TaskState::Reported
-        ) && (missing || finished || replaced)
+        ) || !(term.is_none() || finished || replaced)
         {
-            if replaced
-                && state.resources.iter().any(|r| {
-                    r.owned && !r.released && r.task.as_ref() == Some(&t.id) && r.r.name == address
-                })
-            {
-                out.push(Action::CloseLeftover {
-                    task: t.id.clone(),
-                    terminal: address.into(),
-                });
-            }
-            if !t.session.as_ref().is_some_and(|s| s.id.is_some()) {
-                append(
-                    &mut out,
-                    Some(&t.id),
-                    Kind::ReconcileFinding {
-                        code: "agent_gone_unresumable".into(),
-                        summary: format!(
-                            "Agent {} ended without a recorded session",
-                            t.id.as_str()
-                        ),
-                    },
-                );
-            }
-            append(
-                &mut out,
-                Some(&t.id),
-                Kind::TaskDormant {
-                    reason: if replaced {
-                        "replaced_after_restart"
-                    } else if finished {
-                        "terminal_finished"
-                    } else {
-                        "terminal_missing"
-                    }
-                    .into(),
-                },
-            );
-            continue;
+            return false;
         }
-        let Some(term) = term else { continue };
-        let (last_turn, origin) = turn_info(&facts.entries, address, Some(&t.id));
-        if term.turn > last_turn {
+        if replaced
+            && self.state.resources.iter().any(|r| {
+                r.owned && !r.released && r.task.as_ref() == Some(&t.id) && r.r.name == address
+            })
+        {
+            self.out.push(Action::CloseLeftover {
+                task: t.id.clone(),
+                terminal: address.into(),
+            });
+        }
+        if !t.session.as_ref().is_some_and(|s| s.id.is_some()) {
             append(
-                &mut out,
+                &mut self.out,
                 Some(&t.id),
-                Kind::TaskTurn {
-                    turn: term.turn,
-                    origin,
-                    working_ms: facts
-                        .working_since
-                        .get(address)
-                        .map(|v| term.status_ms.unwrap_or(now_ms).saturating_sub(*v)),
+                Kind::ReconcileFinding {
+                    code: "agent_gone_unresumable".into(),
+                    summary: format!("Agent {} ended without a recorded session", t.id.as_str()),
                 },
             );
         }
-        if t.state != TaskState::Running {
-            continue;
+        append(
+            &mut self.out,
+            Some(&t.id),
+            Kind::TaskDormant {
+                reason: if replaced {
+                    "replaced_after_restart"
+                } else if finished {
+                    "terminal_finished"
+                } else {
+                    "terminal_missing"
+                }
+                .into(),
+            },
+        );
+        true
+    }
+    /// Records the turn of a task's terminal, or of the coordinator's without a
+    /// task, when it is newer than the last one recorded.
+    fn turn(&mut self, task: Option<&TaskId>, address: &str, term: &Term) {
+        let (last_turn, origin) = turn_info(&self.facts.entries, address, task);
+        if term.turn <= last_turn {
+            return;
         }
+        let turn = term.turn;
+        let working_ms = self
+            .facts
+            .working_since
+            .get(address)
+            .map(|v| term.status_ms.unwrap_or(self.now_ms).saturating_sub(*v));
+        let kind = if task.is_some() {
+            Kind::TaskTurn {
+                turn,
+                origin,
+                working_ms,
+            }
+        } else {
+            Kind::CoordTurn {
+                turn,
+                origin,
+                working_ms,
+            }
+        };
+        append(&mut self.out, task, kind);
+    }
+    /// Records a change of what the terminal asks of the person and returns
+    /// what it asks now.
+    fn attention(&mut self, t: &Task, term: &Term) -> Option<AttentionState> {
         let attention = match term.word() {
             Some("blocked") => Some(AttentionState::Blocked),
             Some("error") => Some(AttentionState::Error),
@@ -206,7 +256,7 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
         if let Some(attention) = attention {
             if t.attention != Some(attention) {
                 append(
-                    &mut out,
+                    &mut self.out,
                     Some(&t.id),
                     Kind::TaskAttention {
                         state: attention,
@@ -218,7 +268,7 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
             && (t.attention.is_some() || t.start_blocked.is_some())
         {
             append(
-                &mut out,
+                &mut self.out,
                 Some(&t.id),
                 Kind::TaskAttention {
                     state: AttentionState::Clear,
@@ -226,16 +276,19 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
                 },
             );
         }
-        if t.blocked.is_some() || attention == Some(AttentionState::Blocked) {
-            continue;
-        }
+        attention
+    }
+    /// A running delegate that never began its turn is start-blocked; one that
+    /// sits idle without a report is nudged, and stalled if the nudge changes nothing.
+    fn silence(&mut self, t: &Task, address: &str, term: &Term) {
+        let (cfg, now_ms) = (self.cfg, self.now_ms);
         if term.turn == 0
             && term.word() != Some("working")
             && t.start_blocked.is_none()
             && elapsed(now_ms, t.started_ms, cfg.start_blocked_secs)
         {
             append(
-                &mut out,
+                &mut self.out,
                 Some(&t.id),
                 Kind::TaskStartBlocked {
                     terminal: address.into(),
@@ -243,146 +296,144 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
                 },
             );
         }
+        if t.reported_seq.is_some_and(|seq| seq > t.last_activity_seq) {
+            return;
+        }
         let nudged = t.last_nudge.filter(|(seq, _)| *seq > t.last_activity_seq);
-        let reported = t.reported_seq.is_some_and(|seq| seq > t.last_activity_seq);
-        if !reported {
-            if let Some((seq, ts)) = nudged {
-                if t.stalled.is_none() && elapsed(now_ms, Some(ts), cfg.stall_secs) {
-                    append(
-                        &mut out,
-                        Some(&t.id),
-                        Kind::TaskStalled {
-                            silent_secs: now_ms.saturating_sub(ts) / 1000,
-                            nudge_seq: seq,
-                        },
-                    );
-                }
-            } else if term.sendable() && elapsed(now_ms, term.status_ms, cfg.nudge_delegate_secs) {
-                out.push(Action::Send {
-                    terminal: address.into(),
-                    text: DELEGATE_NUDGE.into(),
-                    record: Kind::NudgeSent {
-                        target: NudgeTarget::Task,
-                        text: DELEGATE_NUDGE.into(),
-                        upto_seq: None,
+        if let Some((seq, ts)) = nudged {
+            if t.stalled.is_none() && elapsed(now_ms, Some(ts), cfg.stall_secs) {
+                append(
+                    &mut self.out,
+                    Some(&t.id),
+                    Kind::TaskStalled {
+                        silent_secs: now_ms.saturating_sub(ts) / 1000,
+                        nudge_seq: seq,
                     },
-                    ws: Some(t.ws.clone()),
-                    task: Some(t.id.clone()),
-                });
+                );
             }
+        } else if term.sendable() && elapsed(now_ms, term.status_ms, cfg.nudge_delegate_secs) {
+            self.out.push(Action::Send {
+                terminal: address.into(),
+                text: DELEGATE_NUDGE.into(),
+                record: Kind::NudgeSent {
+                    target: NudgeTarget::Task,
+                    text: DELEGATE_NUDGE.into(),
+                    upto_seq: None,
+                },
+                ws: Some(t.ws.clone()),
+                task: Some(t.id.clone()),
+            });
         }
     }
-    if let Some(address) = state.coordinator.terminal.as_deref() {
-        let term = facts.terms.get(address);
-        let identity = facts.entries.iter().rev().find(|e| {
-            e.kind == "coord.session_started"
-                && e.data.get("terminal").and_then(|v| v.as_str()) == Some(address)
+    fn coordinator(&mut self, address: &str) {
+        let (state, cfg, now_ms) = (self.state, self.cfg, self.now_ms);
+        let present = self.facts.terms.get(address).filter(|t| {
+            t.live()
+                && t.label("coord.role") == Some("coordinator")
+                && !coordinator_replaced(&self.facts.entries, address, t)
         });
-        let replaced = term.is_some_and(|t| {
-            identity.is_some_and(|e| {
-                e.data
-                    .get("pid")
-                    .and_then(|v| v.as_u64())
-                    .is_some_and(|p| Some(p) != t.pid.map(u64::from))
-                    || e.data
-                        .get("created_ms")
-                        .and_then(|v| v.as_u64())
-                        .is_some_and(|ms| ms != t.created_ms)
-            })
-        });
-        if replaced
-            || term.is_none_or(|t| !t.live() || t.label("coord.role") != Some("coordinator"))
-        {
+        let Some(term) = present else {
             append(
-                &mut out,
+                &mut self.out,
                 None,
                 Kind::CoordSessionEnded {
                     reason: "terminal_gone".into(),
                     terminal: address.into(),
                 },
             );
-        } else if let Some(term) = term {
-            let (last_turn, origin) = turn_info(&facts.entries, address, None);
-            if term.turn > last_turn {
-                append(
-                    &mut out,
-                    None,
-                    Kind::CoordTurn {
-                        turn: term.turn,
-                        origin,
-                        working_ms: facts
-                            .working_since
-                            .get(address)
-                            .map(|v| term.status_ms.unwrap_or(now_ms).saturating_sub(*v)),
-                    },
-                );
-            }
-            if term.sendable() {
-                let upto = state.waking.iter().next_back().copied();
-                if upto.is_some_and(|seq| seq > state.last_coordinator_nudge_upto)
-                    && elapsed(now_ms, term.status_ms, cfg.nudge_coordinator_secs)
-                {
-                    let text = format!("inbox: {} new", state.waking.len());
-                    out.push(Action::Send {
-                        terminal: address.into(),
-                        text: text.clone(),
-                        record: Kind::NudgeSent {
-                            target: NudgeTarget::Coordinator,
-                            text,
-                            upto_seq: upto,
-                        },
-                        ws: None,
-                        task: None,
-                    });
-                } else if let Some((task, item)) = state
-                    .tasks
-                    .values()
-                    .filter_map(|t| {
-                        let item = t.blocked.as_ref()?;
-                        let waiting_on_person = state.questions.values().any(|q| {
-                            q.answered.is_none()
-                                && q.task.as_ref() == Some(&t.id)
-                                && q.asked_seq >= item.seq
-                        });
-                        let interval = cfg
-                            .blocked_reminder_secs
-                            .max(1)
-                            .saturating_mul(1u64 << item.reminders.min(63))
-                            .min(cfg.blocked_reminder_cap_secs.max(1));
-                        (!waiting_on_person
-                            && elapsed(now_ms, Some(item.last_reminded_ms), interval))
-                        .then_some((t, item))
-                    })
-                    .min_by_key(|(t, item)| (item.last_reminded_ms, &t.id))
-                {
-                    out.push(Action::Send {
-                        terminal: address.into(),
-                        text: format!("Blocked delegate {} still needs attention: {}. Run kit board; ask the person with kit ask --task {} if needed.", task.id.as_str(), item.text, task.id.as_str()),
-                        record: Kind::TaskBlockedReminder { task: task.id.clone(), episode_seq: item.seq },
-                        ws: None,
-                        task: None,
-                    });
-                } else if state.waking.is_empty()
-                    && state.questions.values().all(|q| q.answered.is_some())
-                {
-                    if let Some((_, by)) = &state.coordinator.handoff {
-                        out.push(Action::RestartCoordinator {
-                            reason: if by == "user" { "user" } else { "handoff" }.into(),
-                        });
-                    } else if elapsed(
-                        now_ms,
-                        term.status_ms,
-                        cfg.idle_restart_hours.saturating_mul(3600),
-                    ) {
-                        out.push(Action::RestartCoordinator {
-                            reason: "idle".into(),
-                        });
-                    }
-                }
+            return;
+        };
+        self.turn(None, address, term);
+        if !term.sendable() {
+            return;
+        }
+        // One message at a time: new inbox entries first, then the blocked
+        // delegate that has waited longest, and a restart only with nothing open.
+        let upto = state.waking.iter().next_back().copied();
+        if upto.is_some_and(|seq| seq > state.last_coordinator_nudge_upto)
+            && elapsed(now_ms, term.status_ms, cfg.nudge_coordinator_secs)
+        {
+            let text = format!("inbox: {} new", state.waking.len());
+            self.out.push(Action::Send {
+                terminal: address.into(),
+                text: text.clone(),
+                record: Kind::NudgeSent {
+                    target: NudgeTarget::Coordinator,
+                    text,
+                    upto_seq: upto,
+                },
+                ws: None,
+                task: None,
+            });
+        } else if let Some((task, item)) = self.due_reminder() {
+            self.out.push(Action::Send {
+                terminal: address.into(),
+                text: format!("Blocked delegate {} still needs attention: {}. Run kit board; ask the person with kit ask --task {} if needed.", task.id.as_str(), item.text, task.id.as_str()),
+                record: Kind::TaskBlockedReminder { task: task.id.clone(), episode_seq: item.seq },
+                ws: None,
+                task: None,
+            });
+        } else if state.waking.is_empty() && state.questions.values().all(|q| q.answered.is_some())
+        {
+            if let Some((_, by)) = &state.coordinator.handoff {
+                self.out.push(Action::RestartCoordinator {
+                    reason: if by == "user" { "user" } else { "handoff" }.into(),
+                });
+            } else if elapsed(
+                now_ms,
+                term.status_ms,
+                cfg.idle_restart_hours.saturating_mul(3600),
+            ) {
+                self.out.push(Action::RestartCoordinator {
+                    reason: "idle".into(),
+                });
             }
         }
     }
-    out
+    /// The blocked delegate whose reminder is due and was reminded longest ago.
+    /// The interval doubles with every reminder up to the cap, and no reminder
+    /// is due while the person has an open question about the episode.
+    fn due_reminder(&self) -> Option<(&'a Task, &'a BlockedEpisode)> {
+        let (state, cfg) = (self.state, self.cfg);
+        state
+            .tasks
+            .values()
+            .filter_map(|t| {
+                let item = t.blocked.as_ref()?;
+                let waiting_on_person = state.questions.values().any(|q| {
+                    q.answered.is_none()
+                        && q.task.as_ref() == Some(&t.id)
+                        && q.asked_seq >= item.seq
+                });
+                let interval = cfg
+                    .blocked_reminder_secs
+                    .max(1)
+                    .saturating_mul(1u64 << item.reminders.min(63))
+                    .min(cfg.blocked_reminder_cap_secs.max(1));
+                (!waiting_on_person && elapsed(self.now_ms, Some(item.last_reminded_ms), interval))
+                    .then_some((t, item))
+            })
+            .min_by_key(|(t, item)| (item.last_reminded_ms, &t.id))
+    }
+}
+
+pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<Action> {
+    let mut eval = Eval {
+        state,
+        facts,
+        cfg,
+        now_ms,
+        out: Vec::new(),
+    };
+    if facts.initialized {
+        for task in state.tasks.values() {
+            eval.task(task);
+        }
+        if let Some(address) = state.coordinator.terminal.as_deref() {
+            eval.coordinator(address);
+        }
+    }
+    eval.out
 }
 
 #[cfg(test)]
