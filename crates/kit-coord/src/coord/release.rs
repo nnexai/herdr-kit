@@ -352,6 +352,51 @@ pub fn release_task_tab(
     }
     Ok(checks)
 }
+/// The workstream's owned resources of one type that are not released yet.
+fn owned_of<'a>(
+    state: &'a State,
+    id: &'a WsId,
+    typ: ResType,
+) -> impl Iterator<Item = &'a ResourceRec> {
+    state
+        .resources
+        .iter()
+        .filter(move |r| r.ws.as_ref() == Some(id) && r.r.r#type == typ && r.owned && !r.released)
+}
+/// Whether the resource no longer exists outside the journal.
+fn gone(ctx: &Ctx, rec: &ResourceRec) -> Result<bool> {
+    Ok(match rec.r.r#type {
+        ResType::Tab => ctx.hc.get(&rec.r.name)?.is_none(),
+        ResType::Space => ctx.app.ls()?.space(&rec.r.name).is_none(),
+        ResType::Worktree => !git::worktree_list(repo(rec)?)?
+            .iter()
+            .any(|w| w.path == Path::new(&rec.r.name)),
+        ResType::Branch => !git::branch_exists(repo(rec)?, &rec.r.name)?,
+    })
+}
+/// The release checks of one resource. A branch must also be merged at `sha`,
+/// the commit its deletion is pinned to.
+fn release_checks(
+    ctx: &Ctx,
+    state: &State,
+    rec: &ResourceRec,
+    sha: Option<&str>,
+) -> Result<Vec<Check>> {
+    Ok(match rec.r.r#type {
+        ResType::Tab => check_tab(ctx, state, rec)?,
+        ResType::Space => check_space(ctx, state, rec, &ctx.app.ls()?)?,
+        ResType::Worktree => check_worktree(ctx, state, rec)?,
+        ResType::Branch => {
+            let mut checks = check_branch(state, rec)?;
+            checks[1].ok &= git::is_ancestor(
+                repo(rec)?,
+                sha.context("branch has no pinned commit")?,
+                &format!("refs/heads/{}", delivery(state, rec)?),
+            )?;
+            checks
+        }
+    })
+}
 pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) -> Result<Outcome> {
     let mut lock = j.lock()?;
     let initial = lock.state().clone();
@@ -378,13 +423,7 @@ pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) 
         ResType::Worktree,
         ResType::Branch,
     ] {
-        let state = lock.state().clone();
-        let records: Vec<_> = state
-            .resources
-            .iter()
-            .filter(|r| r.ws.as_ref() == Some(id) && r.r.r#type == typ && r.owned && !r.released)
-            .cloned()
-            .collect();
+        let records: Vec<_> = owned_of(lock.state(), id, typ).cloned().collect();
         for rec in records {
             let state = lock.state().clone();
             let _terminal_guard = if typ == ResType::Tab {
@@ -402,36 +441,17 @@ pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) 
             } else {
                 None
             };
-            // Do not remove a worktree until its owned space has been released.
-            if typ == ResType::Worktree
-                && state.resources.iter().any(|r| {
-                    r.ws.as_ref() == Some(id)
-                        && r.r.r#type == ResType::Space
-                        && r.owned
-                        && !r.released
-                })
-            {
-                continue;
-            }
-            if typ == ResType::Branch
-                && state.resources.iter().any(|r| {
-                    r.ws.as_ref() == Some(id)
-                        && r.r.r#type == ResType::Worktree
-                        && r.owned
-                        && !r.released
-                })
-            {
-                continue;
-            }
-            let gone = match typ {
-                ResType::Tab => ctx.hc.get(&rec.r.name)?.is_none(),
-                ResType::Space => ctx.app.ls()?.space(&rec.r.name).is_none(),
-                ResType::Worktree => !git::worktree_list(repo(&rec)?)?
-                    .iter()
-                    .any(|w| w.path == Path::new(&rec.r.name)),
-                ResType::Branch => !git::branch_exists(repo(&rec)?, &rec.r.name)?,
+            // A worktree stays until its owned space is released, and a branch
+            // until its worktree is.
+            let holder = match typ {
+                ResType::Worktree => Some(ResType::Space),
+                ResType::Branch => Some(ResType::Worktree),
+                ResType::Tab | ResType::Space => None,
             };
-            if gone {
+            if holder.is_some_and(|holder| owned_of(&state, id, holder).next().is_some()) {
+                continue;
+            }
+            if gone(ctx, &rec)? {
                 released(&mut lock, actor, ctx.now(), &rec, Some("gone"))?;
                 result.released.push(rec.r.clone());
                 continue;
@@ -444,20 +464,7 @@ pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) 
             } else {
                 None
             };
-            let checks = match typ {
-                ResType::Tab => check_tab(ctx, &state, &rec)?,
-                ResType::Space => check_space(ctx, &state, &rec, &ctx.app.ls()?)?,
-                ResType::Worktree => check_worktree(ctx, &state, &rec)?,
-                ResType::Branch => {
-                    let mut c = check_branch(&state, &rec)?;
-                    c[1].ok &= git::is_ancestor(
-                        repo(&rec)?,
-                        sha.as_deref().unwrap(),
-                        &format!("refs/heads/{}", delivery(&state, &rec)?),
-                    )?;
-                    c
-                }
-            };
+            let checks = release_checks(ctx, &state, &rec, sha.as_deref())?;
             changed |= record_checks(&mut lock, actor, ctx.now(), &rec, &checks, mode)?;
             if checks.iter().any(|c| !c.ok) {
                 if result.retained.is_none() {
@@ -492,10 +499,7 @@ pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) 
         }
     }
     if let Some(r) = &result.retained {
-        let previous = initial
-            .workstreams
-            .get(id)
-            .and_then(|w| w.retained.as_ref());
+        let previous = workstream.retained.as_ref();
         if mode == Mode::Command
             || changed
             || previous.is_none_or(|p| p.reason_code != r.reason_code || p.checks != r.checks)
@@ -515,9 +519,9 @@ pub fn release_ws(ctx: &Ctx, j: &Journal, actor: &Actor, id: &WsId, mode: Mode) 
             )?;
         }
     } else {
-        let state = lock.state();
         ensure!(
-            !state
+            !lock
+                .state()
                 .resources
                 .iter()
                 .any(|r| r.ws.as_ref() == Some(id) && r.owned && !r.released),
