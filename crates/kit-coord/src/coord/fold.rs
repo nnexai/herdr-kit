@@ -47,6 +47,8 @@ pub fn fold<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> State {
     }
     state
 }
+/// Applies one journal entry: the bookkeeping every entry gets, the projection
+/// of its kind, and the questions a blocked episode takes with it when it ends.
 pub fn apply(s: &mut State, e: &Entry) {
     if e.seq <= s.last_seq {
         anomaly(s, e, "out-of-order or duplicate sequence");
@@ -70,6 +72,42 @@ pub fn apply(s: &mut State, e: &Entry) {
         .and_then(|id| s.tasks.get(id))
         .and_then(|t| t.blocked.as_ref())
         .map(|item| item.seq);
+    project(s, e, kind);
+    if let Some((id, episode_seq)) = e.task.as_ref().zip(prior_episode) {
+        close_episode_questions(s, e, id, episode_seq);
+    }
+}
+/// Answers the open questions about a task's blocked episode once an entry has
+/// ended the episode, so the person is not left with a question nobody waits on.
+fn close_episode_questions(s: &mut State, e: &Entry, id: &super::ids::TaskId, episode_seq: u64) {
+    if !s.tasks.get(id).is_some_and(|t| t.blocked.is_none()) {
+        return;
+    }
+    for q in s.questions.values_mut().filter(|q| {
+        q.task.as_ref() == Some(id) && q.asked_seq >= episode_seq && q.answered.is_none()
+    }) {
+        q.answered = Some(Answer {
+            text: "Resolved by delegate state change.".into(),
+            seq: e.seq,
+            ts_ms: e.ts_ms,
+        });
+    }
+}
+/// Whether recording resource `r` with entry `e` fulfils the intent: it names
+/// the same resource, or it is the tab of a task whose intent was written under
+/// the task id before the terminal had an address.
+fn fulfils(i: &Intent, e: &Entry, r: &ResourceRef) -> bool {
+    i.ws == e.ws
+        && (same(&i.r, r)
+            || (r.r#type == ResType::Tab
+                && i.r.r#type == ResType::Tab
+                && i.task.is_some()
+                && i.task == e.task
+                && i.task.as_ref().is_some_and(|id| i.r.name == id.as_str())))
+}
+/// The projection of one entry by kind. An entry the state cannot accept is
+/// recorded as an anomaly and changes nothing else.
+fn project(s: &mut State, e: &Entry, kind: Kind) {
     match kind {
         Kind::WsOpened {
             title,
@@ -552,15 +590,7 @@ pub fn apply(s: &mut State, e: &Entry) {
                 if let Some(seq) = s
                     .intents
                     .iter()
-                    .find(|(_, i)| {
-                        i.ws == e.ws
-                            && (same(&i.r, &r)
-                                || (r.r#type == ResType::Tab
-                                    && i.r.r#type == ResType::Tab
-                                    && i.task.is_some()
-                                    && i.task == e.task
-                                    && i.task.as_ref().is_some_and(|id| i.r.name == id.as_str())))
-                    })
+                    .find(|(_, i)| fulfils(i, e, &r))
                     .map(|(seq, _)| *seq)
                 {
                     s.intents.remove(&seq);
@@ -811,19 +841,6 @@ pub fn apply(s: &mut State, e: &Entry) {
         | Kind::Correction { .. }
         | Kind::CoordSent { .. }
         | Kind::Unknown => {}
-    }
-    if let Some((id, episode_seq)) = e.task.as_ref().zip(prior_episode) {
-        if s.tasks.get(id).is_some_and(|t| t.blocked.is_none()) {
-            for q in s.questions.values_mut().filter(|q| {
-                q.task.as_ref() == Some(id) && q.asked_seq >= episode_seq && q.answered.is_none()
-            }) {
-                q.answered = Some(Answer {
-                    text: "Resolved by delegate state change.".into(),
-                    seq: e.seq,
-                    ts_ms: e.ts_ms,
-                });
-            }
-        }
     }
 }
 
