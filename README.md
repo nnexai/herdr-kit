@@ -72,15 +72,13 @@ An entire revision is retained while any selected component, any JSON layout
 still uses it. Retained generations are retried on later installs/updates and
 `update maintain`, even when the source check is not due.
 
-Collection is conservative: a complete process-path census is required. Linux
-uses `/proc/*/{exe,cwd}`; other systems require a successful, diagnostic-free
-`lsof` census. Permission failures (including non-dumpable processes), unavailable
-process information, unreadable/malformed layouts, symlinks, managed drift or
-unknown release files retain the generation. Linux process-namespace visibility
-must cover all consumers. No privileges are acquired and argv is not treated as
-proof. On restricted hosts, cleanup can remain deferred; a stderr diagnostic
-identifies incomplete process visibility. A snapshot is not a cross-process
-launch lock: do not concurrently introduce references to retired generations.
+Linux checks readable `/proc/*/{exe,cwd}` links; processes whose links cannot
+be inspected do not block collection, and may still be using a generation.
+Other systems require a successful, diagnostic-free `lsof` census. Unreadable
+or malformed layouts, symlinks, managed drift and unknown release files retain
+the generation. No privileges are acquired and argv is not treated as proof.
+A snapshot is not a cross-process launch lock: do not concurrently introduce
+references to retired generations.
 
 Before deletion, exact tree snapshots are persisted in the activation journal.
 Recovery accepts already-removed files but refuses changed/added files, rechecks

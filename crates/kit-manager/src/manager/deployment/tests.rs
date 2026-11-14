@@ -317,10 +317,10 @@ fn activation_removes_only_superseded_owned_deployments_and_replays_cleanup() {
         assert!(lock.recover().is_err());
         assert!(!mod_path(&home, "kit-coord", &b).exists());
         fs::copy(layout(&home), &old_source).unwrap();
-        lock.recover_with_processes(|| Some(Vec::new())).unwrap();
+        lock.recover_with_processes(|| Ok(Vec::new())).unwrap();
         // Replay the crash prefix after cleanup, before journal removal.
         save(&journal_path(&lock.data), &transaction).unwrap();
-        lock.recover_with_processes(|| Some(Vec::new())).unwrap();
+        lock.recover_with_processes(|| Ok(Vec::new())).unwrap();
         lock.verify_active(&lock.state().unwrap()).unwrap();
         for path in transaction.obsolete_deployments.keys() {
             assert!(!path.exists());

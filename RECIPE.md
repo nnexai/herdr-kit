@@ -31,8 +31,8 @@ Only the layout integration requests optional manager maintenance. It checks
 the trusted local Git source and builds selected committed packages. Neither
 capability requires or invokes an updater. User layouts/settings stay untouched.
 After activation, unused receipt-owned revision mods, their data and release trees
-are collected with journaled recovery. Layout/process pins and incomplete process
-visibility retain generations for later maintenance; user-owned siblings remain.
+are collected with journaled recovery. Layouts and readable process paths pin
+generations; unreadable processes do not. User-owned siblings remain.
 
 The coordinator keeps workstreams, tasks, decisions and reports in an
 append-only local journal. The person controls it with `kit-coord up`, `kit-coord down`

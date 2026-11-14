@@ -163,15 +163,15 @@ impl Locked {
         if !journal_path(&self.data).exists() { return Ok(()); }
         self.recover_with_processes(generations::process_paths)
     }
-    fn recover_with_processes(&self, processes: impl Fn() -> Option<Vec<PathBuf>>) -> Result<()> {
+    fn recover_with_processes(&self, processes: impl Fn() -> Result<Vec<PathBuf>>) -> Result<()> {
         let Some(mut transaction): Option<Transaction> = read_json(&journal_path(&self.data))? else {
             return Ok(());
         };
         ensure!(transaction.schema_version == 1, "unsupported activation journal");
         if transaction.cleanup.is_some() {
             self.verify_active(&transaction.state)?;
-            let census = processes();
-            let state = self.finish_generations(&transaction, census.as_deref())?;
+            let census = processes()?;
+            let state = self.finish_generations(&transaction, &census)?;
             self.save(&state)?;
             fs::remove_file(journal_path(&self.data))?;
             File::open(&self.data)?.sync_all()?;
@@ -221,16 +221,11 @@ impl Locked {
                 }
             }
         }
-        let census = processes();
-        if census.is_none() && transaction.state.package_releases.iter().any(|(rev, packages)|
-            !transaction.state.selection.values().any(|selected| selected == rev)
-                && packages.values().any(|receipt| receipt.activated)) {
-            eprintln!("generation cleanup deferred: incomplete process executable/cwd visibility");
-        }
-        transaction.cleanup = Some(self.generation_plan(&transaction.state, census.as_deref()));
+        let census = processes()?;
+        transaction.cleanup = Some(self.generation_plan(&transaction.state, &census));
         save(&journal_path(&self.data), &transaction)?;
-        let census = processes();
-        let state = self.finish_generations(&transaction, census.as_deref())?;
+        let census = processes()?;
+        let state = self.finish_generations(&transaction, &census)?;
         self.save(&state)?;
         fs::remove_file(journal_path(&self.data))?;
         File::open(&self.data)?.sync_all()?;

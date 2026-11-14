@@ -11,8 +11,10 @@
   drift refusal and idempotent crash recovery; preserve unowned siblings.
 - Sweep superseded receipt-owned mod folders, matching mod-data directories and
   release generations after activation and on maintenance (including not-due
-  checks). Keep selected revisions, layout/process pins and uncertain visibility
-  or ownership; journal exact cleanup trees for partial-deletion crash recovery.
+  checks). Keep selected revisions, layout/readable-process pins and uncertain
+  ownership; journal exact cleanup trees for partial-deletion crash recovery.
+- Ignore unreadable process links during generation cleanup, and make coordinator
+  replies more concise.
 - Document the clean manager ownership cutover required by installed rollback-era
   receipts, preserving the coordinator's journal, configuration, roles and sessions.
 - Complete the mechanical P2–P4 split into independent kit-coord and kit-usage

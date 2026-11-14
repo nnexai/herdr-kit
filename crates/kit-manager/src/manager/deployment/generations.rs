@@ -1,50 +1,48 @@
-//! Post-activation, receipt-scoped collection. Uncertain liveness never permits deletion.
+//! Post-activation, receipt-scoped collection using readable process paths.
 use super::*;
 use std::collections::BTreeSet;
 
-
-// None means the process census was incomplete. Do not turn permission failures
-// (including non-dumpable processes) into evidence that a generation is unused.
-pub(super) fn process_paths() -> Option<Vec<PathBuf>> {
+pub(super) fn process_paths() -> Result<Vec<PathBuf>> {
     #[cfg(target_os = "linux")]
     {
-        let mut paths = Vec::new();
-        for entry in fs::read_dir("/proc").ok()? {
-            let entry = entry.ok()?;
-            if !entry.file_name().as_encoded_bytes().iter().all(u8::is_ascii_digit) {
-                continue;
-            }
-            for field in ["exe", "cwd"] {
-                match fs::read_link(entry.path().join(field)) {
-                    Ok(path) => paths.push(path),
-                    // Exited processes, zombies and kernel threads have no link.
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                    Err(_) => return None,
-                }
-            }
-        }
-        Some(paths)
+        process_paths_at(Path::new("/proc"))
     }
     #[cfg(not(target_os = "linux"))]
     {
-        // lsof exposes executable text and cwd paths on macOS. Any diagnostics
-        // or failure make the census uncertain; never hide permission warnings.
-        let stdout = tempfile::tempfile().ok()?;
-        let stderr = tempfile::tempfile().ok()?;
+        // lsof exposes executable text and cwd paths on macOS.
+        let stdout = tempfile::tempfile()?;
+        let stderr = tempfile::tempfile()?;
         let status = bounded(Command::new("lsof").args(["-n", "-P", "-F0n", "-d", "cwd,txt"])
-            .stdout(stdout.try_clone().ok()?).stderr(stderr.try_clone().ok()?), 30).ok()?;
-        if !status.success() || stderr.metadata().ok()?.len() != 0 { return None; }
+            .stdout(stdout.try_clone()?).stderr(stderr.try_clone()?), 30)?;
+        ensure!(status.success() && stderr.metadata()?.len() == 0, "process census failed");
         use std::io::{Read, Seek, SeekFrom};
         let mut stdout = stdout;
-        stdout.seek(SeekFrom::Start(0)).ok()?;
+        stdout.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).ok()?;
-        Some(bytes.split(|byte| *byte == 0).filter_map(|field| {
+        stdout.read_to_end(&mut bytes)?;
+        Ok(bytes.split(|byte| *byte == 0).filter_map(|field| {
             let name = field.strip_prefix(b"n/")?;
             let name = std::str::from_utf8(name).ok()?;
             Some(Path::new("/").join(name))
         }).collect())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn process_paths_at(proc_root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(proc_root)? {
+        let entry = entry?;
+        if !entry.file_name().as_encoded_bytes().iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        for field in ["exe", "cwd"] {
+            if let Ok(path) = fs::read_link(entry.path().join(field)) {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
 }
 
 fn layout_strings(home: &Path) -> Result<Vec<String>> {
@@ -102,8 +100,7 @@ fn snapshot(root: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 impl Locked {
-    pub(super) fn generation_plan(&self, state: &State, processes: Option<&[PathBuf]>) -> Vec<GenerationCleanup> {
-        let Some(processes) = processes else { return Vec::new(); };
+    pub(super) fn generation_plan(&self, state: &State, processes: &[PathBuf]) -> Vec<GenerationCleanup> {
         let Some(home) = &state.app_home else { return Vec::new(); };
         let Ok(layouts) = layout_strings(home) else { return Vec::new(); };
         state.package_releases.iter()
@@ -156,12 +153,11 @@ impl Locked {
             }).collect()
     }
 
-    pub(super) fn finish_generations(&self, transaction: &Transaction, processes: Option<&[PathBuf]>) -> Result<State> {
+    pub(super) fn finish_generations(&self, transaction: &Transaction, processes: &[PathBuf]) -> Result<State> {
         let mut state = transaction.state.clone();
         let home = state.app_home.as_ref().context("missing app home")?;
         let plan = transaction.cleanup.as_ref().context("missing cleanup phase")?;
         if !plan.is_empty() {
-            let processes = processes.context("cannot prove generation liveness; cleanup journal retained")?;
             let layouts = layout_strings(home)?;
             // Preflight the entire deletion set before removing its first file.
             for generation in plan {

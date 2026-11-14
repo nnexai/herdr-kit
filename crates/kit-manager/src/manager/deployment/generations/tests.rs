@@ -3,7 +3,7 @@ use super::super::tests::{component_release, empty_state, selected, BUNDLE};
 
 fn activate(lock: &Locked, transaction: Transaction, paths: &[PathBuf]) -> State {
     save(&journal_path(&lock.data), &transaction).unwrap();
-    lock.recover_with_processes(|| Some(paths.to_vec())).unwrap();
+    lock.recover_with_processes(|| Ok(paths.to_vec())).unwrap();
     lock.state().unwrap()
 }
 
@@ -22,6 +22,24 @@ fn second(lock: &Locked, old: &State, rev: &str, paths: &[PathBuf]) -> State {
 fn maintenance(state: State) -> Transaction {
     Transaction { schema_version: 1, state, files: Vec::new(), mods: Vec::new(),
         obsolete_deployments: BTreeMap::new(), cleanup: None }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn unreadable_process_links_do_not_hide_readable_pins() {
+    use std::os::unix::fs::symlink;
+    let temp = tempfile::tempdir().unwrap();
+    let proc_root = temp.path().join("proc");
+    directory(&proc_root.join("1")).unwrap();
+    directory(&proc_root.join("2")).unwrap();
+    // A directory cannot be read as a link, and a missing link also fails.
+    directory(&proc_root.join("1/exe")).unwrap();
+    symlink("/generation/bin", proc_root.join("2/exe")).unwrap();
+    symlink("/generation/work", proc_root.join("2/cwd")).unwrap();
+    let paths = process_paths_at(&proc_root).unwrap();
+    assert_eq!(paths.len(), 2);
+    assert!(paths.contains(&PathBuf::from("/generation/bin")));
+    assert!(paths.contains(&PathBuf::from("/generation/work")));
 }
 
 #[test]
@@ -100,8 +118,7 @@ fn real_process_executable_and_cwd_each_pin_a_generation() {
         let mut child = Running(Command::new(if executable_pin { executable.as_path() } else { Path::new("/bin/sleep") })
             .arg("60").current_dir(&cwd).spawn().unwrap());
         let proc = PathBuf::from(format!("/proc/{}", child.0.id()));
-        // A controlled, complete census of the fixture's actor, using real kernel
-        // links, avoids relying on permissions for unrelated host processes.
+        // Use the fixture actor's real kernel links.
         let paths = [fs::read_link(proc.join("exe")).unwrap(), fs::read_link(proc.join("cwd")).unwrap()];
         assert_eq!(paths[1], cwd);
         if executable_pin { assert_eq!(paths[0], executable); }
@@ -123,31 +140,31 @@ fn cleanup_journal_recovers_partial_trees_and_post_save_crash() {
     let home = temp.path().join("app");
     let a = "a".repeat(40);
     let old = first(&lock, &home, &a);
-    // First activation has incomplete visibility and therefore keeps the old rev.
+    // Keep the old revision pinned until the recovery fixture is prepared.
     let mut next = old.clone();
     component_release(&lock, &mut next, &"b".repeat(40));
     let tx = lock.prepare(&old, next, selected(BUNDLE, &"b".repeat(40))).unwrap();
     save(&journal_path(&lock.data), &tx).unwrap();
-    lock.recover_with_processes(|| None).unwrap();
+    lock.recover_with_processes(|| Ok(vec![release(&lock.data, &a)])).unwrap();
     let mut cleanup = maintenance(lock.state().unwrap());
-    cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, Some(&[])));
+    cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     assert_eq!(cleanup.cleanup.as_ref().unwrap().len(), 1);
     save(&journal_path(&lock.data), &cleanup).unwrap();
     fs::remove_file(release(&lock.data, &a).join("kit-coord")).unwrap();
     fs::remove_dir_all(mod_path(&home, "kit-usage", &a)).unwrap();
-    lock.recover_with_processes(|| Some(Vec::new())).unwrap();
+    lock.recover_with_processes(|| Ok(Vec::new())).unwrap();
     assert!(!release(&lock.data, &a).exists());
     assert!(!journal_path(&lock.data).exists());
     // State was saved, but journal unlink did not reach disk.
     save(&journal_path(&lock.data), &cleanup).unwrap();
-    lock.recover_with_processes(|| Some(Vec::new())).unwrap();
+    lock.recover_with_processes(|| Ok(Vec::new())).unwrap();
     let state = lock.state().unwrap();
     assert!(!state.package_releases.contains_key(&a));
     lock.verify_active(&state).unwrap();
 }
 
 #[test]
-fn uncertain_visibility_drift_and_new_pins_never_authorize_deletion() {
+fn drift_and_new_pins_never_authorize_deletion() {
     let temp = tempfile::tempdir().unwrap();
     let lock = Locked::open(&temp.path().join("data")).unwrap();
     let home = temp.path().join("app");
@@ -155,26 +172,25 @@ fn uncertain_visibility_drift_and_new_pins_never_authorize_deletion() {
     let old = first(&lock, &home, &a);
     let pinned_path = release(&lock.data, &a).join("kit-coord");
     let state = second(&lock, &old, &"b".repeat(40), &[pinned_path.clone()]);
-    assert!(lock.generation_plan(&state, None).is_empty());
     let extra = release(&lock.data, &a).join("unowned");
     fs::write(&extra, "keep").unwrap();
-    assert!(lock.generation_plan(&state, Some(&[])).is_empty());
+    assert!(lock.generation_plan(&state, &[]).is_empty());
     fs::remove_file(extra).unwrap();
     let old_mod = mod_path(&home, "kit-coord", &a).join("main.js");
     let original = fs::read(&old_mod).unwrap();
     fs::write(&old_mod, "edit").unwrap();
-    assert!(lock.generation_plan(&state, Some(&[])).is_empty());
+    assert!(lock.generation_plan(&state, &[]).is_empty());
     fs::write(&old_mod, original).unwrap();
     let malformed = home.join("layouts/personal.json");
     fs::write(&malformed, "malformed").unwrap();
-    assert!(lock.generation_plan(&state, Some(&[])).is_empty());
+    assert!(lock.generation_plan(&state, &[]).is_empty());
     fs::remove_file(&malformed).unwrap();
     let mut cleanup = maintenance(state);
-    cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, Some(&[])));
+    cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     save(&journal_path(&lock.data), &cleanup).unwrap();
-    assert!(lock.recover_with_processes(|| Some(vec![pinned_path.clone()])).is_err());
+    assert!(lock.recover_with_processes(|| Ok(vec![pinned_path.clone()])).is_err());
     assert!(pinned_path.exists());
     assert!(journal_path(&lock.data).exists());
-    lock.recover_with_processes(|| Some(Vec::new())).unwrap();
+    lock.recover_with_processes(|| Ok(Vec::new())).unwrap();
     assert!(!pinned_path.exists());
 }
