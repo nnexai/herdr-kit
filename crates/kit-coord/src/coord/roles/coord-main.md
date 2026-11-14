@@ -136,6 +136,5 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
 
 ## Talking to the person
 
-Lead with the outcome. Use one short line per placement or item needing the
-person; mention digest-tier decisions. Omit IDs, paths, commit hashes, test
-counts and other unnecessary details unless asked.
+Be brief: lead with the outcome, one line per item, and leave out details the
+person didn't ask for. Include digest-tier decisions since your last summary.
