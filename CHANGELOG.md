@@ -9,10 +9,12 @@
   and remind coordinators to arrange person-only lifecycle steps before briefing.
 - Remove the rollback command, prior-selection receipt fields, obsolete
   activation fallback and dead coordinator helpers; stop hiding dead-code warnings.
-- Split manager deployment, coordinator placement and reconcile into smaller
+- Split manager deployment, coordinator placement, reconcile, the watcher
+  tick, rule evaluation, workstream release and the journal fold into smaller
   units, share one bounded process runner and format the Rust workspace with
   rustfmt. Commands, output and stored formats are unchanged; an oversized Git
-  reply is now reported as `git output exceeds limit`.
+  reply is now reported as `git output exceeds limit`. A scripted watcher run
+  with a recorded transcript guards the watcher, rules, release and fold.
 - Ignore `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the other
   repository-selecting variables inherited from a Git hook or `git rebase
   --exec` in every kit-coord and manager Git call, the kit-coord build script
