@@ -115,9 +115,30 @@ fn verify_version(active: &Active) -> Result<()> {
     Ok(())
 }
 
+/// Identity of the file a descriptor's executable path currently names.
+#[derive(PartialEq, Eq)]
+struct Fingerprint {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+}
+impl Fingerprint {
+    fn of(metadata: &fs::Metadata) -> Self {
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            len: metadata.len(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Replacement {
-    checked: Option<(Active, u64, u64, u64, i64, i64)>,
+    checked: Option<(Active, Fingerprint)>,
     failure: Option<String>,
 }
 impl Replacement {
@@ -126,38 +147,18 @@ impl Replacement {
     }
     /// A bad unchanged candidate is probed once, not exec'ed on each heartbeat.
     pub fn selected(&mut self, root: &Path, running: &str) -> Result<Option<Active>> {
-        let Some(active) = read(root)? else {
-            self.checked = None;
-            self.failure = None;
+        let Some(active) = read(root)?.filter(|active| active.revision != running) else {
+            *self = Self::default();
             return Ok(None);
         };
-        if active.revision == running {
-            self.checked = None;
-            self.failure = None;
-            return Ok(None);
-        }
-        let metadata = target_metadata(&active)?;
-        let unchanged =
-            self.checked
-                .as_ref()
-                .is_some_and(|(previous, dev, ino, len, mtime, nsec)| {
-                    previous == &active
-                        && *dev == metadata.dev()
-                        && *ino == metadata.ino()
-                        && *len == metadata.len()
-                        && *mtime == metadata.mtime()
-                        && *nsec == metadata.mtime_nsec()
-                });
+        let fingerprint = Fingerprint::of(&target_metadata(&active)?);
+        let unchanged = self
+            .checked
+            .as_ref()
+            .is_some_and(|(previous, seen)| *previous == active && *seen == fingerprint);
         if !unchanged {
             self.failure = verify_version(&active).err().map(|error| error.to_string());
-            self.checked = Some((
-                active.clone(),
-                metadata.dev(),
-                metadata.ino(),
-                metadata.len(),
-                metadata.mtime(),
-                metadata.mtime_nsec(),
-            ));
+            self.checked = Some((active.clone(), fingerprint));
         }
         if let Some(error) = &self.failure {
             anyhow::bail!("{error}");
