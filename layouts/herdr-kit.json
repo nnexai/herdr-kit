@@ -190,7 +190,7 @@
               "size": { "px": 80 },
               "min": 0,
               "max": 80,
-              "content": { "mod": "herdr-kit-coord", "props": { "view": "statusbar" } }
+              "content": { "mod": "kit-coord", "props": { "view": "statusbar" } }
             }
           ]
         }

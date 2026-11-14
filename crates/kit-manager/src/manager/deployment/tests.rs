@@ -112,7 +112,7 @@ fn legacy_journal_recovery_then_component_upgrade_and_reverse_rollback() {
         )
         .unwrap();
     lock.verify_active(&next).unwrap();
-    assert_eq!(active_release(&lock.data).as_deref(), Some(b.as_str()));
+    assert_eq!(read_json::<Value>(&lock.data.join("kit-coord/active.json")).unwrap().unwrap()["revision"], b);
     let back = lock
         .activate(
             lock.prepare(&next, next.clone(), BTreeMap::new(), Some(&a))
@@ -121,17 +121,19 @@ fn legacy_journal_recovery_then_component_upgrade_and_reverse_rollback() {
         .unwrap();
     lock.verify_active(&back).unwrap();
     assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), a);
+    assert!(!lock.data.join("kit-coord/active.json").exists());
+    assert!(!lock.data.join("bin/kit-coord").exists());
     assert_eq!(
         fs::read_to_string(layout(&home)).unwrap(),
         name(LEGACY_MOD, &a)
     );
-    assert!(mod_path(&home, "herdr-kit-coord", &b).exists());
+    assert!(mod_path(&home, "kit-coord", &b).exists());
     assert_eq!(back.previous_selection.unwrap(), selected(BUNDLE, &b));
 }
 
 #[test]
 fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
-    for prefix in 0..=9 {
+    let fixture = || {
         let temp = tempfile::tempdir().unwrap();
         let lock = Locked::open(&temp.path().join("data")).unwrap();
         let home = temp.path().join("app");
@@ -139,85 +141,48 @@ fn every_multi_artifact_crash_prefix_recovers_complete_selection() {
         let b = "b".repeat(40);
         let mut first = empty_state(&home);
         component_release(&lock, &mut first, &a);
-        let first = lock
-            .activate(
-                lock.prepare(&State::default(), first, selected(BUNDLE, &a), None)
-                    .unwrap(),
-            )
-            .unwrap();
+        let first = lock.activate(lock.prepare(
+            &State::default(), first, selected(BUNDLE, &a), None,
+        ).unwrap()).unwrap();
         let mut second = first.clone();
         component_release(&lock, &mut second, &b);
-        let mut transaction = lock
-            .prepare(&first, second, selected(BUNDLE, &b), None)
-            .unwrap();
-        // Include a second executable and a readiness descriptor in the same
-        // persisted contract, as later vertical packages require.
-        for (name, ready) in [("kit-second", false), ("active.json", true)] {
-            let source = release(&lock.data, &b).join(name);
-            fs::write(&source, &b).unwrap();
-            let target = lock
-                .data
-                .join(if ready { "kit-coord" } else { "bin" })
-                .join(name);
-            let file = FileReceipt {
-                source,
-                hash: hash(b.as_bytes()),
-                executable: !ready,
-                ready,
-            };
-            transaction.state.files.insert(target.clone(), file.clone());
-            transaction.files.push(FileChange {
-                target,
-                old_hash: None,
-                next: Some(file),
-            });
-        }
-        save(
-            &journal_path(&lock.data),
-            &Journal::Components(
-                serde_json::from_value(serde_json::to_value(&transaction).unwrap()).unwrap(),
-            ),
-        )
-        .unwrap();
+        let transaction = lock.prepare(&first, second, selected(BUNDLE, &b), None).unwrap();
+        (temp, lock, transaction, a, b)
+    };
+    let probe = fixture();
+    let publications = probe.2.mods.len() + probe.2.files.len();
+    drop(probe);
+    for prefix in 0..=publications + 2 {
+        let (_temp, lock, transaction, a, b) = fixture();
+        save(&journal_path(&lock.data), &Journal::Components(
+            serde_json::from_value(serde_json::to_value(&transaction).unwrap()).unwrap(),
+        )).unwrap();
         let mut count = 0;
         for change in &transaction.mods {
-            if count < prefix {
-                lock.apply_mod(change).unwrap();
-            }
+            if count < prefix { lock.apply_mod(change).unwrap(); }
             count += 1;
         }
         for ready in [false, true] {
             for change in &transaction.files {
-                if change.next.as_ref().is_some_and(|n| n.ready) == ready {
-                    if count < prefix {
-                        lock.apply_file(change).unwrap();
-                    }
+                if change.next.as_ref().is_some_and(|file| file.ready) == ready {
+                    if count < prefix { lock.apply_file(change).unwrap(); }
                     count += 1;
                 }
             }
         }
-        assert_eq!(count, 7);
-        if prefix < 7 {
-            assert!(!lock.data.join("kit-coord/active.json").exists());
-        }
-        if prefix == 8 {
-            state::store_history(&lock.data, &transaction.state).unwrap();
-        }
-        if prefix == 9 {
-            lock.save(&transaction.state).unwrap();
-        }
+        let descriptor: Value = read_json(&lock.data.join("kit-coord/active.json")).unwrap().unwrap();
+        assert_eq!(descriptor["revision"], if prefix < publications { a.as_str() } else { b.as_str() });
+        if prefix == publications + 1 { state::store_history(&lock.data, &transaction.state).unwrap(); }
+        if prefix == publications + 2 { lock.save(&transaction.state).unwrap(); }
         lock.recover().unwrap();
         let recovered = lock.state().unwrap();
         lock.verify_active(&recovered).unwrap();
         assert_eq!(recovered.selection, selected(BUNDLE, &b));
-        assert_eq!(
-            fs::read_to_string(lock.data.join("bin/kit-second")).unwrap(),
-            b
-        );
-        assert_eq!(
-            fs::read_to_string(lock.data.join("kit-coord/active.json")).unwrap(),
-            b
-        );
+        assert_eq!(fs::read_to_string(lock.data.join("bin/kit-coord")).unwrap(), b);
+        assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), b);
+        let descriptor: Value = read_json(&lock.data.join("kit-coord/active.json")).unwrap().unwrap();
+        assert_eq!(descriptor["revision"], b);
+        assert_eq!(descriptor["executable"], release(&lock.data, &b).join("kit-coord").to_str().unwrap());
         assert!(!journal_path(&lock.data).exists());
         lock.recover().unwrap();
     }
@@ -234,9 +199,9 @@ fn component_only_selection_preserves_unowned_layout_and_rejects_collisions() {
     fs::create_dir_all(home.join("layouts")).unwrap();
     fs::write(layout(&home), "owner's layout").unwrap();
     fs::write(home.join("keys.json"), "owner's keys").unwrap();
-    let target = mod_path(&home, "herdr-kit-coord", &rev);
+    let target = mod_path(&home, "kit-coord", &rev);
     copy_tree(
-        &release(&lock.data, &rev).join("mods/herdr-kit-coord"),
+        &release(&lock.data, &rev).join("mods/kit-coord"),
         &target,
     )
     .unwrap();
@@ -300,7 +265,7 @@ fn recovery_refuses_drift_before_publishing_any_new_target() {
     save(&journal_path(&lock.data), &Journal::Components(transaction)).unwrap();
     fs::write(layout(&home), "person edit during crash").unwrap();
     assert!(lock.recover().is_err());
-    assert!(!mod_path(&home, "herdr-kit-coord", &b).exists());
+    assert!(!mod_path(&home, "kit-coord", &b).exists());
     assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), a);
     assert_eq!(
         fs::read_to_string(layout(&home)).unwrap(),
@@ -354,7 +319,7 @@ fn mismatched_shared_legacy_binary_generations_refuse_activation() {
     let b = "b".repeat(40);
     component_release(&lock, &mut next, &a);
     component_release(&lock, &mut next, &b);
-    let mut selection = selected(&["kit-coord"], &a);
+    let mut selection = selected(&["kit-manager"], &a);
     selection.extend(selected(&["kit-usage"], &b));
     let error = lock
         .prepare(&State::default(), next, selection, None)
@@ -386,7 +351,7 @@ fn retained_activated_release_cannot_be_rebuilt_as_incomplete_staging() {
                 .unwrap(),
         )
         .unwrap();
-    let immutable = release(&lock.data, &a).join("herdr-kit");
+    let immutable = release(&lock.data, &a).join("kit-coord");
     fs::remove_file(&immutable).unwrap();
     let error = lock
         .build(&mut second, &a, &["kit-coord".into()])
@@ -447,7 +412,7 @@ fn legacy_state_writer_cannot_discard_package_ownership() {
     let recovered = lock.state().unwrap();
     lock.verify_active(&recovered).unwrap();
     assert_eq!(recovered.next_check, 777);
-    assert_eq!(active_release(&lock.data).as_deref(), Some(rev.as_str()));
+    assert_eq!(read_json::<Value>(&lock.data.join("kit-coord/active.json")).unwrap().unwrap()["revision"], rev);
     let next = lock
         .activate(
             lock.prepare(
@@ -569,4 +534,29 @@ fn chat_package_requires_matching_coordinator_without_usage() {
     assert!(mod_path(&home, "kit-coord-ui", &a).exists());
     assert!(!mod_path(&home, "herdr-kit-usage", &a).exists());
     assert!(!layout(&home).exists());
+}
+
+#[test]
+fn independent_usage_update_keeps_coordinator_readiness_unchanged() {
+    let temp = tempfile::tempdir().unwrap();
+    let lock = Locked::open(&temp.path().join("data")).unwrap();
+    let a = "a".repeat(40);
+    let b = "b".repeat(40);
+    let mut state = empty_state(&temp.path().join("app"));
+    component_release(&lock, &mut state, &a);
+    component_release(&lock, &mut state, &b);
+    let first = lock.activate(lock.prepare(
+        &State::default(), state, selected(&["kit-coord", "kit-usage"], &a), None,
+    ).unwrap()).unwrap();
+    let descriptor = lock.data.join("kit-coord/active.json");
+    let before = fs::read(&descriptor).unwrap();
+    let mut selection = selected(&["kit-coord"], &a);
+    selection.extend(selected(&["kit-usage"], &b));
+    let next = lock.activate(lock.prepare(&first, first.clone(), selection, None).unwrap()).unwrap();
+    lock.verify_active(&next).unwrap();
+    assert_eq!(fs::read(&descriptor).unwrap(), before);
+    assert_eq!(fs::read_to_string(lock.data.join("bin/kit-coord")).unwrap(), a);
+    assert_eq!(fs::read_to_string(bootstrap(&lock.data)).unwrap(), b);
+    assert_eq!(next.selection["kit-coord"], a);
+    assert!(!next.selection.contains_key("kit-manager"));
 }

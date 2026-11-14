@@ -3,8 +3,8 @@
 A local Rust workspace with native JavaScript mods and a personal layout for
 [Herdr](https://herdr.dev). The approved modular extraction separates coordinator,
 usage and optional installation/update ownership without a mandatory kit-core.
-At P1, `kit-manager` still builds the single `herdr-kit` binary with its direct
-legacy capability commands; their clean vertical cutovers follow separately.
+`kit-coord` now builds its own CLI and native mod; `kit-manager` retains the
+`herdr-kit` installer and legacy usage commands until the P3 usage cutover.
 This is not a Herdr fork or browser frontend.
 
 ![Herdr kit usage](preview.png)
@@ -153,23 +153,29 @@ The coordinator helps a person organize agent work in workstreams and tasks.
 It keeps the coordinator and its watcher visible in Herdr terminals, with a
 status icon that can start the watcher when it is not running.
 
+Use [the standalone package and cutover guide](docs/coordinator/monorepo-p2.md)
+to include only kit-coord in another layout, without usage, this layout or an
+installed updater. It keeps the existing parent data root and `coord/` paths.
+Explicit overrides are `KIT_COORD_DATA_DIR`, `KIT_COORD_HC` and
+`KIT_COORD_HERDR_APP`; old capability environment names are not aliases.
+
 ```sh
-<data-dir>/bin/herdr-kit coord up
-<data-dir>/bin/herdr-kit coord status --json
-<data-dir>/bin/herdr-kit coord down
+<data-dir>/bin/kit-coord up
+<data-dir>/bin/kit-coord status --json
+<data-dir>/bin/kit-coord down
 ```
 
 To try an uninstalled checkout without using an older installed executable,
 build once and use a separate data directory:
 
 ```sh
-cargo build --locked --release
-./target/release/herdr-kit --data-dir "$HOME/.local/share/herdr-kit-preview" coord up
+cargo build --locked --release -p kit-coord
+./target/release/kit-coord --data-dir "$HOME/.local/share/herdr-kit-preview" up
 ```
 
 Keep that executable in place while the preview runs; rebuilding a running
 development binary can invalidate its saved launch path. The app icon, board
-and timeline ship as the separate `herdr-kit-coord` mod with normal suite
+and timeline ship as the separate `kit-coord` mod with normal suite
 installation. Installation still reads committed source as described above.
 
 The person can open and close workstreams, start, send to and close tasks,
@@ -177,7 +183,7 @@ release resources, record decisions and instructions, and rate outcomes.
 The coordinator can do the same work-management operations, but only the person
 can change configuration or ratings and start or stop the coordinator. Delegates
 report and add notes to their own tasks. Anyone can read the board, log,
-explanations, inbox, roles and statistics. `coord --help` lists commands.
+explanations, inbox, roles and statistics. `kit-coord --help` lists commands.
 
 In the Coordinator dialog, choose **Clear context** (or press `n` while the
 dialog list has focus) to request a fresh session when the coordinator is idle.
@@ -188,7 +194,7 @@ The prior session remains in the session history.
 The mod also receives a `restart` command through Herdr's key bindings. Because
 installed mod names include the release revision, use the current coordinator
 folder name in `keys.json`, for example:
-`"global": { "ctrl-alt-n": "herdr-kit-coord-<revision>.restart" }`.
+`"global": { "ctrl-alt-n": "kit-coord-<revision>.restart" }`.
 Update that binding when the installed revision changes.
 
 ### Mission Log
@@ -214,8 +220,8 @@ preference is read once when the view opens when no override is set. The
 motion override is kept across revision-named suite updates.
 
 ```sh
-herdr-kit coord conversation --json
-herdr-kit coord say --text 'A message for the coordinator'
+kit-coord conversation --json
+kit-coord say --text 'A message for the coordinator'
 ```
 
 `say` is person-only and always targets the recorded coordinator, never a
@@ -250,7 +256,7 @@ Autostart is controlled by coordinator configuration. The watcher is a
 The coordinator never closes spaces created by the person, never types into
 startup dialogs, and does not reopen a coordinator tab the person closed.
 The journal includes insight records such as operation and cause identifiers,
-ratings and outcomes; `coord stats --json` summarizes them. See
+ratings and outcomes; `kit-coord stats --json` summarizes them. See
 [the coordinator specification](docs/coordinator-spec.md) for the full model
 and safety rules.
 
@@ -258,9 +264,10 @@ and safety rules.
 
 - `Cargo.toml`: workspace, shared dependency versions and lockfile; no kit-core.
 - `kit-packages.json`: explicit packages, binary/mod/layout ownership and bundle.
-- `crates/kit-manager/src/main.rs`: existing CLI until capability cutovers.
-- `crates/kit-manager/src/coord/`: direct legacy coordinator implementation (P1).
-- `crates/kit-manager/src/usage*`: direct legacy usage implementation (P1).
+- `crates/kit-manager/src/main.rs`: manager CLI and legacy usage until P3.
+- `crates/kit-coord/`: independent coordinator CLI, engine, roles and fixtures.
+- `mods/kit-coord/`: independent native status, Board and Timeline.
+- `crates/kit-manager/src/usage*`: direct legacy usage implementation until P3.
 - `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
 - `mods/herdr-kit-usage/`: native GPUI presentation and pure view model.
 - `layouts/herdr-kit.json`: managed personal layout, built-in mods reused.

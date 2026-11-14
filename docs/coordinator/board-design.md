@@ -1,10 +1,10 @@
 # Coordinator board: UI design
 
-Status: implemented design, with the Board redesign below replacing the original card/column proposal. Authoritative inputs: `docs/coordinator-spec.md` (sections 6 "Autostart and the status icon", 9 "What the person sees", 12 "Details fixed for the first version"). The UI is a **separate mod `mods/herdr-kit-coord/`**, sharing no files with `mods/herdr-kit-usage/`.
+Status: implemented design, with the Board redesign below replacing the original card/column proposal. Authoritative inputs: `docs/coordinator-spec.md` (sections 6 "Autostart and the status icon", 9 "What the person sees", 12 "Details fixed for the first version"). The UI is a **separate mod `mods/kit-coord/`**, sharing no files with `mods/herdr-kit-usage/`.
 
-Historical Rust source citations below use the pre-workspace tree. During P1,
-those files live under `crates/kit-manager/`; current deployment ownership is in
-the [P1 runbook](monorepo-p1.md). UI contracts retain their existing meaning.
+Historical Rust source citations below use the pre-workspace tree. The current
+engine lives under `crates/kit-coord/`; independent native mod and deployment
+contracts are in the [P2 guide](monorepo-p2.md). UI contracts retain their meaning.
 
 Nothing here was run against the live window. Mockups use illustrative hex colours; the real mod reads `theme()`.
 
@@ -113,7 +113,7 @@ The strip is its own layout block, to the right of the usage block, in the 28 px
     { "id": "status-usage", "type": "block",
       "content": { "mod": "herdr-kit-usage", "props": { "view": "statusbar" } } },
     { "id": "status-coord", "type": "block", "size": { "px": 80 }, "min": 0, "max": 80,
-      "content": { "mod": "herdr-kit-coord", "props": { "view": "statusbar" } } }
+      "content": { "mod": "kit-coord", "props": { "view": "statusbar" } } }
   ] }
 ```
 
@@ -686,7 +686,7 @@ Watch **only `coord/journal/`**, never `coord/` (sessions' `.jsonl` files change
 
 ### 4.6 Component breakdown
 
-Folder `mods/herdr-kit-coord/` (implementation target; not created here):
+Folder `mods/kit-coord/` (implementation target; not created here):
 
 ```
 mod.json                {"place":"none","focusable":true,"overlay":{"width":760,"height":600}}
@@ -699,7 +699,7 @@ ui-status.js            renderStatusStrip(vm, t, handlers) -> element
 ui-board.js             renderBoard(vm, t, handlers) -> element
 ui-timeline.js          renderTimeline(vm, t, handlers) -> element
 coord-running.svg, coord-off.svg, coord-degraded.svg, coord-starting.svg   from docs/coordinator/board-mockups/icons/
-tests/coord.test.js     node --test, imports ../mods/herdr-kit-coord/model.js
+tests/coord.test.js     node --test, imports ../mods/kit-coord/model.js
 ```
 (`ui-*.js` take already-computed VM objects and a theme object; they hold no business logic and are verified by `herdr-app check` and screenshots, not unit tests.)
 
@@ -889,7 +889,7 @@ Both offered: Enter = Show, `p` = Peek. Both only on explicit action.
 
 ## 9. Acceptance scenarios
 
-Each is an observable check after the mod is built; checks marked (shot) use `herdr-app shot` and (check) `herdr-app check mods/herdr-kit-coord`.
+Each is an observable check after the mod is built; checks marked (shot) use `herdr-app shot` and (check) `herdr-app check mods/kit-coord`.
 
 1. **Strip present** (shot): with a running coordinator, a 28 px strip appears at the right end of the status bar, after the usage `Limits` readout, with the same background and top rule; text `3 running · 1 needs you · 2 retained` with `1 needs you` in the blocked colour.
 2. **Not running:** with no coordinator, strip shows hollow dashed icon and `Coordinator off`; click shows `Starting…` with a spinning icon, then the running state; failure shows an error toast and the strip returns to `Coordinator off`.
@@ -915,6 +915,6 @@ Each is an observable check after the mod is built; checks marked (shot) use `he
 - `docs/coordinator/board-mockups/statusbar.svg`: strip in every state and tier, focus, tooltip.
 - `docs/coordinator/board-mockups/board.svg`: board with attention, workstreams (selected row with actions), retained.
 - `docs/coordinator/board-mockups/timeline.svg`: timeline with scope chip, filter, expanded entry, day separators, `Load older`.
-- `docs/coordinator/board-mockups/icons/coord-running.svg`, `coord-off.svg`, `coord-degraded.svg`, `coord-starting.svg`: icon drafts in the usage mod's 24x24, 1.5 stroke, `currentColor` style; copy to `mods/herdr-kit-coord/` at implementation.
+- `docs/coordinator/board-mockups/icons/coord-running.svg`, `coord-off.svg`, `coord-degraded.svg`, `coord-starting.svg`: icon drafts in the usage mod's 24x24, 1.5 stroke, `currentColor` style; copy to `mods/kit-coord/` at implementation.
 
 Current Board loading, empty, off, error and narrow layouts are specified in 4.2; Timeline states remain in 4.3. The SVGs above preserve the original proposal, not the redesigned Board acceptance surface.

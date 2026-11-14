@@ -429,6 +429,28 @@ impl Locked {
                     },
                 );
             }
+            if let Some(rev) = next.selection.get("kit-coord") {
+                let receipt = next.package_releases.get(rev)
+                    .and_then(|packages| packages.get("kit-coord"))
+                    .context("missing selected coordinator receipt")?;
+                if receipt.definition.binary.as_ref().is_some_and(|binary| binary.name == "kit-coord") {
+                    let bytes = serde_json::to_vec(&json!({
+                        "schema_version": 1,
+                        "revision": rev,
+                        "executable": release(&self.data, rev).join("kit-coord"),
+                    }))?;
+                    let digest = hash(&bytes);
+                    let source = self.data.join("deployments").join(&digest).join("kit-coord-active.json");
+                    if let Some(existing) = file_hash(&source)? {
+                        ensure!(existing == digest, "coordinator descriptor drift detected");
+                    } else {
+                        atomic(&source, &bytes, false)?;
+                    }
+                    files.insert(self.data.join("kit-coord/active.json"), FileReceipt {
+                        source, hash: digest, executable: false, ready: true,
+                    });
+                }
+            }
             next.files = files;
         }
         for change in &mods {
@@ -638,7 +660,8 @@ impl Locked {
                                 "--bin",
                                 &binary.name,
                             ])
-                            .env("CARGO_TARGET_DIR", tmp.path().join("target")),
+                            .env("CARGO_TARGET_DIR", tmp.path().join("target"))
+                            .env("KIT_COORD_BUILD_REVISION", rev),
                         "release build failed",
                     )?;
                     fs::copy(
@@ -779,12 +802,6 @@ fn result(state: &State, available: Option<&str>, status: &str) -> Value {
         }
     }
     json!({"state":status,"current_revision":state.current,"available_revision":available,"previous_revision":state.previous,"source":state.source,"targets":{"app_home":state.app_home},"next_check":state.next_check,"components":state.selection,"previous_components":state.previous_selection,"resolved_mods":mods})
-}
-pub fn active_release(data: &Path) -> Option<String> {
-    state::coordinator_revision(data)
-}
-pub fn stable_binary(data: &Path) -> PathBuf {
-    bootstrap(data)
 }
 fn activated(mut value: Value, old: &State, next: &State, changed: bool) -> Value {
     let coord = |state: &State| {

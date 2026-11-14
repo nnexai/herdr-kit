@@ -1,0 +1,20 @@
+[package]
+name = "kit-coord"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone Herdr coordinator CLI and native mod"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+fs2.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+rustix.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

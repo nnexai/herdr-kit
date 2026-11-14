@@ -6,13 +6,13 @@
       "mods": []
     },
     "kit-coord": {
-      "binary": {"name": "herdr-kit", "cargo_package": "kit-manager"},
-      "mods": ["herdr-kit-coord"]
+      "binary": {"name": "kit-coord", "cargo_package": "kit-coord"},
+      "mods": ["kit-coord"]
     },
     "kit-coord-ui": {
       "requires": ["kit-coord"],
       "runtime_package": "kit-coord",
-      "runtime_mod": "herdr-kit-coord",
+      "runtime_mod": "kit-coord",
       "mods": ["kit-coord-ui"]
     },
     "kit-usage": {

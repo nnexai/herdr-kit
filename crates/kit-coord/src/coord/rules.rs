@@ -38,7 +38,7 @@ pub enum Action {
         reason: String,
     },
 }
-const DELEGATE_NUDGE: &str = "Please report your result or blocker using coord report.";
+const DELEGATE_NUDGE: &str = "Please report your result or blocker using kit-coord report.";
 fn elapsed(now: u64, since: Option<u64>, secs: u64) -> bool {
     since.is_some_and(|t| now.saturating_sub(t) >= secs.saturating_mul(1000))
 }

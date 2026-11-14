@@ -91,7 +91,7 @@ mod tests {
 
     fn term(role: Option<&str>, managed: bool, task: Option<&str>) -> Term {
         let mut term: Term = serde_json::from_str(include_str!(
-            "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+            "testdata/hc-get-agent.json"
         ))
         .unwrap();
         if managed {

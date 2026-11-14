@@ -16,7 +16,7 @@ function setup(value = '  exact\n\tmessage  ') {
 }
 test('confirmed send targets only coordinator say and clears the delivered draft',async () => {
   const h = setup(); h.store.send(h.cx,h.view); await h.drain();
-  assert.deepEqual(h.calls,[['coord','say','--text','  exact\n\tmessage  ','--question','q1']]);
+  assert.deepEqual(h.calls,[['say','--text','  exact\n\tmessage  ','--question','q1']]);
   assert.equal(h.draft(),''); assert.equal(h.view.question,null);
 });
 test('failed delivery retains the exact draft and does not retry automatically',async () => {

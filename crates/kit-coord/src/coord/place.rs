@@ -1361,7 +1361,7 @@ mod tests {
     #[test]
     fn send_readiness_refusals() {
         let mut t: Term = serde_json::from_str(include_str!(
-            "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+            "testdata/hc-get-agent.json"
         ))
         .unwrap();
         t.state = "live".into();
@@ -1594,7 +1594,7 @@ mod placement_acceptance_tests {
             s.runs.push(spec.clone());
             let address = format!("terminal-{}", s.runs.len());
             let mut term: Term = serde_json::from_str(include_str!(
-                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "testdata/hc-get-agent.json"
             ))?;
             term.address = address.clone();
             term.state = "live".into();
@@ -1648,7 +1648,7 @@ mod placement_acceptance_tests {
                 return Ok(None);
             };
             let mut term: Term = serde_json::from_str(include_str!(
-                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "testdata/hc-get-agent.json"
             ))?;
             term.address = terminal.into();
             term.state = "live".into();

@@ -411,9 +411,9 @@ fn stream_line_received(outage: &mut bool) {
 }
 const STREAM_RETRY: Duration = Duration::from_secs(2);
 
-fn replacement_command(root: &std::path::Path) -> std::process::Command {
-    let mut command = std::process::Command::new(root.join("bin/herdr-kit"));
-    command.arg("--data-dir").arg(root).args(["coord", "watch"]);
+fn replacement_command(root: &std::path::Path, active: &crate::deployment::Active) -> std::process::Command {
+    let mut command = std::process::Command::new(&active.executable);
+    command.arg("--data-dir").arg(root).arg("watch");
     command
 }
 
@@ -460,6 +460,7 @@ pub async fn run(ctx: Ctx) -> Result<Value> {
     let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
     let mut recon = tokio::time::interval(Duration::from_secs(cfg.reconcile_secs.max(1)));
     let mut outage = false;
+    let mut replacement = crate::deployment::Replacement::default();
     loop {
         let mut command = tokio::process::Command::from(ctx.hc.events_command());
         command
@@ -482,7 +483,7 @@ pub async fn run(ctx: Ctx) -> Result<Value> {
                     },
                     _ = tick.tick() => { if let Err(e) = core.tick(&ctx, &j, &cfg) { eprintln!("watch tick: {e:#}"); } },
                     _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts, &cfg) { eprintln!("watch reconcile: {e:#}"); } },
-                    _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal)?,
+                    _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal, &mut replacement)?,
                 }
             }
         }
@@ -507,7 +508,7 @@ pub async fn run(ctx: Ctx) -> Result<Value> {
                 _ = &mut delay => break,
                 _ = tick.tick() => { if let Err(e) = core.tick(&ctx, &j, &cfg) { eprintln!("watch tick: {e:#}"); } },
                 _ = recon.tick() => { if let Err(e) = reconcile::reconcile(&ctx, &j, &mut core.facts, &cfg) { eprintln!("watch reconcile: {e:#}"); } },
-                _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal)?,
+                _ = heartbeat.tick() => heartbeat_step(&ctx, &j, &core, &terminal, &mut replacement)?,
             }
         }
     }
@@ -517,7 +518,12 @@ fn prepare_heartbeat(
     j: &Journal,
     core: &Core,
     terminal: &Option<String>,
+    replacement: &mut crate::deployment::Replacement,
 ) -> Result<Option<std::process::Command>> {
+    let (selected, deployment_error) = match replacement.selected(&ctx.root, &core.release) {
+        Ok(selected) => (selected, None),
+        Err(error) => (None, Some(error.to_string())),
+    };
     lifecycle::write_heartbeat(
         &ctx.paths,
         &lifecycle::Heartbeat {
@@ -527,28 +533,29 @@ fn prepare_heartbeat(
             started_ms: core.started_ms,
             beat_ms: ctx.now(),
             events_ok: core.facts.events_ok,
+            deployment_error,
         },
     )?;
-    if lifecycle::active_release(&ctx.root) != core.release {
+    if let Some(active) = selected {
         j.lock()?.append(
             &Actor::Watcher,
             ctx.now(),
-            vec![(
-                None,
-                None,
-                Kind::WatcherStopped {
-                    reason: "release_changed".into(),
-                },
-            )],
+            vec![(None, None, Kind::WatcherStopped { reason: "release_changed".into() })],
         )?;
-        return Ok(Some(replacement_command(&ctx.root)));
+        return Ok(Some(replacement_command(&ctx.root, &active)));
     }
     Ok(None)
 }
-fn heartbeat_step(ctx: &Ctx, j: &Journal, core: &Core, terminal: &Option<String>) -> Result<()> {
-    if let Some(mut command) = prepare_heartbeat(ctx, j, core, terminal)? {
+fn heartbeat_step(ctx: &Ctx, j: &Journal, core: &Core, terminal: &Option<String>, replacement: &mut crate::deployment::Replacement) -> Result<()> {
+    if let Some(mut command) = prepare_heartbeat(ctx, j, core, terminal, replacement)? {
         use std::os::unix::process::CommandExt;
-        return Err(command.exec().into());
+        let error = command.exec();
+        replacement.reject(format!("coordinator deployment exec failed: {error}"));
+        j.lock()?.append(&Actor::Watcher, ctx.now(), vec![(None, None, Kind::WatcherStarted {
+            pid: std::process::id(), terminal: terminal.clone(), release: core.release.clone(),
+        })])?;
+        // An exec race must not kill the singleton or retry an unchanged target.
+        prepare_heartbeat(ctx, j, core, terminal, replacement)?;
     }
     Ok(())
 }
@@ -581,7 +588,7 @@ mod tests {
         let hc = FakeHc::default();
         let mut core = Core {
             facts: Facts::default(),
-            release: "development".into(),
+            release: crate::deployment::BUILD_REVISION.into(),
             started_ms: 0,
             loaded_seq: 0,
             pending: BTreeMap::new(),
@@ -614,7 +621,7 @@ mod tests {
         let hc = FakeHc::default();
         let mut core = Core {
             facts: Facts::default(),
-            release: "development".into(),
+            release: crate::deployment::BUILD_REVISION.into(),
             started_ms: 0,
             loaded_seq: 0,
             pending: BTreeMap::new(),
@@ -639,54 +646,46 @@ mod tests {
         assert!(stream_ended(&mut core, &mut outage));
     }
     #[test]
-    fn release_change_records_stop_and_prepares_exact_replacement_argv() {
+    fn selected_coordinator_descriptor_replaces_watcher_but_suite_state_does_not() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("data dir");
         let ctx = ctx(&root, FakeHc::default());
         ctx.paths.ensure().unwrap();
         let j = ctx.journal().unwrap();
         let core = Core {
-            facts: Facts {
-                events_ok: true,
-                ..Facts::default()
-            },
-            release: "development".into(),
-            started_ms: 123,
-            loaded_seq: 0,
-            pending: BTreeMap::new(),
-            retry_after: BTreeMap::new(),
+            facts: Facts { events_ok: true, ..Facts::default() },
+            release: crate::deployment::BUILD_REVISION.into(),
+            started_ms: 123, loaded_seq: 0,
+            pending: BTreeMap::new(), retry_after: BTreeMap::new(),
         };
         let terminal = Some("watcher-terminal".into());
-        assert!(
-            prepare_heartbeat(&ctx, &j, &core, &terminal)
-                .unwrap()
-                .is_none()
-        );
+        let mut replacement = crate::deployment::Replacement::default();
+        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
+        std::fs::write(root.join("state.json"), br#"{"current":"unrelated-usage-update"}"#).unwrap();
+        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
         assert!(j.read_after(0).unwrap().is_empty());
+        let candidate = root.join("immutable-coordinator");
+        let revision = "b".repeat(40);
+        std::fs::create_dir(root.join("kit-coord")).unwrap();
+        std::fs::write(root.join("kit-coord/active.json"), json!({
+            "schema_version":1, "revision":revision, "executable":candidate,
+        }).to_string()).unwrap();
+        assert!(prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().is_none());
         let hb = lifecycle::read_heartbeat(&ctx.paths).unwrap().unwrap();
-        assert_eq!(
-            (hb.started_ms, hb.beat_ms, hb.events_ok),
-            (123, 42_000, true)
-        );
-        std::fs::write(root.join("state.json"), br#"{"current":"new-release"}"#).unwrap();
-        let cmd = prepare_heartbeat(&ctx, &j, &core, &terminal)
-            .unwrap()
-            .unwrap();
-        assert_eq!(cmd.get_program(), root.join("bin/herdr-kit").as_os_str());
-        let args: Vec<_> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            [
-                std::ffi::OsStr::new("--data-dir"),
-                root.as_os_str(),
-                std::ffi::OsStr::new("coord"),
-                std::ffi::OsStr::new("watch")
-            ]
-        );
+        assert_eq!(hb.release, core.release);
+        assert_eq!((hb.started_ms, hb.beat_ms, hb.events_ok), (123, 42_000, true));
+        assert!(hb.deployment_error.is_some());
+        assert!(j.read_after(0).unwrap().is_empty());
+        std::fs::write(&candidate, format!("#!/bin/sh\necho 'kit-coord 0.1.0 ({revision})'\n")).unwrap();
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let command = prepare_heartbeat(&ctx, &j, &core, &terminal, &mut replacement).unwrap().unwrap();
+        assert_eq!(command.get_program(), candidate.as_os_str());
+        assert_eq!(command.get_args().collect::<Vec<_>>(), [
+            std::ffi::OsStr::new("--data-dir"), root.as_os_str(), std::ffi::OsStr::new("watch"),
+        ]);
         let entries = j.read_after(0).unwrap();
-        assert!(
-            matches!(entries.as_slice(), [entry] if matches!(entry.typed(), Kind::WatcherStopped { reason } if reason == "release_changed"))
-        );
+        assert!(matches!(entries.as_slice(), [entry] if matches!(entry.typed(), Kind::WatcherStopped { reason } if reason == "release_changed")));
     }
     #[tokio::test]
     async fn scripted_tick_rechecks_readiness_before_nudge() {
@@ -772,7 +771,7 @@ mod tests {
                 .unwrap();
             let mut core = Core {
                 facts: Facts::default(),
-                release: "development".into(),
+                release: crate::deployment::BUILD_REVISION.into(),
                 started_ms: 0,
                 loaded_seq: 0,
                 pending: BTreeMap::new(),
@@ -832,7 +831,7 @@ mod tests {
                             space: "sp".into(),
                             tab: None,
                             session: None,
-                            release: "development".into(),
+                            release: crate::deployment::BUILD_REVISION.into(),
                             role_hash: String::new(),
                             reason: "up".into(),
                             brief: "/tmp/brief".into(),
@@ -851,7 +850,7 @@ mod tests {
             .unwrap();
         let mut core = Core {
             facts: Facts::default(),
-            release: "development".into(),
+            release: crate::deployment::BUILD_REVISION.into(),
             started_ms: 0,
             loaded_seq: 0,
             pending: BTreeMap::new(),
@@ -1010,7 +1009,7 @@ mod tests {
             ws: ws.clone(),
         };
         place::report(&ctx, &caller, ReportKind::Done, "done", None).unwrap();
-        assert!(prepare_heartbeat(&ctx, &j, &core, &None).unwrap().is_none());
+        assert!(prepare_heartbeat(&ctx, &j, &core, &None, &mut Default::default()).unwrap().is_none());
         assert!(release::release_task_tab(&ctx, &j, &Actor::Watcher, &task).is_err());
         assert_eq!(core.pending.len(), 1);
         assert!(

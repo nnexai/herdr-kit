@@ -6,15 +6,15 @@ impl Harness {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let hc = tmp.path().join("hc"); let app = tmp.path().join("herdr-app");
-        for path in [&hc, &app] { fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fake/cli.sh"), path).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap(); }
+        for path in [&hc, &app] { fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fake/cli.sh"), path).unwrap(); fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap(); }
         Self { tmp, hc, app }
     }
     fn root(&self) -> &Path { self.tmp.path() }
     fn command(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_herdr-kit"));
-        c.env("HOME", self.root()).env("FAKE_DIR", self.root().join("fake")).env("HERDR_KIT_HC", &self.hc)
-            .env("HERDR_KIT_HERDR_APP", &self.app).env_remove("HC_TERMINAL_ID")
-            .arg("--data-dir").arg(self.root().join("data")).arg("coord").args(args);
+        let mut c = Command::new(env!("CARGO_BIN_EXE_kit-coord"));
+        c.env("HOME", self.root()).env("FAKE_DIR", self.root().join("fake")).env("KIT_COORD_HC", &self.hc)
+            .env("KIT_COORD_HERDR_APP", &self.app).env_remove("HC_TERMINAL_ID")
+            .arg("--data-dir").arg(self.root().join("data")).args(args);
         c
     }
     fn run(&self, args: &[&str]) -> Output { self.command(args).output().unwrap() }
@@ -60,7 +60,7 @@ fn refusals_and_delegate_permissions() {
     let h=Harness::new(); let ws=h.open();
     let o=h.run(&["task","start","--ws",&ws,"--rung","3","--reason","work","--brief","-","--role","coord-default","--space","x"]);
     assert_eq!(o.status.code(),Some(3)); assert_eq!(serde_json::from_slice::<Value>(&o.stderr).unwrap()["error"]["code"],"ladder_reason_missing"); assert!(h.calls("hc").is_empty()); assert_eq!(h.journal().len(),1);
-    let mut term:Value=serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+    let mut term:Value=serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
     term["labels"]=json!({"coord.managed":"1","coord.role":"delegate","coord.task":format!("{ws}-t1")}); h.queue("hc","get",&term);
     let o=h.command(&["rate",&ws,"good"]).env("HC_TERMINAL_ID","t9").output().unwrap();
     assert_eq!(o.status.code(),Some(3)); assert_eq!(serde_json::from_slice::<Value>(&o.stderr).unwrap()["error"]["code"],"forbidden_caller");
@@ -93,7 +93,7 @@ fn delegate_start_report_and_send_readiness() {
     fs::write(roles.join("test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nInstructions\n").unwrap();
     let space=json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]});
     h.queue("herdr-app","ls",&space);
-    let mut term:Value=serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+    let mut term:Value=serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
     term["address"]=json!("t7"); term["state"]=json!("live"); term["turn"]=json!(0);
     term["labels"]=json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
     h.queue("hc","run",&json!({"address":"t7","agent":"omp","cwd":h.root(),"name":"delegate","state":"live","turn":0})); h.queue("hc","get",&term);
@@ -154,8 +154,8 @@ fn up_is_idempotent_with_live_managed_terminals() {
     fs::write(coord.join("roles/test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nCoordinator\n").unwrap();
     fs::write(coord.join("config.json"),json!({"coordinator_role":"test"}).to_string()).unwrap();
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-    fs::write(coord.join("heartbeat.json"),json!({"pid":1,"terminal":"tw","release":"development","started_ms":now,"beat_ms":now,"events_ok":true}).to_string()).unwrap();
-    let mut watcher:Value=serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+    fs::write(coord.join("heartbeat.json"),json!({"pid":1,"terminal":"tw","release":env!("KIT_COORD_BUILD_REVISION"),"started_ms":now,"beat_ms":now,"events_ok":true}).to_string()).unwrap();
+    let mut watcher:Value=serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
     watcher["address"]=json!("tw"); watcher["state"]=json!("live"); watcher["pid"]=json!(1);
     watcher["labels"]=json!({"coord.managed":"1","coord.role":"watcher"});
     let mut main=watcher.clone(); main["address"]=json!("tc"); main["labels"]=json!({"coord.managed":"1","coord.role":"coordinator"});
@@ -181,7 +181,7 @@ fn worktree_release_clean_and_dirty() {
         fs::write(coord.join("config.json"),json!({"worktree_root":h.root().join("trees")}).to_string()).unwrap();
         fs::write(roles.join("test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nInstructions\n").unwrap();
         let brief=h.root().join("brief"); fs::write(&brief,"Complete work").unwrap(); let task=format!("{ws}-t1");
-        let mut term:Value=serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+        let mut term:Value=serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
         term["address"]=json!("t7"); term["state"]=json!("live"); term["turn"]=json!(1);
         term["labels"]=json!({"coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
         term["foreground"]["pid"]=term["pid"].clone();
@@ -220,7 +220,7 @@ fn rail_fixture() -> (Harness, Value, PathBuf) {
         "data":{"role":"coord-main","model":"fixture","terminal":"c1","pid":42,"created_ms":123,
         "space":"sp","session":{"mode":"dir","id":"session-id","dir":dir},"release":"fixture","reason":"start","brief":"/brief"}});
     fs::write(journal.join("1970-01.jsonl"),format!("{entry}\n")).unwrap();
-    let mut term: Value = serde_json::from_str(include_str!("../docs/coordinator/examples/captures/hc-get-agent.json")).unwrap();
+    let mut term: Value = serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
     term["address"]=json!("c1"); term["state"]=json!("live"); term["pid"]=json!(42);
     term["created_ms"]=json!(123); term["turn"]=json!(2); term["reported"]=json!(true);
     term["status"]=json!({"state":"idle","app":"omp","kind":null,"msg":null});

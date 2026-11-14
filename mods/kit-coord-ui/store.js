@@ -10,7 +10,7 @@ export class RailStore {
     this.reading = false; this.sending = false; this.error = ''; this.notice = '';
   }
   async read(kind) {
-    const result = await exec(BINARY,[...prefix(),'coord',kind,'--json',...(kind === 'log' ? ['--limit','200'] : [])],{timeout:20000});
+    const result = await exec(BINARY,[...prefix(),kind,'--json',...(kind === 'log' ? ['--limit','200'] : [])],{timeout:20000});
     if (result.code !== 0) throw new Error(result.stderr || `coord ${kind} is unavailable`);
     return decode(result.stdout,kind);
   }
@@ -43,7 +43,7 @@ export class RailStore {
         const outcome = JSON.parse(result.stdout);
         if (outcome.state !== 'sent') throw new Error('Message delivery was not confirmed. Check the raw coordinator before sending again.');
         // Clear only the successfully delivered draft; edits made in flight survive.
-        if (view.input.value() === argv[3]) { view.input.set_value(''); view.draft = ''; view.question = null; }
+        if (view.input.value() === argv[2]) { view.input.set_value(''); view.draft = ''; view.question = null; }
         this.notice = outcome.coordinator_changed
           ? 'Delivered to the previous session; the question was not marked answered.'
           : 'Message delivered to the coordinator.';

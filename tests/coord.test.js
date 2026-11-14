@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import * as m from '../mods/herdr-kit-coord/model.js';
+import * as m from '../mods/kit-coord/model.js';
 const now=1763042861000;
 const status=(x={})=>({schema_version:1,generated_at_ms:now,release:'a1b2c3d4',state:'running',enabled:true,autostart:true,degraded:[],watcher:{running:true,terminal:'t5',heartbeat_ms:now-4000,release:'a1b2c3d4'},coordinator:{terminal:'t4',status:'working',space_id:'sp',tab_id:'tb',session_started_ms:now-1000},counts:{running:3,needs_you:1,retained:2,open_workstreams:3},journal_dir:'/journal',journal_seq:42,...x});
 const task=(x={})=>({id:'ws-a-t1',number:1,title:'Task',state:'running',report:null,start_blocked:false,stalled:false,state_since_ms:now-60000,placed_ms:now-60000,started_ms:now-50000,last_event_ms:now-1000,rung:2,placement_reason:'same files',rejected_rungs:[{rung:1,reason:'exhausted'}],role:'coord-default',harness:'omp',model:'luna',summary:null,terminal:'t7',space_id:'sp',tab_id:'tb',brief_path:'/brief',result_path:null,nudges:0,...x});

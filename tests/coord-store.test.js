@@ -28,7 +28,7 @@ async function setup(initial = snapshot()) {
     shared: () => current,
     exec: async (_binary, argv) => {calls.push(argv); return {code:0,stdout:JSON.stringify(argv.includes('restart') ? {state:'requested'} : current)};},
   };
-  const {store} = await import(`../mods/herdr-kit-coord/store.js?test=${++generation}`);
+  const {store} = await import(`../mods/kit-coord/store.js?test=${++generation}`);
   const cx = {notify(){}, spawn(fn){queue.push(() => fn(cx));}, timer:{after(){throw new Error('unexpected deferred refresh');}}};
   const drain = async () => {while(queue.length) await queue.shift()();};
   store.init();
@@ -41,7 +41,7 @@ test('pending request survives store reload and status refresh, allowing confirm
   assert.equal(h.store.restartPending,true);
   assert.equal(h.store.restartMessage,'Will restart when idle.');
   h.store.restart(h.cx,true); await h.drain();
-  assert.ok(h.calls.some(args => args.join(' ') === 'coord restart --force'));
+  assert.ok(h.calls.some(args => args.join(' ') === 'restart --force'));
 });
 test('lost or unhealthy replacement never reports restart success; healthy replacement does', async () => {
   const h = await setup();

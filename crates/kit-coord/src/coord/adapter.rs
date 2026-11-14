@@ -208,7 +208,7 @@ pub struct ProcHc {
 impl ProcHc {
     pub fn from_env() -> Self {
         Self {
-            exe: std::env::var_os("HERDR_KIT_HC")
+            exe: std::env::var_os("KIT_COORD_HC")
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| "hc".into()),
@@ -320,7 +320,7 @@ pub struct ProcApp {
 impl ProcApp {
     pub fn from_env() -> Self {
         Self {
-            exe: std::env::var_os("HERDR_KIT_HERDR_APP")
+            exe: std::env::var_os("KIT_COORD_HERDR_APP")
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| "herdr-app".into()),
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn terminal_readiness_and_labels() {
         let mut t: Term = serde_json::from_str(include_str!(
-            "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+            "testdata/hc-get-agent.json"
         ))
         .unwrap();
         t.state = "live".into();
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn snapshot_lookup_uses_nested_terminals() {
         let s: AppSnapshot = serde_json::from_str(include_str!(
-            "../../../../docs/coordinator/examples/captures/herdr-app-ls.json"
+            "testdata/herdr-app-ls.json"
         ))
         .unwrap();
         let (space, tab) = s.tab_of("t7").unwrap();

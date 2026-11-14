@@ -15,6 +15,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod packages;
+mod activation;
+pub use activation::after_activation;
 mod state;
 use packages::*;
 
@@ -245,4 +247,4 @@ fn release_mods(release_dir: &Path) -> Result<Vec<(String, PathBuf)>> {
 }
 
 mod deployment;
-pub use deployment::{active_release, install, source, stable_binary, status, update};
+pub use deployment::{install, source, status, update};

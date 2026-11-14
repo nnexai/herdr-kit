@@ -236,7 +236,7 @@ mod tests {
         fn run(&self, spec: &RunSpec) -> Result<Term> {
             self.0.borrow_mut().push(spec.clone());
             let mut t: Term = serde_json::from_str(include_str!(
-                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "testdata/hc-get-agent.json"
             ))?;
             t.address = "t-test".into();
             Ok(t)
@@ -337,16 +337,16 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         use std::process::Command;
 
-        const CHILD: &str = "HERDR_KIT_LAUNCH_IDENTITY_TEST_CHILD";
+        const CHILD: &str = "KIT_COORD_LAUNCH_IDENTITY_TEST_CHILD";
         if std::env::var_os(CHILD).is_none() {
             let tmp = tempfile::tempdir().unwrap();
             let exe = tmp.path().join("hc");
             let dump = tmp.path().join("hc-env");
             let fixture = tmp.path().join("terminal.json");
-            fs::write(&exe, "#!/bin/sh\nenv > \"$HERDR_KIT_TEST_ENV_DUMP\"\ncat \"$HERDR_KIT_TEST_TERM_FIXTURE\"\n").unwrap();
+            fs::write(&exe, "#!/bin/sh\nenv > \"$KIT_COORD_TEST_ENV_DUMP\"\ncat \"$KIT_COORD_TEST_TERM_FIXTURE\"\n").unwrap();
             fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
             let mut term: serde_json::Value = serde_json::from_str(include_str!(
-                "../../../../docs/coordinator/examples/captures/hc-get-agent.json"
+                "testdata/hc-get-agent.json"
             ))
             .unwrap();
             term["address"] = json!("t-test");
@@ -357,9 +357,9 @@ mod tests {
                 .arg("--nocapture")
                 .env(CHILD, "1")
                 .env("HC_TERMINAL_ID", "caller-terminal")
-                .env("HERDR_KIT_HC", &exe)
-                .env("HERDR_KIT_TEST_ENV_DUMP", &dump)
-                .env("HERDR_KIT_TEST_TERM_FIXTURE", &fixture)
+                .env("KIT_COORD_HC", &exe)
+                .env("KIT_COORD_TEST_ENV_DUMP", &dump)
+                .env("KIT_COORD_TEST_TERM_FIXTURE", &fixture)
                 .output()
                 .unwrap();
             assert!(
@@ -371,7 +371,7 @@ mod tests {
             let env = fs::read_to_string(&dump).unwrap();
             assert!(
                 env.lines()
-                    .any(|line| line == "HERDR_KIT_LAUNCH_IDENTITY_TEST_CHILD=1")
+                    .any(|line| line == "KIT_COORD_LAUNCH_IDENTITY_TEST_CHILD=1")
             );
             assert!(
                 !env.lines().any(|line| line.starts_with("HC_TERMINAL_ID=")),

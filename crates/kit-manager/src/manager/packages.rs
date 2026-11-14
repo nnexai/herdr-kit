@@ -52,7 +52,7 @@ impl Catalog {
             // Committed pre-workspace source is a supported rollback input, not
             // a runtime alias. Its direct engines still belong to herdr-kit.
             let mut old: Self =
-                serde_json::from_str(include_str!("../../../../kit-packages.json"))?;
+                serde_json::from_str(include_str!("legacy-packages.json"))?;
             for package in old.packages.values_mut() {
                 if let Some(binary) = &mut package.binary {
                     binary.cargo_package = "herdr-kit".into();

@@ -42,15 +42,15 @@ Only the person changes configuration or rates outcomes. The data directory's
 
 The coordinator does not close spaces created by the person, type into startup
 dialogs or reopen a coordinator tab the person closed. Operation, cause,
-outcome and rating records support `coord stats --json`. See
+outcome and rating records support `kit-coord stats --json`. See
 `docs/coordinator-spec.md` for the full behavior and safety rules.
 
 ## Built from
 
 - `layouts/herdr-kit.json`: custom layout retaining built-in mod references.
 - `mods/herdr-kit-usage`: native GPUI View, pure JS model, deployment runtime.
-- `mods/herdr-kit-coord`: native coordinator status, board and timeline.
-- `crates/kit-manager/src/coord/`: direct legacy coordinator engine during P1.
+- `mods/kit-coord`: native coordinator status, board and timeline.
+- `crates/kit-coord/`: independent kit-coord CLI, roles and fixtures.
 - `crates/kit-manager/src/usage*`: direct legacy OMP adapter/cache during P1.
 - `crates/kit-manager/src/manager/`: selected committed-source builds, receipts,
   recoverable owned-artifact activation and complete-selection rollback.

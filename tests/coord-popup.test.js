@@ -38,8 +38,8 @@ export const watchFolder = () => new Promise(() => {});
 registerHooks({resolve(specifier, context, next) {
   return ['gpui-kit','gpui-base','herdr'].includes(specifier) ? {url:host,shortCircuit:true} : next(specifier,context);
 }});
-const {default:Coordinator} = await import('../mods/herdr-kit-coord/main.js');
-const {store} = await import('../mods/herdr-kit-coord/store.js');
+const {default:Coordinator} = await import('../mods/kit-coord/main.js');
+const {store} = await import('../mods/kit-coord/store.js');
 const now = 1763042861000;
 const status = {enabled:true,state:'running',degraded:[],watcher:{running:true},coordinator:{terminal:'coord'},generated_at_ms:now};
 const task = {id:'w-t1',title:'Task with a long title '.repeat(8),state:'running',terminal:'worker',space_id:'space',tab_id:'tab',rejected_rungs:[],rung:2,number:1,last_event_ms:now,state_since_ms:now};

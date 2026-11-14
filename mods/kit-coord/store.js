@@ -42,13 +42,13 @@ export const store = {
     const requestGeneration = generation;
     const failedBefore = this.failed;
     let mode = options.mode || 'replace';
-    let argv = ['coord', kind, '--json'];
+    let argv = [kind, '--json'];
     if (kind === 'log') {
       if (scopeKey !== this.logScope) mode = 'replace';
       const page = { limit: 200 };
       if (mode === 'append' && this.log?.oldest_seq != null) page.beforeSeq = this.log.oldest_seq;
       if (mode === 'prepend' && this.log?.newest_seq != null) page.afterSeq = this.newEntries[0]?.seq ?? this.log.newest_seq;
-      argv = ['coord', 'log', ...logArgs(this.scope || {}, page)];
+      argv = ['log', ...logArgs(this.scope || {}, page)];
     }
     cx.spawn(async cx => {
       try {
@@ -56,24 +56,24 @@ export const store = {
         try { result = await exec(BINARY, [...prefix(), ...argv], {timeout: kind === 'status' ? 10000 : 15000}); }
         catch (e) {
           const message = firstLine(e?.message || e);
-          throw new Error(/timed?\s*out|timeout/i.test(message) ? `coord ${kind} timed out` : `Could not run herdr-kit: ${message}`);
+          throw new Error(/timed?\s*out|timeout/i.test(message) ? `coord ${kind} timed out` : `Could not run kit-coord: ${message}`);
         }
         if (result.code !== 0) throw new Error(`coord ${kind} failed (exit ${result.code}): ${firstLine(result.stderr)}`);
         let value;
         try { value = kind === 'status' ? decodeStatus(result.stdout) : kind === 'board' ? decodeBoard(result.stdout) : decodeLog(result.stdout); }
-        catch (_) { throw new Error(`Unexpected ${kind === 'log' ? 'journal' : kind} format. Update herdr-kit and reload the mod.`); }
+        catch (_) { throw new Error(`Unexpected ${kind === 'log' ? 'journal' : kind} format. Update kit-coord and reload the mod.`); }
         let refreshGap = false;
         if (kind === 'log' && mode === 'prepend' && this.log?.newest_seq != null) {
           const afterSeq = this.newEntries[0]?.seq ?? this.log.newest_seq;
           let pages = mergeRefreshPage({}, value);
           while (pages.beforeSeq != null && requestGeneration === generation) {
             let next;
-            try { next = await exec(BINARY, [...prefix(), 'coord', 'log', ...logArgs(this.scope || {}, {limit:200,afterSeq,beforeSeq:pages.beforeSeq})], {timeout:15000}); }
-            catch (e) { const message=firstLine(e?.message || e); throw new Error(/timed?\s*out|timeout/i.test(message) ? 'coord log timed out' : `Could not run herdr-kit: ${message}`); }
+            try { next = await exec(BINARY, [...prefix(), 'log', ...logArgs(this.scope || {}, {limit:200,afterSeq,beforeSeq:pages.beforeSeq})], {timeout:15000}); }
+            catch (e) { const message=firstLine(e?.message || e); throw new Error(/timed?\s*out|timeout/i.test(message) ? 'coord log timed out' : `Could not run kit-coord: ${message}`); }
             if (next.code !== 0) throw new Error(`coord log failed (exit ${next.code}): ${firstLine(next.stderr)}`);
             let page;
             try { page=decodeLog(next.stdout); }
-            catch (_) { throw new Error('Unexpected journal format. Update herdr-kit and reload the mod.'); }
+            catch (_) { throw new Error('Unexpected journal format. Update kit-coord and reload the mod.'); }
             pages=mergeRefreshPage(pages,page);
           }
           refreshGap=pages.gap;
@@ -133,7 +133,7 @@ export const store = {
     this.starting = true; cx.notify();
     cx.spawn(async cx => {
       try {
-        const result = await exec(BINARY, [...prefix(), 'coord', 'up'], {timeout: 60000});
+        const result = await exec(BINARY, [...prefix(), 'up'], {timeout: 60000});
         if (result.code !== 0) throw new Error(firstLine(result.stderr));
       } catch (e) { notify({title: 'Coordinator did not start', body: firstLine(e?.message || e), level: automatic ? 'warning' : 'error', timeout: 8000}); }
       finally { this.starting = false; this.refresh(cx, 'status', true); if (this.overlay?.ui.view === 'board') this.refresh(cx, 'board', true); cx.notify(); }
@@ -144,7 +144,7 @@ export const store = {
     this.restarting = true; this.restartMessage = ''; const terminal = this.status.coordinator?.terminal; cx.notify();
     cx.spawn(async cx => {
       try {
-        const result = await exec(BINARY, [...prefix(), 'coord', 'restart', ...(force ? ['--force'] : [])], {timeout: 60000});
+        const result = await exec(BINARY, [...prefix(), 'restart', ...(force ? ['--force'] : [])], {timeout: 60000});
         if (result.code !== 0) throw new Error(firstLine(result.stderr));
         const value = JSON.parse(result.stdout);
         if (value.state !== 'requested' && value.state !== 'restarted') throw new Error('Unexpected restart response');

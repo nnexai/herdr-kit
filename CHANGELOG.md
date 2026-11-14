@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Extract the independent `kit-coord` crate/CLI and native mod, keeping journal,
+  state, sessions and custom-role paths intact. Remove manager's coordinator
+  namespace and engine; retain usage on its legacy CLI until P3.
+- Bind coordinator identity to its actual build revision and public readiness
+  descriptor, not updater state. Validate watcher replacement targets, preserve
+  a degraded live watcher on invalid targets, and publish readiness last.
+- Migrate Mission Log, roles, prompts, report footers, watcher argv and bounded
+  manager hook together, with explicit kit-coord environment overrides and a
+  separately authorized person-drained live cutover.
+
 - Package the existing `herdr-kit` executable as workspace member `kit-manager`,
   retaining direct legacy capability commands until their vertical cutovers.
 - Add committed component/bundle manifests, explicit selected installs and

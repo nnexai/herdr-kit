@@ -78,7 +78,7 @@ overrode a placement, a model choice or a cleanup.
 
 ## 4. Command surface
 
-All under the one existing tool: `herdr-kit coord <verb>`. The agents never
+The independent capability CLI is `kit-coord <verb>`. It does not require an installed manager, usage package or the herdr-kit layout. The agents never
 compose `hc`, `herdr-app` or `git worktree` commands for structure; they
 decide, and the CLI executes and records in one step.
 
@@ -115,8 +115,8 @@ current summary per workstream, so most follow-ups resolve without a scout.
 
 - Terminals are started with `hc run --bg --no-parent --keep --label herdr.space=<id> --label coord.managed=1 --label coord.task=<id>`.
   This does not move the person's view, also with a real omp agent. `herdr-app do space.new` and `tab.new` do, and are not used for background work.
-- The CLI calls `hc` with `HC_TERMINAL_ID` unset. Otherwise hc wraps messages in `<hc from="…" reach="hc send … when done or stuck">`, which tells the delegate to report by typing into the sender instead of through `coord report`.
-- The delegate's own shell has `HC_TERMINAL_ID` set to its address, which is what `coord report` uses to identify the caller.
+- The CLI calls `hc` with `HC_TERMINAL_ID` unset. Otherwise hc wraps messages in `<hc from="…" reach="hc send … when done or stuck">`, which tells the delegate to report by typing into the sender instead of through `kit-coord report`.
+- The delegate's own shell has `HC_TERMINAL_ID` set to its address, which is what `kit-coord report` uses to identify the caller.
 - Reusing the id of a space that was closed recreates that space.
 - A new space's id is generated before creation (`sp` + 32 hex) and written in `res.intent` first.
 - Spaces and tabs are renamed by id afterwards. An owned worktree space is named `<repo> · <workstream title>`; a tab is named after its task.
@@ -139,7 +139,7 @@ so a per-task session folder cannot be passed, and they always add the
 `<hc from … reach …>` wrapper described above.
 
 Defaults are built into herdr-kit. A file of the same name in `roles/`
-overrides the built-in one and is never written by updates; `coord roles
+overrides the built-in one and is never written by updates; `kit-coord roles
 --defaults` prints the current built-ins for comparison.
 
 | Role | OMP model selector | Used for |
@@ -150,17 +150,17 @@ overrides the built-in one and is never written by updates; `coord roles
 | `coord-deep` | `@slow` | Open technical design, unclear cause, high cost of error |
 | `coord-design` | `@design` | UI/UX, interaction, layout and visual design, including open-ended work |
 
-For design work, pass `--role coord-design` to `coord task start` with the
+For design work, pass `--role coord-design` to `kit-coord task start` with the
 usual workstream, brief and placement arguments. OMP resolves `@design` from
 its own model-role configuration at session start; herdr-kit neither reads
 nor changes that configuration and does not pin a provider model. Changing
 the person's OMP design model therefore applies to future design sessions.
 This selects the model role, not an OMP bundled subagent.
 
-`coord roles` lists effective harnesses, model selectors, sources and whether
-a file overrides a built-in. `coord roles coord-design` prints the effective
+`kit-coord roles` lists effective harnesses, model selectors, sources and whether
+a file overrides a built-in. `kit-coord roles coord-design` prints the effective
 role, including its start and resume commands, without launching a delegate.
-`coord roles --defaults coord-design` prints the shipped version instead.
+`kit-coord roles --defaults coord-design` prints the shipped version instead.
 
 #### Custom OMP roles and explicit models
 
@@ -211,7 +211,7 @@ escalation` and the previous result path in the brief.
 `task.placed` records the role name, content hash, harness and the model
 selector from the command (`@design`, not the provider model OMP resolves).
 On a cold resume the command has no model flag, so that event's model field
-is absent; follow `session_of` to the original placement. `coord stats --json`
+is absent; follow `session_of` to the original placement. `kit-coord stats --json`
 groups by role and role hash (also rung and release), not by resolved model.
 Distinct named roles keep choices visible, but changing OMP's `@design`
 mapping does not change the role hash or provide per-provider-model statistics.
@@ -282,7 +282,7 @@ Consequences:
 
 - omp needs nothing.
 - codex: the role's start command passes the trust override for the repo root, but only when the workstream's repo is one the person already uses with the system; this saves nothing to codex's config.
-- claude: `coord up` checks whether the worktree root (`~/.herdr/worktrees`) is trusted and, if not, reports it as a one-time setup step for the person. The system does not write claude's config.
+- claude: `kit-coord up` checks whether the worktree root (`~/.herdr/worktrees`) is trusted and, if not, reports it as a one-time setup step for the person. The system does not write claude's config.
 - copilot: no step is needed when the main repo is already remembered; otherwise the task surfaces as `task.start_blocked`.
 - Trust is a decision about running a repo's own hooks and settings, so the system never grants it for a repo the person has not worked in.
 
@@ -290,8 +290,8 @@ Consequences:
 
 Data is pulled; wake-ups carry no payload.
 
-- Delegates append `task.reported` through `coord report`.
-- The coordinator keeps a cursor. `coord inbox` returns everything after it; `inbox ack` advances it.
+- Delegates append `task.reported` through `kit-coord report`.
+- The coordinator keeps a cursor. `kit-coord inbox` returns everything after it; `inbox ack` advances it.
 - The watcher follows `hc events --label coord.managed=1`. Each line is `{params: {type, terminal, seq, data}}`; it uses `status`, `turn`, `created`, `finished`, `removed` and `labels`, and ignores `title`, which was about 90% of lines in the probe. A `turn` event marks the end of a turn.
 - hc reports four resting or active states for an agent: `idle`, `working`, `blocked`, `done`. `done` means the turn ended while nobody was looking at the tab, which is the normal case for a delegate. "Settled" below means `idle` or `done`.
 - Rules:
@@ -321,24 +321,24 @@ herdr-kit has had no daemon so far. The watcher keeps to that spirit: it is a
 subcommand of the same tool, run as an hc terminal, so hc keeps it alive, its
 output is readable with `hc read`, and it is visible like any other terminal.
 
-- `coord up` starts it if absent; a lock makes it single-instance.
-- It writes a heartbeat. `coord status` reports a stale heartbeat, and the status bar shows it.
-- After a reboot, hc may restore kept terminals as shells instead of re-running programs, so `coord up` repairs the coordinator and watcher. The tested private core restart preserved live programs and `coord up` correctly made no duplicates. See "Autostart" below.
+- `kit-coord up` starts it if absent; a lock makes it single-instance.
+- It writes a heartbeat. `kit-coord status` reports a stale heartbeat, and the status bar shows it.
+- After a reboot, hc may restore kept terminals as shells instead of re-running programs, so `kit-coord up` repairs the coordinator and watcher. The tested private core restart preserved live programs and `kit-coord up` correctly made no duplicates. See "Autostart" below.
 
 ### Autostart and the status icon
 
-- Autostart is a setting, on by default once the coordinator has been enabled with a first `coord up`. `coord down` turns it off.
-- With autostart on, the mod runs `coord up` at app start.
-- The status bar carries a small coordinator icon with three states: running, not running, degraded (watcher heartbeat stale, or coordinator terminal missing). Clicking it when not running or degraded runs `coord up`; clicking it when running opens the board.
-- The mod calls `coord up` for autostart and on a click, and otherwise only reads (`coord status`, `coord board`, `coord log`). It never restarts a coordinator session that is running.
-- A coordinator tab the person closes stays closed. The watcher records that the session ended and the icon turns to degraded; only a click, the next app start, or `coord up` brings it back.
+- Autostart is a setting, on by default once the coordinator has been enabled with a first `kit-coord up`. `kit-coord down` turns it off.
+- With autostart on, the mod runs `kit-coord up` at app start.
+- The status bar carries a small coordinator icon with three states: running, not running, degraded (watcher heartbeat stale, or coordinator terminal missing). Clicking it when not running or degraded runs `kit-coord up`; clicking it when running opens the board.
+- The mod calls `kit-coord up` for autostart and on a click, and otherwise only reads (`kit-coord status`, `kit-coord board`, `kit-coord log`). It never restarts a coordinator session that is running.
+- A coordinator tab the person closes stays closed. The watcher records that the session ended and the icon turns to degraded; only a click, the next app start, or `kit-coord up` brings it back.
 
 ### Updates
 
 herdr-kit already builds and activates new releases on its own. The
 coordinator parts follow that without a separate mechanism:
 
-- **Watcher:** its heartbeat records the release it runs from. `coord up` compares that with the active release and, if they differ, ends the old watcher and starts the new one in the same tab. `update apply` and `update rollback` run `coord up` after activation, so the watcher is replaced immediately. This is safe at any moment because the watcher holds no state.
+- **Watcher:** its heartbeat records the release it runs from. `kit-coord up` compares that with the active release and, if they differ, ends the old watcher and starts the new one in the same tab. `update apply` and `update rollback` run `kit-coord up` after activation, so the watcher is replaced immediately. This is safe at any moment because the watcher holds no state.
 - **CLI used by agents:** agents call the stable `<data-dir>/bin/herdr-kit` path, so they pick up the new release on their next call.
 - **Roles and the coordinator brief:** built-in defaults change with the release; a running session keeps what it started with. The coordinator picks them up at its next restart; the update appends a `decision` entry so the reason for a requested handoff is visible.
 - **Mod:** replaced by the existing generation mechanism.
@@ -348,13 +348,13 @@ coordinator parts follow that without a separate mechanism:
 
 ### Start
 
-`coord up` is idempotent and ensures, in order: the journal folder, the
+`kit-coord up` is idempotent and ensures, in order: the journal folder, the
 coordinator space, the watcher, the coordinator agent.
 
 - The coordinator lives in its own owned space named `coordinator`, in `<data-dir>/coord/home`.
 - Its terminal is named `coordinator`, so `hc send coordinator "..."` always reaches it, and it is pinned to the top of the agents list.
 - Tabs in that space: `coordinator` (the agent) and `watcher` (the watcher's output).
-- Its first message is the `coord-main` role's instructions plus a startup read produced by `coord board`: open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads.
+- Its first message is the `coord-main` role's instructions plus a startup read produced by `kit-coord board`: open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads.
 
 ### Restart
 
@@ -364,9 +364,9 @@ memory that can disagree with the journal.
 Restart happens only when the coordinator is idle, the inbox is drained and no
 question to the person is pending, and one of:
 
-- the coordinator asked for it with `coord handoff` (it notices its own context growing),
+- the coordinator asked for it with `kit-coord handoff` (it notices its own context growing),
 - it has been idle for a configured gap (default: overnight),
-- the person ran `coord restart`.
+- the person ran `kit-coord restart`.
 
 The new session starts in the same tab. Anything the coordinator learns from
 the person that must survive is written when it is learned: preferences as
@@ -381,7 +381,7 @@ Each decision is journaled with a tier: `silent` (act and log), `digest`
 
 "Done" is the coordinator's judgment that the delivery target was reached; it
 only moves the workstream to `closed`. Every destructive step is gated by a
-mechanical check run by `coord release`, never by the model.
+mechanical check run by `kit-coord release`, never by the model.
 
 | Resource | Releasable when |
 |---|---|
@@ -416,8 +416,8 @@ Closing by id does not move the person's view *(verified)*.
 | Board (click the readout) | Workstreams → tasks with state, placement reason, role, age; pending questions; retained reasons |
 | Timeline (second view of the board) | The journal, newest first, filterable by workstream or task |
 
-The board and timeline are one new native mod reading `coord board --json` and
-`coord log --json`, refreshed through `watchFolder` on the journal folder.
+The board and timeline are one new native mod reading `kit-coord board --json` and
+`kit-coord log --json`, refreshed through `watchFolder` on the journal folder.
 Herdr's own `done` and `blocked` agent states keep working as attention signals.
 
 App commands that move the view (`agent.focus`, `space.select`) are used only
@@ -427,7 +427,7 @@ when the person asks to be shown something.
 
 - The journal already holds every decision with its reasons, every nudge, stall, release check and correction.
 - `briefs/` and `results/` hold what was asked and what came back; `task.started` holds the session reference for the full transcript.
-- `coord log --json` and `coord explain` are the stable read interface; agents analysing the system use those rather than parsing files.
+- `kit-coord log --json` and `kit-coord explain` are the stable read interface; agents analysing the system use those rather than parsing files.
 - Questions the records should answer: how often rung 4 or 5 was chosen and why; which placements were corrected; nudge and stall rates per role; time from report to drain; how often release was blocked and by which check; coordinator restarts and their reasons.
 
 ### Insight records
@@ -445,7 +445,7 @@ records are cheap to write now and are what later analysis joins on.
 | `coord.turn`: same for the coordinator terminal (origin `person` or `inbox`) | watcher | Coordinator load and latency; how often the person had to talk to it |
 | `follows` in `task.placed`: `{task, relation}` with relation `follow_up`, `rework`, `escalation` (`--follows <task> --relation …`) | coordinator | Rework and escalation rates per role and rung |
 | `outcome` in `task.closed`: `accepted`, `rejected`, `superseded`, `abandoned`; in `ws.closed`: `delivered`, `partial`, `abandoned` | coordinator | A success label per task and workstream |
-| `rating`: `good` or `bad` with an optional note, on a workstream or task (`coord rate`) | person | The person's own verdict, the strongest signal |
+| `rating`: `good` or `bad` with an optional note, on a workstream or task (`kit-coord rate`) | person | The person's own verdict, the strongest signal |
 | `role_hash`, `brief_bytes` in `task.placed`; `role_hash` and `release` in `coord.session_started`; `config.changed` with old and new values | CLI | Before/after comparison when roles, briefs, settings or the release change |
 
 A turn's origin is decided by the watcher from the journal alone: every
@@ -453,7 +453,7 @@ A turn's origin is decided by the watcher from the journal alone: every
 next turn of that terminal, which gets that origin; a turn with no unused
 system message before it is `person`.
 
-`coord stats --json [--since <duration>]` computes the standard figures from
+`kit-coord stats --json [--since <duration>]` computes the standard figures from
 these records so that tuning does not start with ad-hoc scripts:
 
 - per role and per rung: tasks, time from placed to first report, turns, person-origin turns, nudges, stalls, start-blocked count, outcomes, rework and escalation rate;
@@ -485,11 +485,11 @@ and watch the journal, which is the cheapest way to find design errors.
 
 ### Settings
 
-`<data-dir>/coord/config.json`, created with defaults by the first `coord up`:
+`<data-dir>/coord/config.json`, created with defaults by the first `kit-coord up`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `autostart` | `true` after first `up` | The mod runs `coord up` at app start |
+| `autostart` | `true` after first `up` | The mod runs `kit-coord up` at app start |
 | `coordinator_role` | `coord-main` | Role used for the coordinator |
 | `nudge_coordinator_secs` | 10 | Settled time before an inbox nudge |
 | `nudge_delegate_secs` | 60 | Time after a turn end without a report |
@@ -521,9 +521,9 @@ Standing instructions for this role.
 Every first message is: the role's standing instructions, the task brief, and a
 fixed footer with the reporting contract:
 
-- Report with `<stable path>/herdr-kit coord report done|blocked|question --summary "<one line>" [--result <file>]`; long results go into the given results file.
-- Use `coord report progress` only for milestones; it never interrupts anyone.
-- If the person changes the scope directly, record it with `coord note`.
+- Report with `<stable path>/kit-coord report done|blocked|question --summary "<one line>" [--result <file>]`; long results go into the given results file.
+- Use `kit-coord report progress` only for milestones; it never interrupts anyone.
+- If the person changes the scope directly, record it with `kit-coord note`.
 - Do not start other agents, create spaces or worktrees, or close anything.
 
 ### What the coordinator is told
@@ -531,9 +531,9 @@ fixed footer with the reporting contract:
 The `coord-main` instructions cover: it routes and decides and does no project
 work; the placement ladder and that every rung above the lowest needs reasons;
 scouts are read-only subagents of its own harness; every decision goes through
-`coord decide` with a tier; preferences and unfinished discussions are written
-with `coord instruct` and `coord thread` when they come up; on `inbox: <n> new`
-it runs `coord inbox`, acts, and acknowledges; it asks for `coord handoff` when
+`kit-coord decide` with a tier; preferences and unfinished discussions are written
+with `kit-coord instruct` and `kit-coord thread` when they come up; on `inbox: <n> new`
+it runs `kit-coord inbox`, acts, and acknowledges; it asks for `kit-coord handoff` when
 its context grows; it never runs `hc`, `herdr-app` or `git worktree` for
 structure.
 
@@ -546,18 +546,18 @@ is always fresh; the previous session reference stays in the journal.
 ### After a reboot or core restart
 
 In the tested hc version, restarting the private core preserved live
-terminals; `coord up` remained idempotent afterwards. A real machine reboot
+terminals; `kit-coord up` remained idempotent afterwards. A real machine reboot
 can instead restore kept terminals as shells at the same addresses. The
 watcher treats a delegate terminal whose recorded process identity changed
 as ended: its task becomes `dormant`, with its session still resumable.
 It retains the replacement terminal rather than killing it: the person may
-already have started an editor there. `coord up` explicitly repairs the
+already have started an editor there. `kit-coord up` explicitly repairs the
 watcher and coordinator. Shell restoration is covered by fake fixtures, not
 by a real machine reboot.
 
 ### Testing hooks
 
-- `HERDR_KIT_HC` and `HERDR_KIT_HERDR_APP` override the two executables, so tests run against recorded fakes.
+- `KIT_COORD_HC` and `KIT_COORD_HERDR_APP` override the two executables, so tests run against recorded fakes.
 - Everything is rooted in the data dir, so `--data-dir` gives full isolation.
 - Automated tests never touch the person's running window or core.
 

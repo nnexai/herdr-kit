@@ -20,7 +20,7 @@ test('conversation text and key journal events interleave chronologically withou
 test('question chips fill a draft; only a confirmed journal answer collapses the question',() => {
   const before = railRows({entries:[question]},conversation,null).find(row => row.kind === 'question');
   const selection = quickReply(before,'Queue');
-  assert.deepEqual(sayArgs(selection.text,selection.question),['coord','say','--text','Queue','--question','q1']);
+  assert.deepEqual(sayArgs(selection.text,selection.question),['say','--text','Queue','--question','q1']);
   assert.equal(before.answer,undefined);
   assert.equal(quickReply(before,'Not an option'),null);
   const after = railRows({entries:[question,entry(6,'question.answered',{qid:'q1',text:'Queue'})]},conversation,null).find(row => row.kind === 'question');
@@ -50,7 +50,7 @@ test('off, missing and unavailable states never enable a stale send',() => {
   assert.equal(missingSource.step,'Session is starting');
 });
 test('messages are not trimmed, rewrapped or sent to a delegate target',() => {
-  assert.deepEqual(sayArgs('  exact\n\ttext  '),['coord','say','--text','  exact\n\ttext  ']);
+  assert.deepEqual(sayArgs('  exact\n\ttext  '),['say','--text','  exact\n\ttext  ']);
   assert.equal(sayArgs(' \t\n'),null);
   assert.deepEqual(focusAction({kind:'space',target:'sp1',tab:'tab2'}),[
     {name:'space.select',args:{id:'sp1'}},{name:'tab.select',args:{id:'tab2'}}]);

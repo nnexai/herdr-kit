@@ -1,7 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -32,6 +31,8 @@ pub struct Heartbeat {
     pub started_ms: u64,
     pub beat_ms: u64,
     pub events_ok: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_error: Option<String>,
 }
 
 pub fn read_heartbeat(paths: &CoordPaths) -> Result<Option<Heartbeat>> {
@@ -54,7 +55,8 @@ pub fn write_heartbeat(paths: &CoordPaths, hb: &Heartbeat) -> Result<()> {
     Ok(())
 }
 pub fn active_release(root: &Path) -> String {
-    crate::manager::active_release(root).unwrap_or_else(|| "development".into())
+    let _ = root;
+    crate::deployment::BUILD_REVISION.to_owned()
 }
 fn up_lock(ctx: &Ctx) -> Result<fs::File> {
     ctx.paths.ensure()?;
@@ -244,7 +246,7 @@ fn watcher(
         stop(ctx, &t.address, "watcher")?;
     }
     let mut argv = ctx.cli_argv();
-    argv.extend(["coord".into(), "watch".into()]);
+    argv.push("watch".into());
     let launched = launch::launch(
         ctx,
         &LaunchPlan {
@@ -504,6 +506,7 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
     if if_enabled && !Config::load(&ctx.paths)?.is_some_and(|c| c.autostart) {
         return Ok(json!({"state":"disabled"}));
     }
+    crate::deployment::ensure_current(&ctx.root)?;
     let j = ctx.journal()?;
     let cfg = config_autostart(ctx, &j, true)?;
     let (sp, intent) = space(ctx, &j)?;
@@ -706,6 +709,11 @@ pub fn status(ctx: &Ctx) -> Result<Value> {
         .as_ref()
         .is_some_and(|t| same_coordinator(t, &state.coordinator));
     let mut degraded = Vec::new();
+    if let Err(error) = crate::deployment::read(&ctx.root) {
+        degraded.push(json!({"code":"coordinator_deployment_invalid","since_ms":null,"detail":error.to_string()}));
+    } else if let Some(error) = hb.as_ref().and_then(|h| h.deployment_error.as_ref()) {
+        degraded.push(json!({"code":"coordinator_deployment_invalid","since_ms":hb.as_ref().map(|h|h.beat_ms),"detail":error}));
+    }
     if unreachable {
         degraded
             .push(json!({"code":"hc_unreachable","since_ms":null,"detail":"hc is unreachable"}));
@@ -735,71 +743,12 @@ pub fn status(ctx: &Ctx) -> Result<Value> {
         json!({"schema_version":1,"generated_at_ms":now,"release":active_release(&ctx.root),"state":status,"enabled":cfg.is_some(),"autostart":cfg.as_ref().is_some_and(|c|c.autostart),"degraded":degraded,"watcher":{"running":wr,"terminal":wt.as_ref().map(|t|&t.address),"heartbeat_ms":hb.as_ref().map(|h|h.beat_ms),"release":hb.as_ref().map(|h|&h.release)},"coordinator":{"terminal":state.coordinator.terminal,"status":word,"space_id":state.coordinator.space,"tab_id":state.coordinator.tab,"session_started_ms":state.coordinator.started_ms,"restart_pending":state.coordinator.handoff.is_some()},"counts":counts,"journal_dir":ctx.paths.journal,"journal_seq":state.last_seq}),
     )
 }
-fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
-    let message = String::from_utf8_lossy(stderr).into_owned();
-    let forbidden = code == Some(3)
-        && serde_json::from_slice::<Value>(stderr)
-            .ok()
-            .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
-            .as_deref()
-            == Some("forbidden_caller");
-    if forbidden {
-        json!({"state":"skipped","reason":"forbidden_caller","message":message})
-    } else {
-        json!({"state":if message.contains("unrecognized subcommand") || message.contains("unexpected argument") {"unsupported"} else {"failed"},"message":message})
-    }
-}
-
-pub fn after_activation(root: &Path) -> Value {
-    if !root.join("coord/config.json").exists() {
-        return json!({"state":"disabled"});
-    }
-    let result = (|| -> Result<Value> {
-        let mut child = Command::new(root.join("bin/herdr-kit"))
-            .arg("--data-dir")
-            .arg(root)
-            .args(["coord", "up", "--if-enabled"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let deadline = Instant::now() + Duration::from_secs(120);
-        loop {
-            if child.try_wait()?.is_some() {
-                let out = child.wait_with_output()?;
-                if !out.status.success() {
-                    return Ok(activation_failure(out.status.code(), &out.stderr));
-                }
-                return Ok(serde_json::from_slice(&out.stdout)?);
-            }
-            if Instant::now() >= deadline {
-                child.kill()?;
-                let _ = child.wait();
-                anyhow::bail!("coordinator activation timed out");
-            }
-            thread::sleep(Duration::from_millis(50));
-        }
-    })();
-    result.unwrap_or_else(|e| json!({"state":"failed","message":e.to_string()}))
-}
 
 #[cfg(test)]
 mod tests {
     use super::super::adapter::fake::{FakeApp, FakeHc};
     use super::*;
 
-    #[test]
-    fn activation_hook_distinguishes_refusal_from_failure() {
-        let refusal = br#"{"error":{"code":"forbidden_caller","message":"caller is not permitted to run this command"}}"#;
-        let skipped = activation_failure(Some(3), refusal);
-        assert_eq!(skipped["state"], "skipped");
-        assert_eq!(skipped["reason"], "forbidden_caller");
-        assert_eq!(activation_failure(Some(1), refusal)["state"], "failed");
-        assert_eq!(
-            activation_failure(Some(3), br#"{"error":{"code":"operation_failed","message":"failed"}}"#)["state"],
-            "failed"
-        );
-    }
 
     fn context(root: &Path) -> Ctx {
         Ctx {
@@ -838,6 +787,7 @@ mod tests {
             started_ms: 1,
             beat_ms: 99_999,
             events_ok: true,
+            deployment_error: None,
         };
         write_heartbeat(&ctx.paths, &hb).unwrap();
         assert!(fresh(
@@ -957,7 +907,7 @@ mod tests {
                     space: "sp".into(),
                     tab: Some("tab".into()),
                     session: None,
-                    release: "development".into(),
+                    release: crate::deployment::BUILD_REVISION.into(),
                     role_hash: "hash".into(),
                     reason: "up".into(),
                     brief: ctx.paths.brief("c"),
@@ -969,10 +919,11 @@ mod tests {
                 &Heartbeat {
                     pid: 1,
                     terminal: Some("tw".into()),
-                    release: "development".into(),
+                    release: crate::deployment::BUILD_REVISION.into(),
                     started_ms: 0,
                     beat_ms: if case == "stale" { 1 } else { 99_999 },
                     events_ok: true,
+                    deployment_error: None,
                 },
             )
             .unwrap();
@@ -1083,6 +1034,7 @@ mod tests {
                         started_ms: 99_999,
                         beat_ms: 99_999,
                         events_ok: true,
+                        deployment_error: None,
                     },
                 )?;
             }
@@ -1189,7 +1141,7 @@ mod tests {
             assert_eq!(w.specs.len(), 2);
             assert_eq!(w.specs[0].name, "coord-watcher");
             assert_eq!(w.specs[1].name, "coordinator");
-            assert!(w.specs[0].argv.ends_with(&["coord".into(), "watch".into()]));
+            assert!(w.specs[0].argv.ends_with(&["watch".into()]));
             assert!(w.calls.iter().any(|c| c.starts_with("tab.move")));
             assert!(w.calls.iter().any(|c| c.starts_with("terminal.pin")));
         }
@@ -1210,18 +1162,18 @@ mod tests {
             );
             assert!(w.calls.iter().any(|c| c.starts_with("tab.rename")));
         }
-        fs::write(root.join("state.json"), r#"{"current":"new"}"#).unwrap();
+        let launched_before_suite_update = world.borrow().specs.len();
+        fs::write(root.join("state.json"), r#"{"current":"unrelated-suite-update"}"#).unwrap();
         up(&ctx, false).unwrap();
-        assert_eq!(world.borrow().specs.len(), 4);
+        assert_eq!(world.borrow().specs.len(), launched_before_suite_update);
         let entries = ctx.journal().unwrap().read_after(0).unwrap();
-        assert!(entries.iter().any(|e| e.kind == "decision"));
-        assert!(entries.iter().any(|e| e.kind == "coord.handoff_requested"));
+        assert!(!entries.iter().any(|entry| entry.kind == "coord.handoff_requested"));
         let before = world.borrow().calls.len();
         restart(&ctx, &Caller::Person { terminal: None }, true).unwrap();
         {
             let w = world.borrow();
             assert!(
-                w.specs[4]
+                w.specs.last().unwrap()
                     .labels
                     .iter()
                     .any(|(k, v)| k == "herdr.tab" && v == "tab-t2")

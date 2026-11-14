@@ -33,7 +33,7 @@ export function quickReply(row, option) {
 }
 export function sayArgs(value, question) {
   if (!value.trim()) return null;
-  return ['coord', 'say', '--text', value, ...(question?.id ? ['--question', question.id] : [])];
+  return ['say', '--text', value, ...(question?.id ? ['--question', question.id] : [])];
 }
 export function railRows(log, conversation, board) {
   const entries = log?.entries || [], rows = [];

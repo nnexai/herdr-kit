@@ -9,10 +9,6 @@ description = "Optional trusted local-source package manager for Herdr kit compo
 name = "herdr-kit"
 path = "src/main.rs"
 
-[[test]]
-name = "coord_cli"
-path = "../../tests/coord_cli.rs"
-
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

@@ -6,16 +6,16 @@ pub const FOOTER: &str = r#"---
 Reporting (fixed by the coordinator system):
 
 - When you are done, or cannot continue, report exactly once:
-  {cli} coord report done --summary "<one line>"
-  {cli} coord report blocked --summary "<what blocks you>"
-  {cli} coord report question --summary "<your question>"
+  {cli} report done --summary "<one line>"
+  {cli} report blocked --summary "<what blocks you>"
+  {cli} report question --summary "<your question>"
   Long results go into {result}; add --result {result} to the report.
-- Use `{cli} coord report progress --summary "<milestone>"` only for milestones; it never interrupts anyone.
-- If the person changes the scope with you directly, record it with `{cli} coord note "<what changed>"`.
+- Use `{cli} report progress --summary "<milestone>"` only for milestones; it never interrupts anyone.
+- If the person changes the scope with you directly, record it with `{cli} note "<what changed>"`.
 - Do not start other agents, create spaces or worktrees, or close anything. Do not report with `hc send`.
 - After reporting, stop and wait: a follow-up may arrive in this session."#;
 
-pub const DELEGATE_NUDGE: &str = r#"Reminder from the coordinator system: your last turn ended without a report. Report now with {cli} coord report done|blocked|question --summary "<one line>" (see the end of your first message)."#;
+pub const DELEGATE_NUDGE: &str = r#"Reminder from the coordinator system: your last turn ended without a report. Report now with {cli} report done|blocked|question --summary "<one line>" (see the end of your first message)."#;
 
 pub fn inbox_nudge(n: usize) -> String {
     format!("inbox: {n} new")
@@ -39,7 +39,7 @@ pub fn coordinator_first(role: &Role, cli: &str, startup_read: &str) -> String {
     const LIMIT: usize = 32 * 1024;
     let read = if startup_read.len() > LIMIT {
         let notice =
-            format!("\n\nStartup read truncated; run `{cli} coord board` for the full board.");
+            format!("\n\nStartup read truncated; run `{cli} board` for the full board.");
         let mut end = LIMIT.saturating_sub(notice.len());
         while !startup_read.is_char_boundary(end) {
             end -= 1;
@@ -53,8 +53,8 @@ pub fn coordinator_first(role: &Role, cli: &str, startup_read: &str) -> String {
 
 ## Commands
 `kit` is: {cli}
-Read commands: kit coord board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | roles | stats --json [--since DURATION]
-Coordinator commands (optional global --cause SEQ): kit coord inbox ack <SEQ> | ws open --title TEXT --target TEXT [--request TEXT] [--repo PATH] [--delivery-branch REF] [--purpose TEXT] | ws close <WS> --summary TEXT [--outcome delivered|partial|abandoned] | ws list [--all] | task start --ws WS --rung 1..5 --reason TEXT --brief FILE [--request TEXT] [--follows TASK --relation follow_up|rework|escalation] [--role NAME] [--reject N=REASON]... [--title TEXT] [--session-of TASK] [--space ID] [--branch NAME] [--base REF] [--folder PATH] | task send <TASK> (--text TEXT | --file FILE) | task close <TASK> --reason TEXT --outcome accepted|rejected|superseded|abandoned | release <WS> | decide --what TEXT --why TEXT --tier silent|digest|ask [--ws WS] [--task TASK] [--option TEXT]... | ask [--ws WS] [--task TASK] [--option TEXT]... <TEXT> | ask --answer QID <TEXT> | instruct <TEXT> | instruct --replace ID <TEXT> | instruct --remove ID | thread open <TITLE> [--note TEXT] | thread close <ID> [--note TEXT] | correct --what placement|model|cleanup|other --ref WS|TASK --why TEXT | scout --question TEXT --summary TEXT [--ws WS] | handoff [--note TEXT]
+Read commands: kit board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | roles | stats --json [--since DURATION]
+Coordinator commands (optional global --cause SEQ): kit inbox ack <SEQ> | ws open --title TEXT --target TEXT [--request TEXT] [--repo PATH] [--delivery-branch REF] [--purpose TEXT] | ws close <WS> --summary TEXT [--outcome delivered|partial|abandoned] | ws list [--all] | task start --ws WS --rung 1..5 --reason TEXT --brief FILE [--request TEXT] [--follows TASK --relation follow_up|rework|escalation] [--role NAME] [--reject N=REASON]... [--title TEXT] [--session-of TASK] [--space ID] [--branch NAME] [--base REF] [--folder PATH] | task send <TASK> (--text TEXT | --file FILE) | task close <TASK> --reason TEXT --outcome accepted|rejected|superseded|abandoned | release <WS> | decide --what TEXT --why TEXT --tier silent|digest|ask [--ws WS] [--task TASK] [--…
 
 ## Startup read
 {read}"#,
@@ -99,7 +99,7 @@ mod tests {
         .unwrap();
         let result = Path::new("/tmp/result.md");
         let first = delegate_first(&role, "task", "/bin/kit --data-dir /x", result);
-        assert!(first.contains("/bin/kit --data-dir /x coord report done"));
+        assert!(first.contains("/bin/kit --data-dir /x report done"));
         assert!(first.contains("/tmp/result.md"));
         assert!(follow_up("task", "kit", result).starts_with("task\n\n---"));
         assert_eq!(inbox_nudge(3), "inbox: 3 new");
@@ -109,7 +109,7 @@ mod tests {
             "Read your full brief in /tmp/result.md before doing anything else."
         );
         let startup = coordinator_first(&role, "kit", &"é".repeat(20_000));
-        assert!(startup.contains("run `kit coord board`"));
+        assert!(startup.contains("run `kit board`"));
         assert!(!startup.contains(&"é".repeat(20_000)));
         assert_eq!(title_of("\n  hello  \nmore"), "hello");
         assert_eq!(title_of(&"é".repeat(90)).chars().count(), 80);

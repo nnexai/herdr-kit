@@ -81,7 +81,7 @@ impl Ctx {
     }
 
     pub fn cli_argv(&self) -> Vec<String> {
-        let stable = crate::manager::stable_binary(&self.root);
+        let stable = self.root.join("bin/kit-coord");
         let binary = if stable.is_file() {
             stable
         } else {

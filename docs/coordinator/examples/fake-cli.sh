@@ -1,7 +1,7 @@
 #!/bin/sh
-# Recording fake for `hc` and `herdr-app`, used by tests/coord_cli.rs.
+# Recording fake for `hc` and `herdr-app`, used by crates/kit-coord/tests/cli.rs.
 # Install: copy this file into a temp dir twice, as `hc` and `herdr-app`,
-# chmod 0755, and point HERDR_KIT_HC / HERDR_KIT_HERDR_APP at the copies.
+# chmod 0755, and point KIT_COORD_HC / KIT_COORD_HERDR_APP at the copies.
 #
 # FAKE_DIR (required) holds, per program name (`hc` or `herdr-app`):
 #   <name>/calls.tsv          one line per call: HC_TERMINAL_ID=<value|<unset>>, then each argv item, TAB-separated

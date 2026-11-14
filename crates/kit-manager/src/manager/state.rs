@@ -102,33 +102,3 @@ pub(super) fn store(data: &Path, state: &State) -> Result<()> {
     store_legacy(data, state)
 }
 
-pub(super) fn coordinator_revision(data: &Path) -> Option<String> {
-    // Heartbeats need identity, not allocations for every file/hash receipt.
-    #[derive(Deserialize)]
-    struct Identity {
-        current: Option<String>,
-        previous: Option<String>,
-        #[serde(default)]
-        selection: BTreeMap<String, String>,
-        schema_version: Option<u32>,
-    }
-    let legacy = read_json::<Identity>(&state_path(data)).ok()??;
-    let selected = match read_json::<Identity>(&path(data)).ok()? {
-        Some(history) => {
-            if history.schema_version != Some(1) {
-                return None;
-            }
-            if history.current == legacy.current && history.previous == legacy.previous {
-                history.selection
-            } else {
-                legacy.selection
-            }
-        }
-        None => legacy.selection,
-    };
-    if selected.is_empty() {
-        legacy.current
-    } else {
-        selected.get("kit-coord").cloned()
-    }
-}

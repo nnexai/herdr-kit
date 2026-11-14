@@ -1,4 +1,3 @@
-mod coord;
 mod manager;
 mod paths;
 mod usage;
@@ -19,8 +18,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Coordinate parallel agent work.
-    Coord(coord::cli::CoordArgs),
     /// Read anonymous OMP subscription usage.
     Usage {
         #[command(subcommand)]
@@ -82,13 +79,11 @@ enum UpdateCommand {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
-    let is_coord = matches!(&cli.command, Command::Coord(_));
     match run(cli).await {
-        Ok(coord::Output::Json(value)) => println!("{}", serde_json::to_string(&value).expect("serializable response")),
-        Ok(coord::Output::Text(text)) => print!("{text}"),
+        Ok(value) => println!("{}", serde_json::to_string(&value).expect("serializable response")),
         Err(error) => {
             let message: String = error.to_string().chars().filter(|c| !c.is_control()).take(512).collect();
-            let (code, exit) = if is_coord { coord::error::exit_of(&error) } else { ("operation_failed", 1) };
+            let (code, exit) = ("operation_failed", 1);
             eprintln!("{}", serde_json::json!({"error":{"code":code,"message":message}}));
             std::process::exit(exit);
         }
@@ -101,11 +96,10 @@ fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
     else { Ok(std::env::current_dir().context("current directory unavailable")?.join(root)) }
 }
 
-async fn run(cli: Cli) -> Result<coord::Output> {
+async fn run(cli: Cli) -> Result<serde_json::Value> {
     let root = data_root(cli.data_dir)?;
     let activation_command = matches!(&cli.command, Command::Install { .. } | Command::Update { .. });
     let mut value = match cli.command {
-        Command::Coord(args) => return coord::run(&root, args).await,
         Command::Usage { command: UsageCommand::Snapshot { agents_working, omp_executable, .. } } => {
             serde_json::to_value(usage::snapshot(&root.join("usage"), agents_working, omp_executable.as_deref()).await?)
                 .context("usage response could not be encoded")
@@ -121,9 +115,9 @@ async fn run(cli: Cli) -> Result<coord::Output> {
         }, &components),
     }?;
     if activation_command && value.get("coord_changed").and_then(serde_json::Value::as_bool) == Some(true) {
-        value["coord"] = coord::lifecycle::after_activation(&root);
+        value["coord"] = manager::after_activation(&root);
     } else if activation_command && value.get("activated").and_then(serde_json::Value::as_bool) == Some(true) {
         value["coord"] = serde_json::json!({"state":"skipped","reason":"coordinator_not_activated"});
     }
-    Ok(coord::Output::Json(value))
+    Ok(value)
 }

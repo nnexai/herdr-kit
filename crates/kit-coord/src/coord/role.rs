@@ -63,7 +63,12 @@ pub fn load(paths: &CoordPaths, name: &str) -> Result<Role> {
     ensure!(valid_name(name), "invalid role name: {name}");
     let path = paths.roles.join(format!("{name}.md"));
     match fs::read_to_string(&path) {
-        Ok(text) => parse(name, &text, RoleSource::File(path)),
+        Ok(text) => {
+            ensure!(!text.match_indices("kit coord").any(|(offset, found)| {
+                text[offset + found.len()..].chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '_')
+            }), "legacy coordinator command in role override {}; review it for kit-coord before use (the file was not rewritten)", path.display());
+            parse(name, &text, RoleSource::File(path))
+        },
         Err(e) if e.kind() == ErrorKind::NotFound => {
             let text = builtin(name).with_context(|| format!("unknown role: {name}"))?;
             parse(name, text, RoleSource::Builtin)
@@ -361,5 +366,21 @@ mod tests {
                 .any(|(n, _, over)| n == "coord-main" && *over)
         );
         assert!(load(&paths, "../escape").is_err());
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    #[test]
+    fn legacy_role_override_is_flagged_before_use_and_never_rewritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = CoordPaths::new(temp.path());
+        paths.ensure().unwrap();
+        let path = paths.roles.join("custom.md");
+        let old = "---\nharness: omp\nstart: omp {brief}\nsession: none\n---\nUse herdr-kit coord inbox.\n";
+        fs::write(&path, old).unwrap();
+        assert!(load(&paths, "custom").unwrap_err().to_string().contains("legacy coordinator command"));
+        assert_eq!(fs::read_to_string(path).unwrap(), old);
     }
 }
