@@ -81,21 +81,6 @@ fn append(ctx: &Ctx, j: &Journal, actor: Actor, kind: Kind) -> Result<()> {
         .append(&actor, ctx.now(), vec![(None, None, kind)])?;
     Ok(())
 }
-fn resource(kind: ResType, name: String) -> ResourceRef {
-    ResourceRef {
-        r#type: kind,
-        name,
-        repo: None,
-        folder: None,
-        label: None,
-        branch: None,
-        base: None,
-        base_sha: None,
-        create_branch: None,
-        space: None,
-        tab: None,
-    }
-}
 fn space(ctx: &Ctx, j: &Journal) -> Result<(String, bool)> {
     let mut lock = j.lock()?;
     if let Some(r) = lock.state().resources.iter().find(|r| {
@@ -131,7 +116,7 @@ fn space(ctx: &Ctx, j: &Journal) -> Result<(String, bool)> {
         return Ok((id, true));
     }
     let id = ids::space_id()?;
-    let mut r = resource(ResType::Space, id.clone());
+    let mut r = ResourceRef::new(ResType::Space, id.clone());
     r.folder = Some(ctx.paths.home.clone());
     r.label = Some("coordinator".into());
     lock.append(
@@ -206,7 +191,7 @@ fn watcher(
             && h.release == active_release(&ctx.root)
         {
             if space_intent {
-                let mut r = resource(ResType::Space, sp.into());
+                let mut r = ResourceRef::new(ResType::Space, sp);
                 r.folder = Some(ctx.paths.home.clone());
                 r.label = Some("coordinator".into());
                 j.lock()?.append(
@@ -264,12 +249,12 @@ fn watcher(
     )?;
     let mut items = Vec::new();
     if space_intent {
-        let mut r = resource(ResType::Space, sp.into());
+        let mut r = ResourceRef::new(ResType::Space, sp);
         r.folder = Some(ctx.paths.home.clone());
         r.label = Some("coordinator".into());
         items.push((None, None, Kind::ResCreated(r)));
     }
-    let mut r = resource(ResType::Tab, launched.term.address.clone());
+    let mut r = ResourceRef::new(ResType::Tab, launched.term.address.clone());
     r.space = Some(sp.into());
     r.tab = launched.tab;
     items.push((None, None, Kind::ResCreated(r)));

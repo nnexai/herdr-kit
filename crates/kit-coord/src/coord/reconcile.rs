@@ -538,17 +538,8 @@ mod tests {
         let paths = CoordPaths::new(dir.path());
         let j = Journal::open(&paths).unwrap();
         let rec = ResourceRef {
-            r#type: ResType::Tab,
-            name: "t1".into(),
-            repo: None,
-            folder: None,
-            label: None,
-            branch: None,
-            base: None,
-            base_sha: None,
-            create_branch: None,
             space: Some("sp".into()),
-            tab: None,
+            ..ResourceRef::new(ResType::Tab, "t1")
         };
         j.lock()
             .unwrap()
@@ -584,17 +575,9 @@ mod tests {
         let j = Journal::open(&paths).unwrap();
         let ws = WsId::parse("ws-abcdef").unwrap();
         let rec = ResourceRef {
-            r#type: ResType::Space,
-            name: "sp".into(),
-            repo: None,
             folder: Some("/tmp".into()),
             label: Some("space".into()),
-            branch: None,
-            base: None,
-            base_sha: None,
-            create_branch: None,
-            space: None,
-            tab: None,
+            ..ResourceRef::new(ResType::Space, "sp")
         };
         j.lock()
             .unwrap()
@@ -661,30 +644,13 @@ mod tests {
             let ws = WsId::parse("ws-abcdef").unwrap();
             let task = TaskId::new(&ws, 1);
             let intent = ResourceRef {
-                r#type: ResType::Tab,
-                name: task.as_str().into(),
-                repo: None,
-                folder: None,
-                label: None,
-                branch: None,
-                base: None,
-                base_sha: None,
-                create_branch: None,
                 space: Some("sp".into()),
-                tab: None,
+                ..ResourceRef::new(ResType::Tab, task.as_str())
             };
             let space = ResourceRef {
-                r#type: ResType::Space,
-                name: "sp".into(),
-                repo: None,
                 folder: Some("/tmp".into()),
                 label: Some("test".into()),
-                branch: None,
-                base: None,
-                base_sha: None,
-                create_branch: None,
-                space: None,
-                tab: None,
+                ..ResourceRef::new(ResType::Space, "sp")
             };
             j.lock()
                 .unwrap()
@@ -848,17 +814,10 @@ mod tests {
         let paths = CoordPaths::new(dir.path());
         let j = Journal::open(&paths).unwrap();
         let resource = |typ, name: String, branch: Option<String>| ResourceRef {
-            r#type: typ,
-            name,
             repo: Some(repo.clone()),
-            folder: None,
-            label: None,
             branch,
-            base: None,
-            base_sha: None,
             create_branch: Some(true),
-            space: None,
-            tab: None,
+            ..ResourceRef::new(typ, name)
         };
         let existing = resource(
             ResType::Worktree,
