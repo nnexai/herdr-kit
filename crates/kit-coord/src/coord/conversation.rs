@@ -293,7 +293,11 @@ fn text_of(message: &Value) -> String {
         Value::Array(blocks) => {
             let mut text = String::new();
             let mut first = true;
-            for part in blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()) {
+            for part in blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+            {
                 if !first {
                     text.push_str("\n\n");
                 }

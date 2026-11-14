@@ -2,7 +2,10 @@ use std::{env, process::Command};
 
 fn git(args: &[&str]) -> Option<String> {
     let output = Command::new("git").args(args).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn main() {
@@ -18,7 +21,16 @@ fn main() {
         }
         git(&["rev-parse", "HEAD"])
     }).expect("build a committed Git checkout, or supply KIT_COORD_BUILD_REVISION for an archived source export");
-    assert!((revision.len() == 40 || revision.len() == 64) && revision.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)), "KIT_COORD_BUILD_REVISION must be a full lowercase commit id");
+    assert!(
+        (revision.len() == 40 || revision.len() == 64)
+            && revision
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
+        "KIT_COORD_BUILD_REVISION must be a full lowercase commit id"
+    );
     println!("cargo:rustc-env=KIT_COORD_BUILD_REVISION={revision}");
-    println!("cargo:rustc-env=KIT_COORD_VERSION={} ({revision})", env::var("CARGO_PKG_VERSION").unwrap());
+    println!(
+        "cargo:rustc-env=KIT_COORD_VERSION={} ({revision})",
+        env::var("CARGO_PKG_VERSION").unwrap()
+    );
 }

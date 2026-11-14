@@ -484,10 +484,7 @@ mod tests {
     }
     #[test]
     fn terminal_readiness_and_labels() {
-        let mut t: Term = serde_json::from_str(include_str!(
-            "testdata/hc-get-agent.json"
-        ))
-        .unwrap();
+        let mut t: Term = serde_json::from_str(include_str!("testdata/hc-get-agent.json")).unwrap();
         t.state = "live".into();
         t.status = Some(AgentStatus {
             state: "idle".into(),
@@ -513,10 +510,8 @@ mod tests {
     }
     #[test]
     fn snapshot_lookup_uses_nested_terminals() {
-        let s: AppSnapshot = serde_json::from_str(include_str!(
-            "testdata/herdr-app-ls.json"
-        ))
-        .unwrap();
+        let s: AppSnapshot =
+            serde_json::from_str(include_str!("testdata/herdr-app-ls.json")).unwrap();
         let (space, tab) = s.tab_of("t7").unwrap();
         assert_eq!(s.space(&space.id).unwrap().id, space.id);
         assert_eq!(tab.terminals[0].terminal, "t7");

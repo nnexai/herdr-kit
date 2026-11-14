@@ -235,9 +235,7 @@ mod tests {
     impl Hc for Recorder {
         fn run(&self, spec: &RunSpec) -> Result<Term> {
             self.0.borrow_mut().push(spec.clone());
-            let mut t: Term = serde_json::from_str(include_str!(
-                "testdata/hc-get-agent.json"
-            ))?;
+            let mut t: Term = serde_json::from_str(include_str!("testdata/hc-get-agent.json"))?;
             t.address = "t-test".into();
             Ok(t)
         }
@@ -345,10 +343,8 @@ mod tests {
             let fixture = tmp.path().join("terminal.json");
             fs::write(&exe, "#!/bin/sh\nenv > \"$KIT_COORD_TEST_ENV_DUMP\"\ncat \"$KIT_COORD_TEST_TERM_FIXTURE\"\n").unwrap();
             fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
-            let mut term: serde_json::Value = serde_json::from_str(include_str!(
-                "testdata/hc-get-agent.json"
-            ))
-            .unwrap();
+            let mut term: serde_json::Value =
+                serde_json::from_str(include_str!("testdata/hc-get-agent.json")).unwrap();
             term["address"] = json!("t-test");
             fs::write(&fixture, serde_json::to_vec(&term).unwrap()).unwrap();
             let output = Command::new(std::env::current_exe().unwrap())

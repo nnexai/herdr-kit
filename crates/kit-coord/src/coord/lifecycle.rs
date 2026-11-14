@@ -745,7 +745,6 @@ mod tests {
     use super::super::adapter::fake::{FakeApp, FakeHc};
     use super::*;
 
-
     fn context(root: &Path) -> Ctx {
         Ctx {
             root: root.into(),
@@ -1159,17 +1158,27 @@ mod tests {
             assert!(w.calls.iter().any(|c| c.starts_with("tab.rename")));
         }
         let launched_before_suite_update = world.borrow().specs.len();
-        fs::write(root.join("state.json"), r#"{"current":"unrelated-suite-update"}"#).unwrap();
+        fs::write(
+            root.join("state.json"),
+            r#"{"current":"unrelated-suite-update"}"#,
+        )
+        .unwrap();
         up(&ctx, false).unwrap();
         assert_eq!(world.borrow().specs.len(), launched_before_suite_update);
         let entries = ctx.journal().unwrap().read_after(0).unwrap();
-        assert!(!entries.iter().any(|entry| entry.kind == "coord.handoff_requested"));
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.kind == "coord.handoff_requested")
+        );
         let before = world.borrow().calls.len();
         restart(&ctx, &Caller::Person { terminal: None }, true).unwrap();
         {
             let w = world.borrow();
             assert!(
-                w.specs.last().unwrap()
+                w.specs
+                    .last()
+                    .unwrap()
                     .labels
                     .iter()
                     .any(|(k, v)| k == "herdr.tab" && v == "tab-t2")

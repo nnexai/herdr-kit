@@ -363,4 +363,3 @@ mod tests {
         assert!(load(&paths, "../escape").is_err());
     }
 }
-

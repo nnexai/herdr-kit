@@ -819,10 +819,18 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
     };
     if let Some(term) = live {
         let _terminal_guard = ctx.terminal_lock(&term.address)?;
-        let steered = term.live() && term.word() == Some("working")
-            && term.turn >= 1 && term.reported
-            && term.status.as_ref().and_then(|status| status.app.as_deref()) == Some("omp");
-        if !steered { send_guard(&term)?; }
+        let steered = term.live()
+            && term.word() == Some("working")
+            && term.turn >= 1
+            && term.reported
+            && term
+                .status
+                .as_ref()
+                .and_then(|status| status.app.as_deref())
+                == Some("omp");
+        if !steered {
+            send_guard(&term)?;
+        }
         fs::write(&path, &message)?;
         let mut l = j.lock()?;
         let current = l
@@ -887,7 +895,9 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
                 return Err(e);
             }
         };
-        return Ok(json!({"task":task,"sent":true,"delivery":if steered {"steering"} else {"new_turn"},"steered":steered,"turn":sent.turn,"started":sent.started}));
+        return Ok(
+            json!({"task":task,"sent":true,"delivery":if steered {"steering"} else {"new_turn"},"steered":steered,"turn":sent.turn,"started":sent.started}),
+        );
     }
     let session = t
         .session
@@ -1209,12 +1219,26 @@ pub fn decide(ctx: &Ctx, c: &Caller, a: &cli::Decide) -> Result<Value> {
     let entries = l.append(&c.actor(), ctx.now(), entries)?;
     Ok(json!({"seq":entries[0].seq,"qid":qid}))
 }
-pub(super) fn answer_entry(state: &State, qid: &str, text: &str) -> Result<(Option<WsId>, Option<TaskId>, Kind)> {
-    let q = state.questions.get(qid).ok_or_else(|| refuse("unknown_question", "unknown question"))?;
+pub(super) fn answer_entry(
+    state: &State,
+    qid: &str,
+    text: &str,
+) -> Result<(Option<WsId>, Option<TaskId>, Kind)> {
+    let q = state
+        .questions
+        .get(qid)
+        .ok_or_else(|| refuse("unknown_question", "unknown question"))?;
     if q.answered.is_some() {
         return Err(refuse("question_answered", "question already answered"));
     }
-    Ok((q.ws.clone(), q.task.clone(), Kind::QuestionAnswered { qid: qid.to_owned(), text: text.to_owned() }))
+    Ok((
+        q.ws.clone(),
+        q.task.clone(),
+        Kind::QuestionAnswered {
+            qid: qid.to_owned(),
+            text: text.to_owned(),
+        },
+    ))
 }
 
 pub fn ask(ctx: &Ctx, c: &Caller, a: &cli::Ask) -> Result<Value> {
@@ -1367,10 +1391,7 @@ mod tests {
     }
     #[test]
     fn send_readiness_refusals() {
-        let mut t: Term = serde_json::from_str(include_str!(
-            "testdata/hc-get-agent.json"
-        ))
-        .unwrap();
+        let mut t: Term = serde_json::from_str(include_str!("testdata/hc-get-agent.json")).unwrap();
         t.state = "live".into();
         t.reported = true;
         t.turn = 0;
@@ -1600,9 +1621,7 @@ mod placement_acceptance_tests {
             let mut s = self.shared.borrow_mut();
             s.runs.push(spec.clone());
             let address = format!("terminal-{}", s.runs.len());
-            let mut term: Term = serde_json::from_str(include_str!(
-                "testdata/hc-get-agent.json"
-            ))?;
+            let mut term: Term = serde_json::from_str(include_str!("testdata/hc-get-agent.json"))?;
             term.address = address.clone();
             term.state = "live".into();
             term.pid = Some(123);
@@ -1654,9 +1673,7 @@ mod placement_acceptance_tests {
             let Some(spec) = s.runs.first() else {
                 return Ok(None);
             };
-            let mut term: Term = serde_json::from_str(include_str!(
-                "testdata/hc-get-agent.json"
-            ))?;
+            let mut term: Term = serde_json::from_str(include_str!("testdata/hc-get-agent.json"))?;
             term.address = terminal.into();
             term.state = "live".into();
             term.pid = Some(123);

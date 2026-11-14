@@ -86,10 +86,8 @@ mod tests {
     use super::*;
 
     fn term(role: Option<&str>, managed: bool, task: Option<&str>) -> Term {
-        let mut term: Term = serde_json::from_str(include_str!(
-            "testdata/hc-get-agent.json"
-        ))
-        .unwrap();
+        let mut term: Term =
+            serde_json::from_str(include_str!("testdata/hc-get-agent.json")).unwrap();
         if managed {
             term.labels.insert("coord.managed".into(), "1".into());
         }
