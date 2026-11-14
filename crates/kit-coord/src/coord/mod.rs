@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod conversation;
 pub mod error;
+pub mod exec;
 pub mod fold;
 pub mod git;
 pub mod ids;
@@ -165,9 +166,12 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
         true
     } else {
         match &cmd {
-            C::Up { .. } | C::Down | C::Restart { .. } | C::Rate { .. } | C::Config { .. } | C::Say { .. } => {
-                person
-            }
+            C::Up { .. }
+            | C::Down
+            | C::Restart { .. }
+            | C::Rate { .. }
+            | C::Config { .. }
+            | C::Say { .. } => person,
             C::Handoff { .. } => coordinator,
             C::Report { .. } | C::Note { .. } => delegate,
             C::Watch => person || watcher,

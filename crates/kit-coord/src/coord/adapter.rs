@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::exec::{self, Captured};
 
 #[derive(Clone, Debug)]
 pub struct RunSpec {
@@ -99,7 +98,7 @@ pub trait Hc {
     fn steer(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
         let mut command = self.send_command(terminal, text);
         command.args(["--if", "working"]);
-        json(&checked(execute(command, 90)?)?)
+        json_reply(command, 90)
     }
     fn send_command(&self, terminal: &str, text: &str) -> Command;
     fn label(&self, terminal: &str, labels: &[(&str, &str)]) -> Result<()>;
@@ -148,60 +147,25 @@ impl AppSnapshot {
     }
 }
 
-// Files instead of pipes keep a verbose child from deadlocking while we wait.
-// Output is read with a limit and the process group is terminated on timeout.
-fn execute(mut cmd: Command, seconds: u64) -> Result<(bool, Vec<u8>, Vec<u8>)> {
-    let mut out = tempfile::tempfile()?;
-    let mut err = tempfile::tempfile()?;
-    cmd.stdin(Stdio::null())
-        .stdout(out.try_clone()?)
-        .stderr(err.try_clone()?)
-        .process_group(0);
-    let mut child = cmd.spawn().context("starting command")?;
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            result => {
-                if let Ok(pid) = i32::try_from(child.id()) {
-                    if let Some(pid) = rustix::process::Pid::from_raw(pid) {
-                        let _ =
-                            rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-                    }
-                }
-                let _ = child.kill();
-                let _ = child.wait();
-                match result {
-                    Err(e) => return Err(e.into()),
-                    _ => bail!("command timed out after {seconds}s"),
-                }
-            }
-        }
-    };
-    fn read_output(file: &mut std::fs::File) -> Result<Vec<u8>> {
-        const MAX: u64 = 8 * 1024 * 1024;
-        file.seek(SeekFrom::Start(0))?;
-        let mut bytes = Vec::new();
-        file.take(MAX + 1).read_to_end(&mut bytes)?;
-        ensure!(bytes.len() as u64 <= MAX, "command output exceeds limit");
-        Ok(bytes)
-    }
-    Ok((
-        status.success(),
-        read_output(&mut out)?,
-        read_output(&mut err)?,
-    ))
+fn execute(cmd: Command, seconds: u64) -> Result<Captured> {
+    exec::run(cmd, "command", seconds)
 }
-fn checked(result: (bool, Vec<u8>, Vec<u8>)) -> Result<Vec<u8>> {
-    let (success, out, err) = result;
+/// Standard output of a command that must have succeeded.
+fn checked(result: Captured) -> Result<Vec<u8>> {
     ensure!(
-        success,
+        result.status.success(),
         "command failed: {} {}",
-        String::from_utf8_lossy(&out),
-        String::from_utf8_lossy(&err)
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
     );
-    Ok(out)
+    Ok(result.stdout)
+}
+fn succeed(cmd: Command, seconds: u64) -> Result<()> {
+    checked(execute(cmd, seconds)?).map(drop)
+}
+/// The JSON a successful command printed.
+fn json_reply<T: serde::de::DeserializeOwned>(cmd: Command, seconds: u64) -> Result<T> {
+    json(&checked(execute(cmd, seconds)?)?)
 }
 fn json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     serde_json::from_slice(bytes).context("invalid command JSON")
@@ -240,7 +204,7 @@ impl Hc for ProcHc {
         struct RunReply {
             address: String,
         }
-        let reply: RunReply = json(&checked(execute(cmd, 30)?)?)?;
+        let reply: RunReply = json_reply(cmd, 30)?;
         let term = self
             .get(&reply.address)
             .and_then(|term| term.ok_or_else(|| anyhow::anyhow!("terminal not found")));
@@ -256,10 +220,8 @@ impl Hc for ProcHc {
         let mut cmd = self.cmd("get");
         cmd.args(["--json", terminal]);
         let result = execute(cmd, 15)?;
-        if !result.0
-            && (String::from_utf8_lossy(&result.1).contains("not_found")
-                || String::from_utf8_lossy(&result.2).contains("not_found"))
-        {
+        let mentions = |bytes: &[u8]| String::from_utf8_lossy(bytes).contains("not_found");
+        if !result.status.success() && (mentions(&result.stdout) || mentions(&result.stderr)) {
             return Ok(None);
         }
         Ok(Some(json(&checked(result)?)?))
@@ -281,11 +243,11 @@ impl Hc for ProcHc {
         if let Some((key, value)) = label {
             cmd.arg("--label").arg(format!("{key}={value}"));
         }
-        let list: List = json(&checked(execute(cmd, 15)?)?)?;
+        let list: List = json_reply(cmd, 15)?;
         Ok(list.terminals.into_iter().map(|t| t.address).collect())
     }
     fn send(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
-        json(&checked(execute(self.send_command(terminal, text), 90)?)?)
+        json_reply(self.send_command(terminal, text), 90)
     }
     fn send_command(&self, terminal: &str, text: &str) -> Command {
         let mut cmd = self.cmd("send");
@@ -298,20 +260,17 @@ impl Hc for ProcHc {
         for (key, value) in labels {
             cmd.arg(format!("{key}={value}"));
         }
-        checked(execute(cmd, 15)?)?;
-        Ok(())
+        succeed(cmd, 15)
     }
     fn kill(&self, terminal: &str) -> Result<()> {
         let mut cmd = self.cmd("kill");
         cmd.args(["--json", terminal]);
-        checked(execute(cmd, 15)?)?;
-        Ok(())
+        succeed(cmd, 15)
     }
     fn rm(&self, terminal: &str) -> Result<()> {
         let mut cmd = self.cmd("rm");
         cmd.args(["--json", terminal]);
-        checked(execute(cmd, 15)?)?;
-        Ok(())
+        succeed(cmd, 15)
     }
     fn events_command(&self) -> Command {
         let mut cmd = self.cmd("events");
@@ -336,13 +295,13 @@ impl App for ProcApp {
     fn ls(&self) -> Result<AppSnapshot> {
         let mut cmd = Command::new(&self.exe);
         cmd.arg("ls");
-        json(&checked(execute(cmd, 15)?)?)
+        json_reply(cmd, 15)
     }
     fn command(&self, name: &str, args: Value) -> Result<Value> {
         ensure!(args.is_object(), "app command arguments must be an object");
         let mut cmd = Command::new(&self.exe);
         cmd.arg("do").arg(name).arg(serde_json::to_string(&args)?);
-        let value: Value = json(&checked(execute(cmd, 15)?)?)?;
+        let value: Value = json_reply(cmd, 15)?;
         ensure!(value.get("error").is_none(), "app command failed: {value}");
         Ok(value)
     }

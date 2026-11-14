@@ -1,59 +1,24 @@
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Seek, SeekFrom};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail, ensure};
 
+use super::exec;
+
+/// Exit code, stdout and stderr of `git -C dir args`.
 fn run(dir: &Path, args: &[OsString], seconds: u64) -> Result<(i32, String, String)> {
-    let mut out = tempfile::tempfile()?;
-    let mut err = tempfile::tempfile()?;
-    let mut child = Command::new("git")
-        .arg("-C")
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(dir)
         .args(args)
         .env("LC_ALL", "C")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(out.try_clone()?)
-        .stderr(err.try_clone()?)
-        .process_group(0)
-        .spawn()
-        .context("starting git")?;
-    let deadline = Instant::now() + Duration::from_secs(seconds);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break s,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
-            result => {
-                if let Ok(pid) = i32::try_from(child.id()) {
-                    if let Some(pid) = rustix::process::Pid::from_raw(pid) {
-                        let _ =
-                            rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-                    }
-                }
-                let _ = child.kill();
-                let _ = child.wait();
-                if let Err(e) = result {
-                    return Err(e.into());
-                }
-                bail!("git timed out after {seconds}s");
-            }
-        }
-    };
-    fn read(f: &mut std::fs::File) -> Result<String> {
-        f.seek(SeekFrom::Start(0))?;
-        let mut b = Vec::new();
-        f.take(8 * 1024 * 1024 + 1).read_to_end(&mut b)?;
-        ensure!(b.len() <= 8 * 1024 * 1024, "git output too large");
-        Ok(String::from_utf8(b)?)
-    }
+        .env("GIT_TERMINAL_PROMPT", "0");
+    let done = exec::run(cmd, "git", seconds)?;
     Ok((
-        status.code().unwrap_or(-1),
-        read(&mut out)?,
-        read(&mut err)?,
+        done.status.code().unwrap_or(-1),
+        String::from_utf8(done.stdout)?,
+        String::from_utf8(done.stderr)?,
     ))
 }
 fn args(items: &[&str]) -> Vec<OsString> {
