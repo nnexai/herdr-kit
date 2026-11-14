@@ -13,8 +13,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-mod packages;
 mod activation;
+mod packages;
 pub use activation::after_activation;
 use packages::*;
 
@@ -34,9 +34,11 @@ struct State {
     mod_owners: BTreeMap<PathBuf, BTreeMap<String, String>>,
 }
 
-
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // Refuse all existing symlinks in a path, including ancestors. Never follow a
@@ -67,7 +69,11 @@ fn directory(path: &Path) -> Result<()> {
 }
 
 fn absolute(path: &Path) -> Result<PathBuf> {
-    let path = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
     no_links(&path)?;
     Ok(path)
 }
@@ -79,9 +85,11 @@ fn atomic(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
     if executable {
-        #[cfg(unix)] {
+        #[cfg(unix)]
+        {
             use std::os::unix::fs::PermissionsExt;
-            tmp.as_file().set_permissions(fs::Permissions::from_mode(0o755))?;
+            tmp.as_file()
+                .set_permissions(fs::Permissions::from_mode(0o755))?;
         }
     }
     tmp.as_file().sync_all()?;
@@ -96,12 +104,16 @@ fn save<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<Option<T>> {
     no_links(path)?;
     match fs::read(path) {
-        Ok(b) => Ok(Some(serde_json::from_slice(&b).context("invalid manager metadata")?)),
+        Ok(b) => Ok(Some(
+            serde_json::from_slice(&b).context("invalid manager metadata")?,
+        )),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
-fn hash(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
+fn hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 fn file_hash(path: &Path) -> Result<Option<String>> {
     no_links(path)?;
     match fs::read(path) {
@@ -118,12 +130,18 @@ fn tree(root: &Path) -> Result<BTreeMap<String, String>> {
             let path = entry.path();
             let ty = entry.file_type()?;
             ensure!(!ty.is_symlink(), "symlink in managed tree");
-            if ty.is_dir() { visit(root, &path, out)?; }
-            else {
+            if ty.is_dir() {
+                visit(root, &path, out)?;
+            } else {
                 ensure!(ty.is_file(), "unsupported managed file");
-                let rel = path.strip_prefix(root)?.to_str().context("non-UTF8 managed path")?;
+                let rel = path
+                    .strip_prefix(root)?
+                    .to_str()
+                    .context("non-UTF8 managed path")?;
                 // Herdr creates these editor support files itself.
-                if rel == "jsconfig.json" || rel.ends_with(".d.ts") { continue; }
+                if rel == "jsconfig.json" || rel.ends_with(".d.ts") {
+                    continue;
+                }
                 out.insert(rel.to_owned(), file_hash(&path)?.context("missing file")?);
             }
         }
@@ -141,8 +159,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
         let ty = e.file_type()?;
         ensure!(!ty.is_symlink(), "symlink in source assets");
         let dest = to.join(e.file_name());
-        if ty.is_dir() { copy_tree(&e.path(), &dest)?; }
-        else {
+        if ty.is_dir() {
+            copy_tree(&e.path(), &dest)?;
+        } else {
             ensure!(ty.is_file(), "unsupported asset");
             no_links(&dest)?;
             fs::copy(e.path(), dest)?;
@@ -154,30 +173,51 @@ fn bounded(cmd: &mut Command, seconds: u64) -> std::io::Result<std::process::Exi
     let mut child = cmd.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(seconds);
     loop {
-        if let Some(status) = child.try_wait()? { return Ok(status); }
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "command timed out"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "command timed out",
+            ));
         }
         std::thread::sleep(Duration::from_millis(100));
     }
 }
 fn run(cmd: &mut Command, error: &str) -> Result<()> {
-    let status = bounded(cmd.stdout(Stdio::null()).stderr(Stdio::null()), 540).context(error.to_owned())?;
+    let status =
+        bounded(cmd.stdout(Stdio::null()).stderr(Stdio::null()), 540).context(error.to_owned())?;
     ensure!(status.success(), "{error}");
     Ok(())
 }
 fn revision(repo: &Path) -> Result<String> {
     let mut output = tempfile::tempfile()?;
-    let status = bounded(Command::new("git").arg("-C").arg(repo).args(["rev-parse", "--verify", "HEAD^{commit}"]).stdout(output.try_clone()?).stderr(Stdio::null()), 30).context("cannot read source revision")?;
+    let status = bounded(
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "HEAD^{commit}"])
+            .stdout(output.try_clone()?)
+            .stderr(Stdio::null()),
+        30,
+    )
+    .context("cannot read source revision")?;
     ensure!(status.success(), "cannot read source revision");
     use std::io::{Read, Seek, SeekFrom};
     output.seek(SeekFrom::Start(0))?;
     let mut text = String::new();
     output.take(256).read_to_string(&mut text)?;
     let rev = text.trim().to_owned();
-    ensure!((rev.len() == 40 || rev.len() == 64) && rev.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "invalid source revision");
+    ensure!(
+        (rev.len() == 40 || rev.len() == 64)
+            && rev
+                .bytes()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "invalid source revision"
+    );
     Ok(rev)
 }
 fn source_path(path: &Path) -> Result<PathBuf> {
@@ -187,14 +227,27 @@ fn source_path(path: &Path) -> Result<PathBuf> {
     revision(&p)?;
     Ok(p)
 }
-fn name(base: &str, rev: &str) -> String { format!("{base}-{rev}") }
-fn release(data: &Path, rev: &str) -> PathBuf { data.join("releases").join(rev) }
-fn state_path(data: &Path) -> PathBuf { data.join("state.json") }
-fn journal_path(data: &Path) -> PathBuf { data.join("activation.json") }
-fn layout(home: &Path) -> PathBuf { home.join("layouts/herdr-kit.json") }
-fn bootstrap(data: &Path) -> PathBuf { data.join("bin/herdr-kit") }
-fn mod_path(home: &Path, base: &str, rev: &str) -> PathBuf { home.join("mods").join(name(base, rev)) }
-
+fn name(base: &str, rev: &str) -> String {
+    format!("{base}-{rev}")
+}
+fn release(data: &Path, rev: &str) -> PathBuf {
+    data.join("releases").join(rev)
+}
+fn state_path(data: &Path) -> PathBuf {
+    data.join("state.json")
+}
+fn journal_path(data: &Path) -> PathBuf {
+    data.join("activation.json")
+}
+fn layout(home: &Path) -> PathBuf {
+    home.join("layouts/herdr-kit.json")
+}
+fn bootstrap(data: &Path) -> PathBuf {
+    data.join("bin/herdr-kit")
+}
+fn mod_path(home: &Path, base: &str, rev: &str) -> PathBuf {
+    home.join("mods").join(name(base, rev))
+}
 
 mod deployment;
 pub use deployment::{install, source, status, update};

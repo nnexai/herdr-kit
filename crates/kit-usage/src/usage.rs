@@ -1,12 +1,18 @@
 //! Identity-free, bounded subscription usage collection.
-mod parse;
 mod cache;
+mod parse;
 mod source;
-#[cfg(test)] mod tests;
-use serde::{Deserialize, Serialize};
-use std::{path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}, io::{Read, Write}, fs::File};
+#[cfg(test)]
+mod tests;
 use fs2::FileExt;
 use rustix::fs::{self, Mode, OFlags};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::io::AsyncReadExt;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -137,11 +143,19 @@ impl Default for PersistedQuota {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().min(u64::MAX as u128) as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
 }
 
 /// Return the shared anonymous snapshot, collecting once when due.
-pub async fn snapshot(cache_dir: &Path, agents_working: bool, omp_executable: Option<&Path>) -> anyhow::Result<Snapshot> {
+pub async fn snapshot(
+    cache_dir: &Path,
+    agents_working: bool,
+    omp_executable: Option<&Path>,
+) -> anyhow::Result<Snapshot> {
     let started = now();
     let mut cache = match cache::Cache::open(cache_dir, started) {
         Ok(cache) => cache,
@@ -160,7 +174,16 @@ pub async fn snapshot(cache_dir: &Path, agents_working: bool, omp_executable: Op
         value.omp.succeeded_at_ms = None;
         value.omp.next_attempt_at_ms = started.saturating_add(CADENCE);
         if value.omp.providers.is_empty() {
-            value.omp.providers = PROVIDERS.iter().map(|p| empty(*p, QuotaProviderState::Unavailable, Some(QuotaErrorCode::UsageUnavailable))).collect();
+            value.omp.providers = PROVIDERS
+                .iter()
+                .map(|p| {
+                    empty(
+                        *p,
+                        QuotaProviderState::Unavailable,
+                        Some(QuotaErrorCode::UsageUnavailable),
+                    )
+                })
+                .collect();
         }
         if cache.save(&value).is_err() {
             mark_cache_failure(&mut value, now());
@@ -199,10 +222,11 @@ fn apply(
                     && value.error == Some(QuotaErrorCode::UsageUnavailable)
                     && let Some(previous) = record.providers.iter().find(|previous| {
                         previous.provider == value.provider && !previous.accounts.is_empty()
-                    }) {
-                        value.accounts = previous.accounts.clone();
-                        value.state = QuotaProviderState::Available;
-                    }
+                    })
+                {
+                    value.accounts = previous.accounts.clone();
+                    value.state = QuotaProviderState::Available;
+                }
             }
             record.providers = values;
             record.failures = 0;

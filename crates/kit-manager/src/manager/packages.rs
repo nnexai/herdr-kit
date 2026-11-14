@@ -46,8 +46,9 @@ pub(super) fn identifier(value: &str) -> Result<()> {
 impl Catalog {
     pub fn load(source: &Path) -> Result<Self> {
         let path = source.join("kit-packages.json");
-        let catalog: Self = serde_json::from_slice(&fs::read(path)
-            .context("committed kit-packages.json is required")?)?;
+        let catalog: Self = serde_json::from_slice(
+            &fs::read(path).context("committed kit-packages.json is required")?,
+        )?;
         ensure!(
             catalog.schema_version == 1,
             "unsupported package catalog schema"

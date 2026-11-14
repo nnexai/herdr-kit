@@ -1,5 +1,5 @@
-use super::{ProviderRecord, RETAIN, empty};
 use super::*;
+use super::{ProviderRecord, RETAIN, empty};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -195,9 +195,11 @@ fn normalize_omp_limit(
             .as_deref()
             .filter(|tier| known_tier(tier))
             .or_else(|| {
-                input.scope.model_id.as_deref().and_then(|model| {
-                    model.split('-').find(|part| known_tier(part))
-                })
+                input
+                    .scope
+                    .model_id
+                    .as_deref()
+                    .and_then(|model| model.split('-').find(|part| known_tier(part)))
             })
             .map(str::to_owned)
     };

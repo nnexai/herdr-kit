@@ -12,19 +12,30 @@ pub(super) fn process_paths() -> Result<Vec<PathBuf>> {
         // lsof exposes executable text and cwd paths on macOS.
         let stdout = tempfile::tempfile()?;
         let stderr = tempfile::tempfile()?;
-        let status = bounded(Command::new("lsof").args(["-n", "-P", "-F0n", "-d", "cwd,txt"])
-            .stdout(stdout.try_clone()?).stderr(stderr.try_clone()?), 30)?;
-        ensure!(status.success() && stderr.metadata()?.len() == 0, "process census failed");
+        let status = bounded(
+            Command::new("lsof")
+                .args(["-n", "-P", "-F0n", "-d", "cwd,txt"])
+                .stdout(stdout.try_clone()?)
+                .stderr(stderr.try_clone()?),
+            30,
+        )?;
+        ensure!(
+            status.success() && stderr.metadata()?.len() == 0,
+            "process census failed"
+        );
         use std::io::{Read, Seek, SeekFrom};
         let mut stdout = stdout;
         stdout.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes)?;
-        Ok(bytes.split(|byte| *byte == 0).filter_map(|field| {
-            let name = field.strip_prefix(b"n/")?;
-            let name = std::str::from_utf8(name).ok()?;
-            Some(Path::new("/").join(name))
-        }).collect())
+        Ok(bytes
+            .split(|byte| *byte == 0)
+            .filter_map(|field| {
+                let name = field.strip_prefix(b"n/")?;
+                let name = std::str::from_utf8(name).ok()?;
+                Some(Path::new("/").join(name))
+            })
+            .collect())
     }
 }
 
@@ -33,7 +44,12 @@ fn process_paths_at(proc_root: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(proc_root)? {
         let entry = entry?;
-        if !entry.file_name().as_encoded_bytes().iter().all(u8::is_ascii_digit) {
+        if !entry
+            .file_name()
+            .as_encoded_bytes()
+            .iter()
+            .all(u8::is_ascii_digit)
+        {
             continue;
         }
         for field in ["exe", "cwd"] {
@@ -48,7 +64,9 @@ fn process_paths_at(proc_root: &Path) -> Result<Vec<PathBuf>> {
 fn layout_strings(home: &Path) -> Result<Vec<String>> {
     fn visit(path: &Path, strings: &mut Vec<String>) -> Result<()> {
         no_links(path)?;
-        if !path.exists() { return Ok(()); }
+        if !path.exists() {
+            return Ok(());
+        }
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
@@ -59,11 +77,17 @@ fn layout_strings(home: &Path) -> Result<Vec<String>> {
                 fn collect(value: Value, strings: &mut Vec<String>) {
                     match value {
                         Value::String(value) => strings.push(value),
-                        Value::Array(values) => for value in values { collect(value, strings); },
-                        Value::Object(values) => for (key, value) in values {
-                            strings.push(key);
-                            collect(value, strings);
-                        },
+                        Value::Array(values) => {
+                            for value in values {
+                                collect(value, strings);
+                            }
+                        }
+                        Value::Object(values) => {
+                            for (key, value) in values {
+                                strings.push(key);
+                                collect(value, strings);
+                            }
+                        }
                         _ => (),
                     }
                 }
@@ -80,16 +104,24 @@ fn layout_strings(home: &Path) -> Result<Vec<String>> {
 fn snapshot(root: &Path) -> Result<BTreeMap<String, String>> {
     fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Result<()> {
         no_links(dir)?;
-        if !dir.exists() { return Ok(()); }
+        if !dir.exists() {
+            return Ok(());
+        }
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             no_links(&path)?;
-            if entry.file_type()?.is_dir() { visit(root, &path, files)?; }
-            else {
+            if entry.file_type()?.is_dir() {
+                visit(root, &path, files)?;
+            } else {
                 ensure!(entry.file_type()?.is_file(), "unsupported cleanup entry");
-                files.insert(path.strip_prefix(root)?.to_str().context("non-UTF8 cleanup path")?.to_owned(),
-                    file_hash(&path)?.context("missing cleanup file")?);
+                files.insert(
+                    path.strip_prefix(root)?
+                        .to_str()
+                        .context("non-UTF8 cleanup path")?
+                        .to_owned(),
+                    file_hash(&path)?.context("missing cleanup file")?,
+                );
             }
         }
         Ok(())
@@ -100,10 +132,20 @@ fn snapshot(root: &Path) -> Result<BTreeMap<String, String>> {
 }
 
 impl Locked {
-    pub(super) fn generation_plan(&self, state: &State, processes: &[PathBuf]) -> Vec<GenerationCleanup> {
-        let Some(home) = &state.app_home else { return Vec::new(); };
-        let Ok(layouts) = layout_strings(home) else { return Vec::new(); };
-        state.package_releases.iter()
+    pub(super) fn generation_plan(
+        &self,
+        state: &State,
+        processes: &[PathBuf],
+    ) -> Vec<GenerationCleanup> {
+        let Some(home) = &state.app_home else {
+            return Vec::new();
+        };
+        let Ok(layouts) = layout_strings(home) else {
+            return Vec::new();
+        };
+        state
+            .package_releases
+            .iter()
             .filter(|(rev, _)| !state.selection.values().any(|selected| selected == *rev))
             .filter(|(_, packages)| packages.values().any(|receipt| receipt.activated))
             .filter_map(|(rev, packages)| {
@@ -116,7 +158,10 @@ impl Locked {
                     let mut names = BTreeSet::new();
                     for receipt in packages.values() {
                         if let Some(binary) = &receipt.definition.binary {
-                            expected.insert(binary.name.clone(), receipt.binary_hash.clone().context("missing binary hash")?);
+                            expected.insert(
+                                binary.name.clone(),
+                                receipt.binary_hash.clone().context("missing binary hash")?,
+                            );
                         }
                         if let Some(hash) = &receipt.layout_hash {
                             expected.insert("layout-source.json".to_owned(), hash.clone());
@@ -140,38 +185,77 @@ impl Locked {
                         }
                     }
                     if release_root.exists() {
-                        ensure!(tree(&release_root)? == expected, "superseded release drift or unowned files");
+                        ensure!(
+                            tree(&release_root)? == expected,
+                            "superseded release drift or unowned files"
+                        );
                     }
                     roots.insert(release_root.clone(), snapshot(&release_root)?);
-                    ensure!(!layouts.iter().any(|text| names.iter().any(|name| text.contains(name))
-                        || text.contains(release_root.to_string_lossy().as_ref())), "generation referenced by layout");
-                    ensure!(!processes.iter().any(|path| roots.keys().any(|root| path.starts_with(root))),
-                        "generation in use by process");
-                    Ok(GenerationCleanup { revision: rev.clone(), roots, mods })
+                    ensure!(
+                        !layouts
+                            .iter()
+                            .any(|text| names.iter().any(|name| text.contains(name))
+                                || text.contains(release_root.to_string_lossy().as_ref())),
+                        "generation referenced by layout"
+                    );
+                    ensure!(
+                        !processes
+                            .iter()
+                            .any(|path| roots.keys().any(|root| path.starts_with(root))),
+                        "generation in use by process"
+                    );
+                    Ok(GenerationCleanup {
+                        revision: rev.clone(),
+                        roots,
+                        mods,
+                    })
                 };
                 build().ok()
-            }).collect()
+            })
+            .collect()
     }
 
-    pub(super) fn finish_generations(&self, transaction: &Transaction, processes: &[PathBuf]) -> Result<State> {
+    pub(super) fn finish_generations(
+        &self,
+        transaction: &Transaction,
+        processes: &[PathBuf],
+    ) -> Result<State> {
         let mut state = transaction.state.clone();
         let home = state.app_home.as_ref().context("missing app home")?;
-        let plan = transaction.cleanup.as_ref().context("missing cleanup phase")?;
+        let plan = transaction
+            .cleanup
+            .as_ref()
+            .context("missing cleanup phase")?;
         if !plan.is_empty() {
             let layouts = layout_strings(home)?;
             // Preflight the entire deletion set before removing its first file.
             for generation in plan {
-                ensure!(!processes.iter().any(|path| generation.roots.keys().any(|root| path.starts_with(root))),
-                    "generation became busy; cleanup journal retained");
+                ensure!(
+                    !processes
+                        .iter()
+                        .any(|path| generation.roots.keys().any(|root| path.starts_with(root))),
+                    "generation became busy; cleanup journal retained"
+                );
                 let release_root = release(&self.data, &generation.revision);
-                ensure!(!layouts.iter().any(|text| generation.mods.iter().any(|path|
-                    path.file_name().and_then(|name| name.to_str()).is_some_and(|name| text.contains(name)))
-                    || text.contains(release_root.to_string_lossy().as_ref())),
-                    "generation acquired a layout reference; cleanup journal retained");
+                ensure!(
+                    !layouts
+                        .iter()
+                        .any(|text| generation.mods.iter().any(|path| path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| text.contains(name)))
+                            || text.contains(release_root.to_string_lossy().as_ref())),
+                    "generation acquired a layout reference; cleanup journal retained"
+                );
                 for (root, expected) in &generation.roots {
                     let current = snapshot(root)?;
-                    ensure!(current.iter().all(|(path, hash)| expected.get(path) == Some(hash)),
-                        "cleanup target drift; journal retained: {}", root.display());
+                    ensure!(
+                        current
+                            .iter()
+                            .all(|(path, hash)| expected.get(path) == Some(hash)),
+                        "cleanup target drift; journal retained: {}",
+                        root.display()
+                    );
                 }
             }
         }
@@ -183,7 +267,9 @@ impl Locked {
                     File::open(root.parent().context("missing cleanup parent")?)?.sync_all()?;
                 }
             }
-            for target in &generation.mods { state.mod_owners.remove(target); }
+            for target in &generation.mods {
+                state.mod_owners.remove(target);
+            }
             state.package_releases.remove(&generation.revision);
         }
         Ok(state)
@@ -191,8 +277,12 @@ impl Locked {
 
     pub(super) fn sweep_generations(&self, state: State) -> Result<State> {
         let transaction = Transaction {
-            schema_version: 1, state, files: Vec::new(), mods: Vec::new(),
-            obsolete_deployments: BTreeMap::new(), cleanup: None,
+            schema_version: 1,
+            state,
+            files: Vec::new(),
+            mods: Vec::new(),
+            obsolete_deployments: BTreeMap::new(),
+            cleanup: None,
         };
         self.activate(transaction)
     }

@@ -1,5 +1,5 @@
+use super::super::tests::{BUNDLE, component_release, empty_state, selected};
 use super::*;
-use super::super::tests::{component_release, empty_state, selected, BUNDLE};
 
 fn activate(lock: &Locked, transaction: Transaction, paths: &[PathBuf]) -> State {
     save(&journal_path(&lock.data), &transaction).unwrap();
@@ -10,18 +10,33 @@ fn activate(lock: &Locked, transaction: Transaction, paths: &[PathBuf]) -> State
 fn first(lock: &Locked, home: &Path, rev: &str) -> State {
     let mut state = empty_state(home);
     component_release(lock, &mut state, rev);
-    activate(lock, lock.prepare(&State::default(), state, selected(BUNDLE, rev)).unwrap(), &[])
+    activate(
+        lock,
+        lock.prepare(&State::default(), state, selected(BUNDLE, rev))
+            .unwrap(),
+        &[],
+    )
 }
 
 fn second(lock: &Locked, old: &State, rev: &str, paths: &[PathBuf]) -> State {
     let mut next = old.clone();
     component_release(lock, &mut next, rev);
-    activate(lock, lock.prepare(old, next, selected(BUNDLE, rev)).unwrap(), paths)
+    activate(
+        lock,
+        lock.prepare(old, next, selected(BUNDLE, rev)).unwrap(),
+        paths,
+    )
 }
 
 fn maintenance(state: State) -> Transaction {
-    Transaction { schema_version: 1, state, files: Vec::new(), mods: Vec::new(),
-        obsolete_deployments: BTreeMap::new(), cleanup: None }
+    Transaction {
+        schema_version: 1,
+        state,
+        files: Vec::new(),
+        mods: Vec::new(),
+        obsolete_deployments: BTreeMap::new(),
+        cleanup: None,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -67,13 +82,26 @@ fn unused_generations_remove_mods_caches_releases_and_ownership_not_siblings() {
     assert!(!mod_path(&home, "kit-coord", &a).exists());
     assert!(!cache.exists());
     assert!(!next.package_releases.contains_key(&a));
-    assert!(!next.mod_owners.contains_key(&mod_path(&home, "kit-coord", &a)));
+    assert!(
+        !next
+            .mod_owners
+            .contains_key(&mod_path(&home, "kit-coord", &a))
+    );
     lock.verify_active(&next).unwrap();
     assert!(release(&lock.data, &b).exists());
     assert!(mod_path(&home, "kit-coord", &b).exists());
-    assert_eq!(fs::read_to_string(unowned.join("main.js")).unwrap(), "personal");
-    assert_eq!(fs::read_to_string(unowned_release.join("keep")).unwrap(), "personal");
-    assert_eq!(fs::read_to_string(home.join("data/personal/keep")).unwrap(), "personal");
+    assert_eq!(
+        fs::read_to_string(unowned.join("main.js")).unwrap(),
+        "personal"
+    );
+    assert_eq!(
+        fs::read_to_string(unowned_release.join("keep")).unwrap(),
+        "personal"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join("data/personal/keep")).unwrap(),
+        "personal"
+    );
 }
 
 #[test]
@@ -101,7 +129,10 @@ fn external_nested_layout_pins_generation_until_later_maintenance() {
 fn real_process_executable_and_cwd_each_pin_a_generation() {
     struct Running(std::process::Child);
     impl Drop for Running {
-        fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
     }
     for executable_pin in [true, false] {
         let temp = tempfile::tempdir().unwrap();
@@ -112,16 +143,45 @@ fn real_process_executable_and_cwd_each_pin_a_generation() {
         component_release(&lock, &mut state, &a);
         let executable = release(&lock.data, &a).join("kit-coord");
         fs::copy("/bin/sleep", &executable).unwrap();
-        state.package_releases.get_mut(&a).unwrap().get_mut("kit-coord").unwrap().binary_hash = file_hash(&executable).unwrap();
-        let old = activate(&lock, lock.prepare(&State::default(), state, selected(BUNDLE, &a)).unwrap(), &[]);
-        let cwd = if executable_pin { temp.path().to_path_buf() } else { mod_path(&home, "kit-coord", &a) };
-        let mut child = Running(Command::new(if executable_pin { executable.as_path() } else { Path::new("/bin/sleep") })
-            .arg("60").current_dir(&cwd).spawn().unwrap());
+        state
+            .package_releases
+            .get_mut(&a)
+            .unwrap()
+            .get_mut("kit-coord")
+            .unwrap()
+            .binary_hash = file_hash(&executable).unwrap();
+        let old = activate(
+            &lock,
+            lock.prepare(&State::default(), state, selected(BUNDLE, &a))
+                .unwrap(),
+            &[],
+        );
+        let cwd = if executable_pin {
+            temp.path().to_path_buf()
+        } else {
+            mod_path(&home, "kit-coord", &a)
+        };
+        let mut child = Running(
+            Command::new(if executable_pin {
+                executable.as_path()
+            } else {
+                Path::new("/bin/sleep")
+            })
+            .arg("60")
+            .current_dir(&cwd)
+            .spawn()
+            .unwrap(),
+        );
         let proc = PathBuf::from(format!("/proc/{}", child.0.id()));
         // Use the fixture actor's real kernel links.
-        let paths = [fs::read_link(proc.join("exe")).unwrap(), fs::read_link(proc.join("cwd")).unwrap()];
+        let paths = [
+            fs::read_link(proc.join("exe")).unwrap(),
+            fs::read_link(proc.join("cwd")).unwrap(),
+        ];
         assert_eq!(paths[1], cwd);
-        if executable_pin { assert_eq!(paths[0], executable); }
+        if executable_pin {
+            assert_eq!(paths[0], executable);
+        }
         let pinned = second(&lock, &old, &"b".repeat(40), &paths);
         assert!(release(&lock.data, &a).exists());
         assert!(mod_path(&home, "kit-coord", &a).exists());
@@ -143,9 +203,12 @@ fn cleanup_journal_recovers_partial_trees_and_post_save_crash() {
     // Keep the old revision pinned until the recovery fixture is prepared.
     let mut next = old.clone();
     component_release(&lock, &mut next, &"b".repeat(40));
-    let tx = lock.prepare(&old, next, selected(BUNDLE, &"b".repeat(40))).unwrap();
+    let tx = lock
+        .prepare(&old, next, selected(BUNDLE, &"b".repeat(40)))
+        .unwrap();
     save(&journal_path(&lock.data), &tx).unwrap();
-    lock.recover_with_processes(|| Ok(vec![release(&lock.data, &a)])).unwrap();
+    lock.recover_with_processes(|| Ok(vec![release(&lock.data, &a)]))
+        .unwrap();
     let mut cleanup = maintenance(lock.state().unwrap());
     cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     assert_eq!(cleanup.cleanup.as_ref().unwrap().len(), 1);
@@ -188,7 +251,10 @@ fn drift_and_new_pins_never_authorize_deletion() {
     let mut cleanup = maintenance(state);
     cleanup.cleanup = Some(lock.generation_plan(&cleanup.state, &[]));
     save(&journal_path(&lock.data), &cleanup).unwrap();
-    assert!(lock.recover_with_processes(|| Ok(vec![pinned_path.clone()])).is_err());
+    assert!(
+        lock.recover_with_processes(|| Ok(vec![pinned_path.clone()]))
+            .is_err()
+    );
     assert!(pinned_path.exists());
     assert!(journal_path(&lock.data).exists());
     lock.recover_with_processes(|| Ok(Vec::new())).unwrap();

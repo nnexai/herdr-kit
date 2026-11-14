@@ -96,18 +96,18 @@ impl Locked {
                 "release file drift detected"
             );
         }
-            for (_, rev, receipt) in self.selected_receipts(state)? {
-                for (base, hashes) in &receipt.mods {
-                    ensure!(
-                        &tree(&mod_path(
-                            state.app_home.as_ref().context("missing target")?,
-                            base,
-                            rev
-                        ))? == hashes,
-                        "mod drift detected"
-                    );
-                }
+        for (_, rev, receipt) in self.selected_receipts(state)? {
+            for (base, hashes) in &receipt.mods {
+                ensure!(
+                    &tree(&mod_path(
+                        state.app_home.as_ref().context("missing target")?,
+                        base,
+                        rev
+                    ))? == hashes,
+                    "mod drift detected"
+                );
             }
+        }
         Ok(())
     }
     fn apply_mod(&self, change: &ModChange) -> Result<()> {
@@ -160,14 +160,20 @@ impl Locked {
         Ok(())
     }
     fn recover(&self) -> Result<()> {
-        if !journal_path(&self.data).exists() { return Ok(()); }
+        if !journal_path(&self.data).exists() {
+            return Ok(());
+        }
         self.recover_with_processes(generations::process_paths)
     }
     fn recover_with_processes(&self, processes: impl Fn() -> Result<Vec<PathBuf>>) -> Result<()> {
-        let Some(mut transaction): Option<Transaction> = read_json(&journal_path(&self.data))? else {
+        let Some(mut transaction): Option<Transaction> = read_json(&journal_path(&self.data))?
+        else {
             return Ok(());
         };
-        ensure!(transaction.schema_version == 1, "unsupported activation journal");
+        ensure!(
+            transaction.schema_version == 1,
+            "unsupported activation journal"
+        );
         if transaction.cleanup.is_some() {
             self.verify_active(&transaction.state)?;
             let census = processes()?;
@@ -179,27 +185,43 @@ impl Locked {
         }
         self.selected_receipts(&transaction.state)?;
         for change in &transaction.mods {
-            ensure!(tree(&change.source)? == change.hashes, "release mod drift detected");
+            ensure!(
+                tree(&change.source)? == change.hashes,
+                "release mod drift detected"
+            );
             no_links(&change.target)?;
             if change.target.exists() {
-                ensure!(tree(&change.target)? == change.hashes, "mod collision or drift detected");
+                ensure!(
+                    tree(&change.target)? == change.hashes,
+                    "mod collision or drift detected"
+                );
             }
         }
         for change in &transaction.files {
             let current = file_hash(&change.target)?;
-            ensure!(current == change.old_hash || current == change.next.as_ref().map(|n| n.hash.clone()),
-                "managed file collision or drift detected");
+            ensure!(
+                current == change.old_hash
+                    || current == change.next.as_ref().map(|n| n.hash.clone()),
+                "managed file collision or drift detected"
+            );
             if let Some(next) = &change.next {
-                ensure!(file_hash(&next.source)?.as_deref() == Some(&next.hash), "release file drift detected");
+                ensure!(
+                    file_hash(&next.source)?.as_deref() == Some(&next.hash),
+                    "release file drift detected"
+                );
             }
         }
         for (path, expected) in &transaction.obsolete_deployments {
             ensure!(
-                file_hash(path)?.as_ref().is_none_or(|actual| actual == expected),
+                file_hash(path)?
+                    .as_ref()
+                    .is_none_or(|actual| actual == expected),
                 "superseded deployment drift detected"
             );
         }
-        for change in &transaction.mods { self.apply_mod(change)?; }
+        for change in &transaction.mods {
+            self.apply_mod(change)?;
+        }
         for ready in [false, true] {
             for change in &transaction.files {
                 if change.next.as_ref().is_some_and(|n| n.ready) == ready {
@@ -217,7 +239,8 @@ impl Locked {
                 File::open(parent)?.sync_all()?;
                 if fs::read_dir(parent)?.next().is_none() {
                     fs::remove_dir(parent)?;
-                    File::open(parent.parent().context("missing deployments directory")?)?.sync_all()?;
+                    File::open(parent.parent().context("missing deployments directory")?)?
+                        .sync_all()?;
                 }
             }
         }
@@ -243,94 +266,121 @@ impl Locked {
         next.selection = selection;
         next.files.clear();
         let mut mods = Vec::new();
-            let mut bindings = BTreeMap::new();
-            let mut layout_source = None;
-            let mut files = BTreeMap::<PathBuf, FileReceipt>::new();
-            for (_, rev, receipt) in self.selected_receipts(&next)? {
-                if let Some(binary) = &receipt.definition.binary {
-                    let source = release(&self.data, rev).join(&binary.name);
-                    let target = self.data.join("bin").join(&binary.name);
-                    let file = FileReceipt {
-                        hash: receipt.binary_hash.clone().context("missing binary hash")?,
-                        source,
-                        executable: true,
-                        ready: false,
-                    };
-                    if let Some(other) = files.insert(target, file.clone()) {
-                        ensure!(
-                            other.source == file.source,
-                            "selected binaries have multiple owners"
-                        );
-                    }
-                }
-                for (base, hashes) in &receipt.mods {
-                    bindings.insert(base.clone(), name(base, rev));
-                    mods.push(ModChange {
-                        target: mod_path(&home, base, rev),
-                        source: release(&self.data, rev).join("mods").join(base),
-                        hashes: hashes.clone(),
-                    });
-                }
-                if receipt.definition.layout.is_some() {
-                    layout_source = Some(release(&self.data, rev).join("layout-source.json"));
+        let mut bindings = BTreeMap::new();
+        let mut layout_source = None;
+        let mut files = BTreeMap::<PathBuf, FileReceipt>::new();
+        for (_, rev, receipt) in self.selected_receipts(&next)? {
+            if let Some(binary) = &receipt.definition.binary {
+                let source = release(&self.data, rev).join(&binary.name);
+                let target = self.data.join("bin").join(&binary.name);
+                let file = FileReceipt {
+                    hash: receipt.binary_hash.clone().context("missing binary hash")?,
+                    source,
+                    executable: true,
+                    ready: false,
+                };
+                if let Some(other) = files.insert(target, file.clone()) {
+                    ensure!(
+                        other.source == file.source,
+                        "selected binaries have multiple owners"
+                    );
                 }
             }
-            if let Some(source) = layout_source {
-                let mut value: Value = serde_json::from_slice(&fs::read(source)?)?;
-                let mut known = std::collections::BTreeSet::from_iter(
-                    ["kit-coord", "kit-coord-ui", "kit-usage", "herdr-kit-bar"].map(str::to_owned));
-                for packages in next.package_releases.values() {
-                    for package in packages.values() {
-                        known.extend(package.mods.keys().cloned());
-                    }
+            for (base, hashes) in &receipt.mods {
+                bindings.insert(base.clone(), name(base, rev));
+                mods.push(ModChange {
+                    target: mod_path(&home, base, rev),
+                    source: release(&self.data, rev).join("mods").join(base),
+                    hashes: hashes.clone(),
+                });
+            }
+            if receipt.definition.layout.is_some() {
+                layout_source = Some(release(&self.data, rev).join("layout-source.json"));
+            }
+        }
+        if let Some(source) = layout_source {
+            let mut value: Value = serde_json::from_slice(&fs::read(source)?)?;
+            let mut known = std::collections::BTreeSet::from_iter(
+                ["kit-coord", "kit-coord-ui", "kit-usage", "herdr-kit-bar"].map(str::to_owned),
+            );
+            for packages in next.package_releases.values() {
+                for package in packages.values() {
+                    known.extend(package.mods.keys().cloned());
                 }
-                let manager = next.selection.contains_key("kit-manager").then(|| bootstrap(&self.data));
-                project_layout(&mut value, &known, &bindings, manager.as_deref(), &self.data);
-                let bytes = serde_json::to_vec_pretty(&value)?;
+            }
+            let manager = next
+                .selection
+                .contains_key("kit-manager")
+                .then(|| bootstrap(&self.data));
+            project_layout(
+                &mut value,
+                &known,
+                &bindings,
+                manager.as_deref(),
+                &self.data,
+            );
+            let bytes = serde_json::to_vec_pretty(&value)?;
+            let digest = hash(&bytes);
+            let source = self
+                .data
+                .join("deployments")
+                .join(&digest)
+                .join("herdr-kit.json");
+            if let Some(existing) = file_hash(&source)? {
+                ensure!(existing == digest, "deployment layout drift detected");
+            } else {
+                atomic(&source, &bytes, false)?;
+            }
+            files.insert(
+                layout(&home),
+                FileReceipt {
+                    source,
+                    hash: digest,
+                    executable: false,
+                    ready: false,
+                },
+            );
+        }
+        if let Some(rev) = next.selection.get("kit-coord") {
+            let receipt = next
+                .package_releases
+                .get(rev)
+                .and_then(|packages| packages.get("kit-coord"))
+                .context("missing selected coordinator receipt")?;
+            if receipt
+                .definition
+                .binary
+                .as_ref()
+                .is_some_and(|binary| binary.name == "kit-coord")
+            {
+                let bytes = serde_json::to_vec(&json!({
+                    "schema_version": 1,
+                    "revision": rev,
+                    "executable": release(&self.data, rev).join("kit-coord"),
+                }))?;
                 let digest = hash(&bytes);
                 let source = self
                     .data
                     .join("deployments")
                     .join(&digest)
-                    .join("herdr-kit.json");
+                    .join("kit-coord-active.json");
                 if let Some(existing) = file_hash(&source)? {
-                    ensure!(existing == digest, "deployment layout drift detected");
+                    ensure!(existing == digest, "coordinator descriptor drift detected");
                 } else {
                     atomic(&source, &bytes, false)?;
                 }
                 files.insert(
-                    layout(&home),
+                    self.data.join("kit-coord/active.json"),
                     FileReceipt {
                         source,
                         hash: digest,
                         executable: false,
-                        ready: false,
+                        ready: true,
                     },
                 );
             }
-            if let Some(rev) = next.selection.get("kit-coord") {
-                let receipt = next.package_releases.get(rev)
-                    .and_then(|packages| packages.get("kit-coord"))
-                    .context("missing selected coordinator receipt")?;
-                if receipt.definition.binary.as_ref().is_some_and(|binary| binary.name == "kit-coord") {
-                    let bytes = serde_json::to_vec(&json!({
-                        "schema_version": 1,
-                        "revision": rev,
-                        "executable": release(&self.data, rev).join("kit-coord"),
-                    }))?;
-                    let digest = hash(&bytes);
-                    let source = self.data.join("deployments").join(&digest).join("kit-coord-active.json");
-                    if let Some(existing) = file_hash(&source)? {
-                        ensure!(existing == digest, "coordinator descriptor drift detected");
-                    } else {
-                        atomic(&source, &bytes, false)?;
-                    }
-                    files.insert(self.data.join("kit-coord/active.json"), FileReceipt {
-                        source, hash: digest, executable: false, ready: true,
-                    });
-                }
-            }
-            next.files = files;
+        }
+        next.files = files;
         for change in &mods {
             no_links(&change.target)?;
             if change.target.exists() {
@@ -374,15 +424,20 @@ impl Locked {
                 .context("missing selected package receipt")?
                 .activated = true;
         }
-        next.current = next.selection
+        next.current = next
+            .selection
             .get("kit-manager")
             .or_else(|| next.selection.get("herdr-kit"))
             .or_else(|| next.selection.values().next())
             .cloned();
         let deployments = self.data.join("deployments");
-        let obsolete_deployments = old.files.values()
-            .filter(|file| file.source.starts_with(&deployments)
-                && !next.files.values().any(|next| next.source == file.source))
+        let obsolete_deployments = old
+            .files
+            .values()
+            .filter(|file| {
+                file.source.starts_with(&deployments)
+                    && !next.files.values().any(|next| next.source == file.source)
+            })
             .map(|file| (file.source.clone(), file.hash.clone()))
             .collect();
         Ok(Transaction {
@@ -547,7 +602,9 @@ impl Locked {
                 let dir = staged.join("mods").join(base);
                 copy_tree(&source.join("mods").join(base), &dir)?;
                 let binary = definition.binary.as_ref().or_else(|| {
-                    definition.runtime_package.as_ref()
+                    definition
+                        .runtime_package
+                        .as_ref()
                         .and_then(|id| catalog.packages.get(id))
                         .and_then(|package| package.binary.as_ref())
                 });

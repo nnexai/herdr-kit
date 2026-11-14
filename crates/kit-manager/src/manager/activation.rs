@@ -5,8 +5,11 @@ use std::thread;
 fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
     let message = String::from_utf8_lossy(stderr).into_owned();
     let forbidden = code == Some(3)
-        && serde_json::from_slice::<Value>(stderr).ok()
-            .and_then(|value| value["error"]["code"].as_str().map(str::to_owned)).as_deref() == Some("forbidden_caller");
+        && serde_json::from_slice::<Value>(stderr)
+            .ok()
+            .and_then(|value| value["error"]["code"].as_str().map(str::to_owned))
+            .as_deref()
+            == Some("forbidden_caller");
     if forbidden {
         json!({"state":"skipped","reason":"forbidden_caller","message":message})
     } else {
@@ -15,7 +18,9 @@ fn activation_failure(code: Option<i32>, stderr: &[u8]) -> Value {
 }
 
 pub fn after_activation(root: &Path) -> Value {
-    if !root.join("coord/config.json").exists() { return json!({"state":"disabled"}); }
+    if !root.join("coord/config.json").exists() {
+        return json!({"state":"disabled"});
+    }
     let result = (|| -> Result<Value> {
         let state: State = read_json(&state_path(root))?.context("suite is not installed")?;
         if !state.selection.contains_key("kit-coord") {
@@ -23,13 +28,19 @@ pub fn after_activation(root: &Path) -> Value {
         }
         let mut command = Command::new(root.join("bin/kit-coord"));
         command.arg("--data-dir").arg(root);
-        let mut child = command.args(["up", "--if-enabled"])
-            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        let mut child = command
+            .args(["up", "--if-enabled"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             if child.try_wait()?.is_some() {
                 let output = child.wait_with_output()?;
-                if !output.status.success() { return Ok(activation_failure(output.status.code(), &output.stderr)); }
+                if !output.status.success() {
+                    return Ok(activation_failure(output.status.code(), &output.stderr));
+                }
                 return Ok(serde_json::from_slice(&output.stdout)?);
             }
             if Instant::now() >= deadline {
@@ -53,7 +64,16 @@ mod tests {
         assert_eq!(skipped["state"], "skipped");
         assert_eq!(skipped["reason"], "forbidden_caller");
         assert_eq!(activation_failure(Some(1), refusal)["state"], "failed");
-        assert_eq!(activation_failure(Some(3), br#"{"error":{"code":"operation_failed","message":"failed"}}"#)["state"], "failed");
-        assert_eq!(activation_failure(Some(2), b"unrecognized subcommand").get("state"), Some(&json!("failed")));
+        assert_eq!(
+            activation_failure(
+                Some(3),
+                br#"{"error":{"code":"operation_failed","message":"failed"}}"#
+            )["state"],
+            "failed"
+        );
+        assert_eq!(
+            activation_failure(Some(2), b"unrecognized subcommand").get("state"),
+            Some(&json!("failed"))
+        );
     }
 }
