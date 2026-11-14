@@ -1,10 +1,8 @@
 mod coord;
 mod deployment;
-mod git_env;
-mod paths;
 
-use anyhow::{Context, Result};
 use clap::Parser;
+use kit_core::paths::data_root;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -15,17 +13,6 @@ struct Cli {
     data_dir: Option<PathBuf>,
     #[command(flatten)]
     args: coord::cli::CoordArgs,
-}
-
-fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
-    let root = arg.map(Ok).unwrap_or_else(paths::data_dir)?;
-    if root.is_absolute() {
-        Ok(root)
-    } else {
-        Ok(std::env::current_dir()
-            .context("current directory unavailable")?
-            .join(root))
-    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -42,17 +29,8 @@ async fn main() {
         ),
         Ok(coord::Output::Text(text)) => print!("{text}"),
         Err(error) => {
-            let message: String = error
-                .to_string()
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(512)
-                .collect();
             let (code, exit) = coord::error::exit_of(&error);
-            eprintln!(
-                "{}",
-                serde_json::json!({"error":{"code":code,"message":message}})
-            );
+            eprintln!("{}", kit_core::error::json(&error, code));
             std::process::exit(exit);
         }
     }

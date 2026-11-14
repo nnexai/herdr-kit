@@ -1,10 +1,7 @@
 use std::env;
 
-#[path = "src/git_env.rs"]
-mod git_env;
-
 fn git(args: &[&str]) -> Option<String> {
-    let output = git_env::git().args(args).output().ok()?;
+    let output = kit_core::git_env::git().args(args).output().ok()?;
     output
         .status
         .success()

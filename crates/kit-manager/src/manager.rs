@@ -3,13 +3,14 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use fs2::FileExt;
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -48,29 +49,10 @@ fn now() -> u64 {
         .as_secs()
 }
 
-// Refuse all existing symlinks in a path, including ancestors. Never follow a
-// substituted managed target. Missing components are permitted for creation.
-fn no_links(path: &Path) -> Result<()> {
-    ensure!(path.is_absolute(), "path must be absolute");
-    let mut part = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::RootDir | Component::Normal(_) => part.push(c.as_os_str()),
-            _ => bail!("unsafe path"),
-        }
-        match fs::symlink_metadata(&part) {
-            Ok(m) => ensure!(!m.file_type().is_symlink(), "symlink in managed path"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
 fn directory(path: &Path) -> Result<()> {
-    no_links(path)?;
+    no_links(path, SymlinkMessage::Generic)?;
     fs::create_dir_all(path)?;
-    no_links(path)?;
+    no_links(path, SymlinkMessage::Generic)?;
     ensure!(fs::metadata(path)?.is_dir(), "expected directory");
     Ok(())
 }
@@ -81,14 +63,14 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     } else {
         std::env::current_dir()?.join(path)
     };
-    no_links(&path)?;
+    no_links(&path, SymlinkMessage::Generic)?;
     Ok(path)
 }
 
 fn atomic(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     let parent = path.parent().context("missing parent")?;
     directory(parent)?;
-    no_links(path)?;
+    no_links(path, SymlinkMessage::Generic)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
     if executable {
@@ -109,7 +91,7 @@ fn save<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     atomic(path, &serde_json::to_vec(value)?, false)
 }
 fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<Option<T>> {
-    no_links(path)?;
+    no_links(path, SymlinkMessage::Generic)?;
     match fs::read(path) {
         Ok(b) => Ok(Some(
             serde_json::from_slice(&b).context("invalid manager metadata")?,
@@ -122,7 +104,7 @@ fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn file_hash(path: &Path) -> Result<Option<String>> {
-    no_links(path)?;
+    no_links(&path, SymlinkMessage::Generic)?;
     match fs::read(path) {
         Ok(b) => Ok(Some(hash(&b))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -131,7 +113,7 @@ fn file_hash(path: &Path) -> Result<Option<String>> {
 }
 fn tree(root: &Path) -> Result<BTreeMap<String, String>> {
     fn visit(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) -> Result<()> {
-        no_links(dir)?;
+        no_links(dir, SymlinkMessage::Generic)?;
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
@@ -159,7 +141,7 @@ fn tree(root: &Path) -> Result<BTreeMap<String, String>> {
     Ok(out)
 }
 fn copy_tree(from: &Path, to: &Path) -> Result<()> {
-    no_links(from)?;
+    no_links(from, SymlinkMessage::Generic)?;
     directory(to)?;
     for e in fs::read_dir(from)? {
         let e = e?;
@@ -170,7 +152,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
             copy_tree(&e.path(), &dest)?;
         } else {
             ensure!(ty.is_file(), "unsupported asset");
-            no_links(&dest)?;
+            no_links(&dest, SymlinkMessage::Generic)?;
             fs::copy(e.path(), dest)?;
         }
     }
@@ -203,7 +185,7 @@ fn run(cmd: &mut Command, error: &str) -> Result<()> {
 fn revision(repo: &Path) -> Result<String> {
     let mut output = tempfile::tempfile()?;
     let status = bounded(
-        crate::git_env::git()
+        kit_core::git_env::git()
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--verify", "HEAD^{commit}"])

@@ -1,7 +1,8 @@
 # Modular Herdr kit packages
 
-`kit-coord` and `kit-usage` are independent capabilities composed by the
-herdr-kit layout. P5 release work remains separately authorized.
+`kit-coord` and `kit-usage` are standalone capabilities composed by the
+herdr-kit layout. Their shared Rust functionality lives in `kit-core`.
+P5 release work remains separately authorized.
 
 ## Independent packages
 
@@ -13,9 +14,12 @@ herdr-kit layout. P5 release work remains separately authorized.
 | kit-manager, optional | `herdr-kit`; trusted committed-source installation/update |
 | herdr-kit | Layout plus `mods/herdr-kit-bar/` composition/maintenance glue |
 
-There is no kit-core, cross-mod JS import, shared capability service or hidden
-updater. Coordinator and usage do not depend on each other or the manager.
-Manager's CLI has no `coord` or `usage` namespaces.
+`kit-core` is the shared Rust crate for data-root/path policy, JSON error
+formatting and repository-isolated Git commands. Capability crates and the
+optional manager depend on it; it never depends on them. It is not a mod,
+executable, service or installable package. There are no cross-mod JS imports
+or hidden updaters. Coordinator and usage do not depend on each other or the
+manager. Manager's CLI has no `coord` or `usage` namespaces.
 
 ```sh
 cargo test --locked
@@ -58,7 +62,11 @@ still person-owned. The external layout is never rewritten by the manager,
 and has no maintenance invocation or installed updater.
 
 An owner can instead export committed source with `git archive`, retain
-Cargo.lock, and build only `cargo build --locked --release -p kit-coord`.
+Cargo.lock, the workspace manifest and `crates/kit-core`, and build only
+`cargo build --locked --release -p kit-coord`. Cargo includes kit-core as a
+dependency without building the other binaries. The manager uses the same
+full-source archive and selected-package build; the runtime artifact catalog
+`kit-packages.json` needs no entry for the shared crate.
 For an archive without Git metadata set `KIT_COORD_BUILD_REVISION=FULL_COMMIT`.
 Copy the executable and complete mod directory to the immutable paths above,
 and generate the mod-local runtime using JSON-encoded absolute paths:

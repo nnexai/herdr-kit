@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, ensure};
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
-use super::paths::{CoordPaths, no_links};
+use super::paths::CoordPaths;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -42,7 +43,7 @@ impl Default for Config {
 
 impl Config {
     pub fn load(paths: &CoordPaths) -> Result<Option<Config>> {
-        no_links(&paths.config)?;
+        no_links(&paths.config, SymlinkMessage::WithPath)?;
         match fs::read(&paths.config) {
             Ok(bytes) => Ok(Some(
                 serde_json::from_slice(&bytes).context("invalid coordinator config")?,
@@ -53,7 +54,7 @@ impl Config {
     }
     pub fn save(&self, paths: &CoordPaths) -> Result<()> {
         paths.ensure()?;
-        no_links(&paths.config)?;
+        no_links(&paths.config, SymlinkMessage::WithPath)?;
         let mut tmp = tempfile::NamedTempFile::new_in(&paths.dir)?;
         tmp.write_all(&serde_json::to_vec(self)?)?;
         tmp.as_file().sync_all()?;

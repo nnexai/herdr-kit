@@ -1,6 +1,5 @@
 //! The manager reads the source it is given, not a repository named by its environment.
-#[path = "../src/git_env.rs"]
-mod git_env;
+use kit_core::git_env;
 
 use std::{fs, path::Path, process::Command};
 

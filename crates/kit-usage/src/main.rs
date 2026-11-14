@@ -1,8 +1,8 @@
-mod paths;
 mod usage;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use kit_core::paths::data_root;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -34,30 +34,14 @@ async fn main() {
             serde_json::to_string(&value).expect("serializable response")
         ),
         Err(error) => {
-            let message: String = error
-                .to_string()
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(512)
-                .collect();
-            eprintln!(
-                "{}",
-                serde_json::json!({"error":{"code":"operation_failed","message":message}})
-            );
+            eprintln!("{}", kit_core::error::json(&error, "operation_failed"));
             std::process::exit(1);
         }
     }
 }
 
 async fn run(cli: Cli) -> Result<usage::Snapshot> {
-    let root = cli.data_dir.map(Ok).unwrap_or_else(paths::data_dir)?;
-    let root = if root.is_absolute() {
-        root
-    } else {
-        std::env::current_dir()
-            .context("current directory unavailable")?
-            .join(root)
-    };
+    let root = data_root(cli.data_dir)?;
     match cli.command {
         Command::Snapshot {
             agents_working,

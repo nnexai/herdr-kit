@@ -23,7 +23,7 @@ use std::rc::Rc;
 const T0: u64 = 1_800_000_000_000;
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = crate::git_env::git()
+    let out = kit_core::git_env::git()
         .arg("-C")
         .arg(dir)
         .args([

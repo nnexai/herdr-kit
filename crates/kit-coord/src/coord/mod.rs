@@ -89,7 +89,7 @@ impl Ctx {
             std::env::current_exe().unwrap_or(stable)
         };
         let mut argv = vec![binary.to_string_lossy().into_owned()];
-        if crate::paths::data_dir().ok().as_deref() != Some(self.root.as_path()) {
+        if kit_core::paths::data_dir().ok().as_deref() != Some(self.root.as_path()) {
             argv.extend([
                 "--data-dir".to_owned(),
                 self.root.to_string_lossy().into_owned(),

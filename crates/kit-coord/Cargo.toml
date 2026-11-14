@@ -6,6 +6,7 @@ license.workspace = true
 description = "Standalone Herdr coordinator CLI and native mod"
 
 [dependencies]
+kit-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -15,6 +16,9 @@ sha2.workspace = true
 tempfile.workspace = true
 rustix.workspace = true
 tokio.workspace = true
+
+[build-dependencies]
+kit-core.workspace = true
 
 [lints]
 workspace = true

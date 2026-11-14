@@ -63,14 +63,14 @@ fn process_paths_at(proc_root: &Path) -> Result<Vec<PathBuf>> {
 
 fn layout_strings(home: &Path) -> Result<Vec<String>> {
     fn visit(path: &Path, strings: &mut Vec<String>) -> Result<()> {
-        no_links(path)?;
+        no_links(path, SymlinkMessage::Generic)?;
         if !path.exists() {
             return Ok(());
         }
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
-            no_links(&path)?;
+            no_links(&path, SymlinkMessage::Generic)?;
             if entry.file_type()?.is_dir() {
                 visit(&path, strings)?;
             } else if path.extension().is_some_and(|ext| ext == "json") {
@@ -103,14 +103,14 @@ fn layout_strings(home: &Path) -> Result<Vec<String>> {
 
 fn snapshot(root: &Path) -> Result<BTreeMap<String, String>> {
     fn visit(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) -> Result<()> {
-        no_links(dir)?;
+        no_links(dir, SymlinkMessage::Generic)?;
         if !dir.exists() {
             return Ok(());
         }
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            no_links(&path)?;
+            no_links(&path, SymlinkMessage::Generic)?;
             if entry.file_type()?.is_dir() {
                 visit(root, &path, files)?;
             } else {
@@ -273,7 +273,7 @@ impl Locked {
         }
         for generation in plan {
             for root in generation.roots.keys() {
-                no_links(root)?;
+                no_links(root, SymlinkMessage::Generic)?;
                 if root.exists() {
                     fs::remove_dir_all(root)?;
                     File::open(root.parent().context("missing cleanup parent")?)?.sync_all()?;

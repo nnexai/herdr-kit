@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/kit-manager", "crates/kit-coord", "crates/kit-usage"]
+members = ["crates/kit-core", "crates/kit-manager", "crates/kit-coord", "crates/kit-usage"]
 resolver = "3"
 
 [workspace.package]
@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+kit-core = { path = "crates/kit-core" }
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }

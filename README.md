@@ -1,10 +1,11 @@
 # herdr-kit
 
 A local Rust workspace with native JavaScript mods and a personal layout for
-[Herdr](https://herdr.dev). The approved modular extraction separates coordinator,
-usage and optional installation/update ownership without a mandatory kit-core.
-`kit-coord` and `kit-usage` each own their CLI and native mod; optional
-`kit-manager` produces the `herdr-kit` installer. The layout composes them.
+[Herdr](https://herdr.dev). Standalone coordinator and usage/limits mods share
+the `kit-core` Rust crate and work together or alone. `kit-coord` and `kit-usage`
+each own their CLI and native mod; optional `kit-manager` produces the
+`herdr-kit` installer. The layout composes them. Dependencies point into
+`kit-core`, never from it into a capability or the manager.
 This is not a Herdr fork or browser frontend.
 
 ![Herdr kit usage](preview.png)
@@ -119,6 +120,15 @@ owner chooses when to reference that exact generation. `kit-coord`, `kit-usage`,
 selected. `kit-coord-ui` requires only kit-coord, never kit-usage; selecting it
 includes its coordinator dependency at the same pinned revision. Neither
 capability installs the updater or another layout.
+
+`kit-core` supplies shared data-root/path policy, JSON error formatting and
+repository-isolated Git commands. It is a build-time Rust dependency, not an
+installable mod, executable or service; it has no lifecycle or data subtree.
+Cargo builds it automatically for each selected binary. Standalone source
+exports must retain `crates/kit-core`, the workspace manifest and Cargo.lock;
+the manager already archives the complete committed source before building
+only the selected package. `kit-packages.json` lists runtime artifacts, so
+`kit-core` needs no entry or installation receipt.
 
 `update apply --component NAME` changes only selected components; omit it to
 update the owned set. UI/coordinator dependency pins advance together.

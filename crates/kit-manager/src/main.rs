@@ -1,9 +1,8 @@
-mod git_env;
 mod manager;
-mod paths;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
+use kit_core::paths::data_root;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -62,29 +61,9 @@ fn main() {
             serde_json::to_string(&value).expect("serializable response")
         ),
         Err(error) => {
-            let message: String = error
-                .to_string()
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(512)
-                .collect();
-            eprintln!(
-                "{}",
-                serde_json::json!({"error":{"code":"operation_failed","message":message}})
-            );
+            eprintln!("{}", kit_core::error::json(&error, "operation_failed"));
             std::process::exit(1);
         }
-    }
-}
-
-fn data_root(arg: Option<PathBuf>) -> Result<PathBuf> {
-    let root = arg.map(Ok).unwrap_or_else(paths::data_dir)?;
-    if root.is_absolute() {
-        Ok(root)
-    } else {
-        Ok(std::env::current_dir()
-            .context("current directory unavailable")?
-            .join(root))
     }
 }
 

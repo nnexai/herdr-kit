@@ -5,6 +5,10 @@
 - Avoid repeated retained-workstream inbox wakeups on unchanged reconcile
   passes, and stop recording new terminal turns after a task is closed.
 
+- Introduce the shared `kit-core` Rust crate for data-root/path policy, JSON
+  error formatting and repository-isolated Git commands. Standalone coordinator,
+  usage/limits and optional manager builds include it as a Cargo dependency;
+  CLI bytes, runtime package selection and stored formats are unchanged.
 - Keep blocked/question delegates in a durable Needs you item across inbox
   acknowledgements and coordinator handoffs, with linked-question resolution,
   restart-safe 10-minute-to-4-hour coordinator reminder backoff and a persistent
@@ -37,7 +41,8 @@
   receipts, preserving the coordinator's journal, configuration, roles and sessions.
 - Complete the mechanical P2–P4 split into independent kit-coord and kit-usage
   CLI/mod packages, optional kit-manager, kit-coord-ui (coord-only dependency),
-  and the herdr-kit layout. No kit-core or legacy CLI aliases.
+  and the herdr-kit layout, with shared Rust functionality in kit-core and no
+  legacy CLI aliases.
 - Move host chrome, readout composition and optional maintenance into the
   layout's small bar. Capability producers keep their lifecycle and publish
   generation-bound presentation snapshots; Limits remains flush right.

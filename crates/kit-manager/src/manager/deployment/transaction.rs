@@ -64,7 +64,7 @@ impl Locked {
         }
         next.files = files;
         for change in &mods {
-            no_links(&change.target)?;
+            no_links(&change.target, SymlinkMessage::Generic)?;
             if change.target.exists() {
                 ensure!(
                     old.mod_owners.contains_key(&change.target),
@@ -322,7 +322,7 @@ fn mod_installed(change: &ModChange) -> Result<bool> {
         tree(&change.source)? == change.hashes,
         "release mod drift detected"
     );
-    no_links(&change.target)?;
+    no_links(&change.target, SymlinkMessage::Generic)?;
     if !change.target.exists() {
         return Ok(false);
     }

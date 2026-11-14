@@ -1886,7 +1886,7 @@ mod placement_acceptance_tests {
             ][..],
         ] {
             assert!(
-                crate::git_env::git()
+                kit_core::git_env::git()
                     .env("HOME", root)
                     .arg("-C")
                     .arg(&repo)
@@ -2143,7 +2143,7 @@ mod placement_acceptance_tests {
         let other = temp.path().join("other");
         fs::create_dir(&other).unwrap();
         assert!(
-            crate::git_env::git()
+            kit_core::git_env::git()
                 .env("HOME", temp.path())
                 .arg("-C")
                 .arg(&other)

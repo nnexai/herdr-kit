@@ -170,8 +170,8 @@ fn structural_layout_projection_does_not_rewrite_protocol_keys() {
 fn rejects_symlink_traversal_and_excludes_second_manager_writer() {
     let temp = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(temp.path(), temp.path().join("link")).unwrap();
-    assert!(no_links(&temp.path().join("link/file")).is_err());
-    assert!(no_links(&temp.path().join("../outside")).is_err());
+    assert!(no_links(&temp.path().join("link/file"), SymlinkMessage::Generic).is_err());
+    assert!(no_links(&temp.path().join("../outside"), SymlinkMessage::Generic).is_err());
     let lock = Locked::open(temp.path()).unwrap();
     let other = OpenOptions::new()
         .write(true)

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use fs2::FileExt;
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -17,7 +18,7 @@ use super::{
     journal::Journal,
     kinds::{Actor, Kind, ResType, ResourceRef, SessionMode, SessionRef, Tier},
     launch::{self, LaunchPlan},
-    paths::{CoordPaths, no_links},
+    paths::CoordPaths,
     place, role, views,
 };
 
@@ -35,7 +36,7 @@ pub struct Heartbeat {
 }
 
 pub fn read_heartbeat(paths: &CoordPaths) -> Result<Option<Heartbeat>> {
-    no_links(&paths.heartbeat)?;
+    no_links(&paths.heartbeat, SymlinkMessage::WithPath)?;
     match fs::read(&paths.heartbeat) {
         Ok(data) => Ok(Some(serde_json::from_slice(&data)?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -44,7 +45,7 @@ pub fn read_heartbeat(paths: &CoordPaths) -> Result<Option<Heartbeat>> {
 }
 pub fn write_heartbeat(paths: &CoordPaths, hb: &Heartbeat) -> Result<()> {
     paths.ensure()?;
-    no_links(&paths.heartbeat)?;
+    no_links(&paths.heartbeat, SymlinkMessage::WithPath)?;
     let mut tmp = tempfile::NamedTempFile::new_in(&paths.dir)?;
     serde_json::to_writer(&mut tmp, hb)?;
     tmp.flush()?;
@@ -59,7 +60,7 @@ pub fn active_release(root: &Path) -> String {
 }
 fn up_lock(ctx: &Ctx) -> Result<fs::File> {
     ctx.paths.ensure()?;
-    no_links(&ctx.paths.up_lock)?;
+    no_links(&ctx.paths.up_lock, SymlinkMessage::WithPath)?;
     let f = OpenOptions::new()
         .create(true)
         .write(true)
@@ -301,7 +302,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         &ctx.cli(),
         &views::startup_read(&state, &waking, ctx.now()),
     );
-    no_links(&path)?;
+    no_links(&path, SymlinkMessage::WithPath)?;
     fs::write(&path, &msg)?;
     let id = if role.session == SessionMode::Preset {
         Some(ids::uuid_v4()?)

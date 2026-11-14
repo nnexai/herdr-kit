@@ -1,0 +1,16 @@
+[package]
+name = "kit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared Rust functionality for standalone Herdr kit packages"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

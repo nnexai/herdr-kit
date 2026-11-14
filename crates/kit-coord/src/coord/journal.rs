@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use fs2::FileExt;
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde_json::Value;
 
 use super::error::not_ready;
 use super::fold;
 use super::ids::{TaskId, WsId};
 use super::kinds::{Actor, Entry, FORMAT, Kind};
-use super::paths::{CoordPaths, no_links};
+use super::paths::CoordPaths;
 use super::state::{FOLD_VERSION, State};
 
 const MAX_LINE: usize = 64 * 1024;
@@ -67,7 +68,7 @@ impl Journal {
                 && &b[7..] == b".jsonl"
                 && b[..4].iter().chain(&b[5..7]).all(u8::is_ascii_digit)
             {
-                no_links(&item.path())?;
+                no_links(&item.path(), SymlinkMessage::WithPath)?;
                 files.push(item.path());
             }
         }
@@ -116,7 +117,7 @@ impl Journal {
     }
     // Senders and handovers must append their intent while holding this lock before acting.
     pub fn lock(&self) -> Result<Locked<'_>> {
-        no_links(&self.paths.lock)?;
+        no_links(&self.paths.lock, SymlinkMessage::WithPath)?;
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -285,7 +286,7 @@ impl Locked<'_> {
             .filter(|p| **p > requested)
             .cloned()
             .unwrap_or(requested);
-        no_links(&path)?;
+        no_links(&path, SymlinkMessage::WithPath)?;
         if !lines.is_empty() {
             let mut file = OpenOptions::new().create(true).append(true).open(path)?;
             for (line, entry) in lines.iter().zip(&entries) {

@@ -34,7 +34,7 @@ impl Locked {
         }
         let checkout = Checkout::extract(self, state, rev)?;
         let selected = checkout.catalog.selected(requested)?;
-        no_links(&checkout.release)?;
+        no_links(&checkout.release, SymlinkMessage::Generic)?;
         if checkout.release.exists() {
             ensure!(
                 state.package_releases.contains_key(rev),
@@ -80,7 +80,7 @@ impl<'a> Checkout<'a> {
             .tempdir_in(&releases)?;
         let archive = tmp.path().join("source.tar");
         run(
-            crate::git_env::git()
+            kit_core::git_env::git()
                 .arg("-C")
                 .arg(repo)
                 .args(["archive", "--format=tar", "--output"])

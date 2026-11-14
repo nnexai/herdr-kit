@@ -1,5 +1,6 @@
 //! Public coordinator readiness contract. No manager state is read here.
 use anyhow::{Context, Result, ensure};
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde::Deserialize;
 use std::{
     fs,
@@ -21,7 +22,7 @@ pub struct Active {
 
 pub fn read(root: &Path) -> Result<Option<Active>> {
     let path = root.join("kit-coord/active.json");
-    crate::coord::paths::no_links(&path)?;
+    no_links(&path, SymlinkMessage::WithPath)?;
     let file = match fs::File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -56,7 +57,7 @@ pub fn read(root: &Path) -> Result<Option<Active>> {
 }
 
 fn target_metadata(active: &Active) -> Result<fs::Metadata> {
-    crate::coord::paths::no_links(&active.executable)?;
+    no_links(&active.executable, SymlinkMessage::WithPath)?;
     let metadata =
         fs::metadata(&active.executable).context("coordinator deployment executable is missing")?;
     ensure!(

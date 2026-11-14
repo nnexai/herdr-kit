@@ -1,5 +1,4 @@
-#[path = "../src/git_env.rs"]
-mod git_env;
+use kit_core::git_env;
 
 use serde_json::{Value, json};
 use std::{

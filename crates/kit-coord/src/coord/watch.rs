@@ -461,7 +461,10 @@ fn replacement_command(
 
 pub async fn run(ctx: Ctx) -> Result<Value> {
     ctx.paths.ensure()?;
-    super::paths::no_links(&ctx.paths.watcher_lock)?;
+    kit_core::paths::no_links(
+        &ctx.paths.watcher_lock,
+        kit_core::paths::SymlinkMessage::WithPath,
+    )?;
     let file = OpenOptions::new()
         .create(true)
         .write(true)

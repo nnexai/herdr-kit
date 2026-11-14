@@ -21,7 +21,7 @@ impl Locked {
         let data = absolute(path)?;
         directory(&data)?;
         let path = data.join("manager.lock");
-        no_links(&path)?;
+        no_links(&path, SymlinkMessage::Generic)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)

@@ -6,6 +6,7 @@ license.workspace = true
 description = "Independent anonymous OMP subscription limits collector for Herdr"
 
 [dependencies]
+kit-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

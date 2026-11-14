@@ -1,7 +1,8 @@
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, ensure};
+use kit_core::paths::{SymlinkMessage, no_links};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use super::ids::TaskId;
 
@@ -52,12 +53,12 @@ impl CoordPaths {
             &self.roles,
             &self.home,
         ] {
-            no_links(dir)?;
+            no_links(dir, SymlinkMessage::WithPath)?;
             fs::DirBuilder::new()
                 .recursive(true)
                 .mode(0o700)
                 .create(dir)?;
-            no_links(dir)?;
+            no_links(dir, SymlinkMessage::WithPath)?;
             ensure!(
                 fs::metadata(dir)?.is_dir(),
                 "expected directory: {}",
@@ -73,7 +74,7 @@ impl CoordPaths {
             &self.heartbeat,
             &self.config,
         ] {
-            no_links(file)?;
+            no_links(file, SymlinkMessage::WithPath)?;
         }
         Ok(())
     }
@@ -100,45 +101,24 @@ impl super::Ctx {
         use std::fmt::Write;
         self.paths.ensure()?;
         let dir = self.paths.dir.join("locks");
-        no_links(&dir)?;
+        no_links(&dir, SymlinkMessage::WithPath)?;
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(&dir)?;
-        no_links(&dir)?;
+        no_links(&dir, SymlinkMessage::WithPath)?;
         let mut name = String::with_capacity(terminal.len() * 2);
         for byte in terminal.as_bytes() {
             write!(&mut name, "{byte:02x}")?;
         }
         let path = dir.join(name);
-        no_links(&path)?;
+        no_links(&path, SymlinkMessage::WithPath)?;
         let file = fs::OpenOptions::new().create(true).write(true).open(path)?;
         file.try_lock_exclusive().map_err(|e| {
             super::error::not_ready("terminal_busy", format!("terminal {terminal} is busy: {e}"))
         })?;
         Ok(file)
     }
-}
-
-pub(crate) fn no_links(path: &Path) -> Result<()> {
-    ensure!(path.is_absolute(), "path must be absolute");
-    let mut part = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::RootDir | Component::Normal(_) => part.push(component.as_os_str()),
-            _ => bail!("unsafe path"),
-        }
-        match fs::symlink_metadata(&part) {
-            Ok(metadata) => ensure!(
-                !metadata.file_type().is_symlink(),
-                "symlink in managed path: {}",
-                part.display()
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
 }
 
 pub fn utc_month(ts_ms: u64) -> (i32, u32) {

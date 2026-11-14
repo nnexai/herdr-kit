@@ -10,11 +10,10 @@ use super::{
     error,
     journal::LogQuery,
     kinds::{Kind, SessionMode},
-    lifecycle,
-    paths::no_links,
-    place,
+    lifecycle, place,
 };
 use anyhow::Result;
+use kit_core::paths::{SymlinkMessage, no_links};
 use serde_json::{Value, json};
 
 const MAX_TRANSCRIPT: u64 = 8 * 1024 * 1024;
@@ -146,7 +145,7 @@ fn session_file(
     {
         return Err("unreadable");
     }
-    no_links(dir).map_err(|_| "unreadable")?;
+    no_links(dir, SymlinkMessage::WithPath).map_err(|_| "unreadable")?;
     let mut files = Vec::new();
     match fs::read_dir(dir) {
         Ok(entries) => {
@@ -175,7 +174,7 @@ fn session_file(
         return Err("ambiguous");
     }
     let file = files.remove(0);
-    no_links(&file).map_err(|_| "unreadable")?;
+    no_links(&file, SymlinkMessage::WithPath).map_err(|_| "unreadable")?;
     Ok(file)
 }
 

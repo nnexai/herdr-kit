@@ -232,6 +232,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fs2",
+ "kit-core",
  "rustix",
  "serde",
  "serde_json",
@@ -241,12 +242,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kit-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kit-manager"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "fs2",
+ "kit-core",
  "rustix",
  "serde",
  "serde_json",
@@ -261,6 +272,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fs2",
+ "kit-core",
  "rustix",
  "serde",
  "serde_json",
