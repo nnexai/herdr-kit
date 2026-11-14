@@ -81,6 +81,13 @@ fn append(ctx: &Ctx, j: &Journal, actor: Actor, kind: Kind) -> Result<()> {
         .append(&actor, ctx.now(), vec![(None, None, kind)])?;
     Ok(())
 }
+fn coordinator_space(ctx: &Ctx, id: &str) -> ResourceRef {
+    ResourceRef {
+        folder: Some(ctx.paths.home.clone()),
+        label: Some("coordinator".into()),
+        ..ResourceRef::new(ResType::Space, id)
+    }
+}
 fn space(ctx: &Ctx, j: &Journal) -> Result<(String, bool)> {
     let mut lock = j.lock()?;
     if let Some(r) = lock.state().resources.iter().find(|r| {
@@ -116,13 +123,10 @@ fn space(ctx: &Ctx, j: &Journal) -> Result<(String, bool)> {
         return Ok((id, true));
     }
     let id = ids::space_id()?;
-    let mut r = ResourceRef::new(ResType::Space, id.clone());
-    r.folder = Some(ctx.paths.home.clone());
-    r.label = Some("coordinator".into());
     lock.append(
         &Actor::Cli,
         ctx.now(),
-        vec![(None, None, Kind::ResIntent(r))],
+        vec![(None, None, Kind::ResIntent(coordinator_space(ctx, &id)))],
     )?;
     Ok((id, true))
 }
@@ -191,13 +195,11 @@ fn watcher(
             && h.release == active_release(&ctx.root)
         {
             if space_intent {
-                let mut r = ResourceRef::new(ResType::Space, sp);
-                r.folder = Some(ctx.paths.home.clone());
-                r.label = Some("coordinator".into());
-                j.lock()?.append(
-                    &Actor::Cli,
-                    ctx.now(),
-                    vec![(None, None, Kind::ResCreated(r))],
+                append(
+                    ctx,
+                    j,
+                    Actor::Cli,
+                    Kind::ResCreated(coordinator_space(ctx, sp)),
                 )?;
                 ctx.app
                     .command("space.rename", json!({"id":sp,"name":"coordinator"}))?;
@@ -249,10 +251,7 @@ fn watcher(
     )?;
     let mut items = Vec::new();
     if space_intent {
-        let mut r = ResourceRef::new(ResType::Space, sp);
-        r.folder = Some(ctx.paths.home.clone());
-        r.label = Some("coordinator".into());
-        items.push((None, None, Kind::ResCreated(r)));
+        items.push((None, None, Kind::ResCreated(coordinator_space(ctx, sp))));
     }
     let mut r = ResourceRef::new(ResType::Tab, launched.term.address.clone());
     r.space = Some(sp.into());
