@@ -101,3 +101,19 @@ test('selected Timeline actions retain details, copy and scope behavior',()=>{
   click(popup(view),'selected-copy'); assert.match(globalThis.popupCalls.at(-1)[1],/A decision/);
   click(popup(view),'selected-scope'); assert.deepEqual(view.ui.scope,{task:'w-t1'});
 });
+
+test('Needs you rows show the blocked delegate location without expanding details',t=>{
+  t.mock.method(Date,'now',()=>now);
+  const view=setup();
+  store.board={...board,workstreams:[{...workstream,tasks:[{...task,needs_you:true}]}],attention:[
+    {id:'blocked-2',kind:'task_blocked',ws:'w',task:'w-t1',since_ms:now-60000,text:'Continue cutover',options:null,seq:2}
+  ]};
+  view.ui.selectedKey='blocked-2';
+  const tree=popup(view), row=find(tree,'coord-row-blocked-2');
+  const strings=nodes(row).flatMap(node=>node.children.filter(child=>typeof child==='string'));
+  assert.ok(strings.includes('Continue cutover'));
+  assert.ok(strings.some(text=>text.includes('tab tab') && text.includes('terminal worker')));
+  assert.ok(strings.includes('1m'));
+  const taskRow=find(tree,'coord-row-w-t1');
+  assert.ok(nodes(taskRow).some(node=>node.children.includes('needs you')));
+});

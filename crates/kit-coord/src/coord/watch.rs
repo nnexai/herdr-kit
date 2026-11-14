@@ -163,6 +163,7 @@ impl Core {
                 } => entry.task.clone().map(Some),
                 Kind::CoordSessionStarted { .. }
                 | Kind::CoordTurn { .. }
+                | Kind::TaskBlockedReminder { .. }
                 | Kind::NudgeSent {
                     target: NudgeTarget::Coordinator,
                     ..

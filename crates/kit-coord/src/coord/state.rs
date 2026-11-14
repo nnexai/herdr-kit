@@ -9,7 +9,7 @@ use super::kinds::{
     TaskOutcome, Tier, WsOutcome,
 };
 
-pub const FOLD_VERSION: u32 = 5;
+pub const FOLD_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -126,6 +126,7 @@ pub struct Task {
     pub start_blocked: Option<u64>,
     pub stalled: Option<u64>,
     pub attention: Option<AttentionState>,
+    pub blocked: Option<BlockedEpisode>,
     pub start_blocked_ms: Option<u64>,
     pub stalled_ms: Option<u64>,
     pub state_since_ms: u64,
@@ -171,6 +172,17 @@ pub struct Task {
     #[serde(default)]
     pub working_ms: u64,
 }
+
+/// A durable open item, independent of the disposable inbox cursor.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockedEpisode {
+    pub seq: u64,
+    pub since_ms: u64,
+    pub text: String,
+    pub outcome: Outcome,
+    pub reminders: u32,
+    pub last_reminded_ms: u64,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResourceRec {
     pub r: ResourceRef,
@@ -209,6 +221,7 @@ pub struct CoordRec {
     pub started_ms: Option<u64>,
     pub sessions_started: u64,
     pub handoff: Option<(u64, String)>,
+    pub handoff_note: Option<String>,
     #[serde(default)]
     pub turns: u64,
     #[serde(default)]

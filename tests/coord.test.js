@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as m from '../mods/kit-coord/model.js';
 const now=1763042861000;
 const status=(x={})=>({schema_version:1,generated_at_ms:now,release:'a1b2c3d4',state:'running',enabled:true,autostart:true,degraded:[],watcher:{running:true,terminal:'t5',heartbeat_ms:now-4000,release:'a1b2c3d4'},coordinator:{terminal:'t4',status:'working',space_id:'sp',tab_id:'tb',session_started_ms:now-1000},counts:{running:3,needs_you:1,retained:2,open_workstreams:3},journal_dir:'/journal',journal_seq:42,...x});
-const task=(x={})=>({id:'ws-a-t1',number:1,title:'Task',state:'running',report:null,start_blocked:false,stalled:false,state_since_ms:now-60000,placed_ms:now-60000,started_ms:now-50000,last_event_ms:now-1000,rung:2,placement_reason:'same files',rejected_rungs:[{rung:1,reason:'exhausted'}],role:'coord-default',harness:'omp',model:'luna',summary:null,terminal:'t7',space_id:'sp',tab_id:'tb',brief_path:'/brief',result_path:null,nudges:0,...x});
+const task=(x={})=>({id:'ws-a-t1',number:1,title:'Task',state:'running',report:null,needs_you:false,start_blocked:false,stalled:false,state_since_ms:now-60000,placed_ms:now-60000,started_ms:now-50000,last_event_ms:now-1000,rung:2,placement_reason:'same files',rejected_rungs:[{rung:1,reason:'exhausted'}],role:'coord-default',harness:'omp',model:'luna',summary:null,terminal:'t7',space_id:'sp',tab_id:'tb',brief_path:'/brief',result_path:null,nudges:0,...x});
 const ws=(x={})=>({id:'ws-a',title:'Fix login',state:'open',repo:{path:'/repo',name:'repo'},delivery_target:'main',summary:null,opened_ms:now-60000,closed_ms:null,last_event_ms:now-1000,space:{id:'sp',name:'repo',owned:false},retained:null,tasks:[task()],...x});
 const att=(x={})=>({id:'q1',kind:'question',ws:'ws-a',task:'ws-a-t1',since_ms:now-1000,text:'Fix?',options:['Yes'],seq:1,...x});
 const board=(x={})=>({schema_version:1,generated_at_ms:now,journal_seq:42,workstreams:[ws()],attention:[att()],...x});
@@ -164,5 +164,21 @@ test('closed-task disclosure labels follow their count and retain navigation',()
   assert.equal(m.moveSelection(collapsed.rows,'ws-a','down'),disclosure.key);
   const expanded=m.boardModel(b,status(),{...ui,showClosed:new Set(['ws-a'])});
   assert.deepEqual(expanded.rows.filter(row=>row.kind==='task').map(row=>row.key),tasks.map(t=>t.id));
+ }
+});
+
+test('blocked episodes remain actionable in Needs you and on the compact bar',()=>{
+ const blocked=task({needs_you:true});
+ const snapshot=m.decodeBoard(json(board({workstreams:[ws({tasks:[blocked]})],attention:[att({kind:'task_blocked',text:'Continue cutover'})]})));
+ const vm=m.boardModel(snapshot,status(),{now});
+ const section=vm.sections.find(s=>s.title==='Needs you');
+ assert.equal(section.rows[0].title,'Continue cutover');
+ assert.match(section.rows[0].meta,/terminal t7 · tab tb/);
+ assert.ok(section.rows[0].details.some(d=>d.label==='Since'));
+ assert.deepEqual(vm.rows.find(r=>r.kind==='task').state,{word:'needs you',role:'blocked'});
+ for (const state of ['running','degraded','not_running']) {
+  const small=m.statusbarModel(status({state}),{now,width:80});
+  assert.equal(small.iconRole,'blocked');
+  assert.equal(m.statusbarModel(status({state,counts:{running:0,needs_you:0,retained:0}}),{now,width:80}).iconRole==='blocked',false);
  }
 });

@@ -94,6 +94,11 @@ fn turn_info(entries: &[Entry], terminal: &str, task: Option<&TaskId>) -> (u64, 
                     },
                 ))
             }
+            Kind::TaskBlockedReminder { .. }
+                if task.is_none() && current.as_deref() == Some(terminal) =>
+            {
+                candidates.push((e.seq, TurnOrigin::Inbox));
+            }
             Kind::TaskTurn { turn, .. }
                 if task.is_some() && current.as_deref() == Some(terminal) =>
             {
@@ -221,6 +226,9 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
                 },
             );
         }
+        if t.blocked.is_some() || attention == Some(AttentionState::Blocked) {
+            continue;
+        }
         if term.turn == 0
             && term.word() != Some("working")
             && t.start_blocked.is_none()
@@ -323,6 +331,24 @@ pub fn evaluate(state: &State, facts: &Facts, cfg: &Config, now_ms: u64) -> Vec<
                             text,
                             upto_seq: upto,
                         },
+                        ws: None,
+                        task: None,
+                    });
+                } else if let Some((task, item)) = state.tasks.values().filter_map(|t| {
+                    let item = t.blocked.as_ref()?;
+                    let waiting_on_person = state.questions.values().any(|q| {
+                        q.answered.is_none() && q.task.as_ref() == Some(&t.id) && q.asked_seq >= item.seq
+                    });
+                    let interval = cfg.blocked_reminder_secs.max(1)
+                        .saturating_mul(1u64 << item.reminders.min(63))
+                        .min(cfg.blocked_reminder_cap_secs.max(1));
+                    (!waiting_on_person && elapsed(now_ms, Some(item.last_reminded_ms), interval))
+                        .then_some((t, item))
+                }).min_by_key(|(t, item)| (item.last_reminded_ms, &t.id)) {
+                    out.push(Action::Send {
+                        terminal: address.into(),
+                        text: format!("Blocked delegate {} still needs attention: {}. Run kit board; ask the person with kit ask --task {} if needed.", task.id.as_str(), item.text, task.id.as_str()),
+                        record: Kind::TaskBlockedReminder { task: task.id.clone(), episode_seq: item.seq },
                         ws: None,
                         task: None,
                     });

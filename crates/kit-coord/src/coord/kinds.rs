@@ -297,6 +297,8 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         msg: Option<String>,
     },
+    #[serde(rename = "task.blocked_reminder")]
+    TaskBlockedReminder { task: TaskId, episode_seq: u64 },
     #[serde(rename = "task.stalled")]
     TaskStalled { silent_secs: u64, nudge_seq: u64 },
     #[serde(rename = "task.dormant")]
@@ -470,6 +472,7 @@ impl Kind {
             Self::TaskNote { .. } => "task.note",
             Self::TaskStartBlocked { .. } => "task.start_blocked",
             Self::TaskAttention { .. } => "task.attention",
+            Self::TaskBlockedReminder { .. } => "task.blocked_reminder",
             Self::TaskStalled { .. } => "task.stalled",
             Self::TaskDormant { .. } => "task.dormant",
             Self::TaskClosed { .. } => "task.closed",

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep blocked/question delegates in a durable Needs you item across inbox
+  acknowledgements and coordinator handoffs, with linked-question resolution,
+  restart-safe 10-minute-to-4-hour coordinator reminder backoff and a persistent
+  compact-bar attention icon. Include the unconsumed handoff note on startup
+  and remind coordinators to arrange person-only lifecycle steps before briefing.
 - Remove the rollback command, prior-selection receipt fields, obsolete
   activation fallback and dead coordinator helpers; stop hiding dead-code warnings.
 - Remove superseded extraction/migration plans and duplicated role/fixture docs.

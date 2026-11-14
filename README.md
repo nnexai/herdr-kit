@@ -219,6 +219,36 @@ folder name in `keys.json`, for example:
 `"global": { "ctrl-alt-n": "kit-coord-<revision>.restart" }`.
 Update that binding when the installed revision changes.
 
+### Blocked delegates
+
+The Board and each new coordinator session's startup read keep a **Needs you**
+item for every blocked/question episode, including its message, tab, terminal
+and start time. Acknowledging the inbox or handing off does not dismiss it;
+blocked tasks are not counted or displayed as simply running. The existing
+80px coordinator bar icon stays in its attention color while anything needs
+you, even when compacted to an icon; the bottom-bar layout is unchanged.
+
+These open items are derived directly from journal events, not a second queue.
+They resolve on attention clear, a subsequent non-blocked report, task close,
+or the coordinator's answer (`task send` or an answer to its linked question).
+Progress updates alone do not resolve a blocker. A repeated blocked signal
+updates the same episode rather than adding another item.
+
+If the coordinator has not handled an episode, the watcher reminds it after
+10 minutes, then after gaps of 20, 40, 80 and 160 minutes, capped at 4 hours.
+Only successful deliveries advance this journal-backed schedule; restarts
+do not reset it and a long absence produces no catch-up burst.
+Use `kit-coord ask --task TASK "..."` to queue the person-facing question:
+an open question linked to that task pauses its reminders, and its answer
+resolves the item. Clearing the blocker also closes that episode's linked
+questions automatically. There are no repeating person-facing notifications.
+The existing configuration keys `blocked_reminder_secs` (600) and
+`blocked_reminder_cap_secs` (14400) control the initial gap and cap.
+
+The latest handoff note is included at the beginning of the next startup
+read and consumed when that coordinator session starts successfully.
+
+
 ### Mission Log
 
 The separate `kit-coord-ui` mod adds **Mission log** to the sidebar. It opens

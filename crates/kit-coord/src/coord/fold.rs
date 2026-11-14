@@ -23,6 +23,22 @@ fn counter(value: &str, counter: &mut u64) {
         *counter = (*counter).max(n.saturating_add(1));
     }
 }
+
+fn block(t: &mut Task, e: &Entry, text: String, outcome: super::kinds::Outcome) {
+    if let Some(item) = &mut t.blocked {
+        item.text = text;
+        item.outcome = outcome;
+    } else {
+        t.blocked = Some(BlockedEpisode {
+            seq: e.seq,
+            since_ms: e.ts_ms,
+            text,
+            outcome,
+            reminders: 0,
+            last_reminded_ms: e.ts_ms,
+        });
+    }
+}
 #[cfg(test)]
 pub fn fold<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> State {
     let mut state = State::default();
@@ -48,6 +64,10 @@ pub fn apply(s: &mut State, e: &Entry) {
     if let Some(task) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) {
         task.last_event_ms = e.ts_ms;
     }
+    let prior_episode = e.task.as_ref()
+        .and_then(|id| s.tasks.get(id))
+        .and_then(|t| t.blocked.as_ref())
+        .map(|item| item.seq);
     match kind {
         Kind::WsOpened {
             title,
@@ -183,6 +203,7 @@ pub fn apply(s: &mut State, e: &Entry) {
                     start_blocked: None,
                     stalled: None,
                     attention: None,
+                    blocked: None,
                     start_blocked_ms: None,
                     stalled_ms: None,
                     state_since_ms: e.ts_ms,
@@ -252,6 +273,7 @@ pub fn apply(s: &mut State, e: &Entry) {
             t.start_blocked_ms = None;
             t.stalled_ms = None;
             t.attention = None;
+            t.blocked = None;
             t.last_activity_seq = e.seq;
             if let Some(r) = s
                 .resources
@@ -303,6 +325,7 @@ pub fn apply(s: &mut State, e: &Entry) {
             t.state = TaskState::Running;
             t.state_since_ms = e.ts_ms;
             t.report = None;
+            t.blocked = None;
             t.stalled = None;
             t.stalled_ms = None;
             t.last_activity_seq = e.seq;
@@ -317,7 +340,7 @@ pub fn apply(s: &mut State, e: &Entry) {
                 anomaly(s, e, "unknown task");
                 return;
             };
-            if t.state != TaskState::Running {
+            if !matches!(t.state, TaskState::Running | TaskState::Reported) {
                 anomaly(s, e, "invalid task report");
                 return;
             }
@@ -331,6 +354,12 @@ pub fn apply(s: &mut State, e: &Entry) {
             t.start_blocked_ms = None;
             t.stalled_ms = None;
             t.reported_seq = Some(e.seq);
+            t.attention = None;
+            if matches!(outcome, super::kinds::Outcome::Blocked | super::kinds::Outcome::Question) {
+                block(t, e, t.summary.clone().unwrap_or_default(), outcome);
+            } else {
+                t.blocked = None;
+            }
         }
         Kind::TaskProgress { summary } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
@@ -371,6 +400,8 @@ pub fn apply(s: &mut State, e: &Entry) {
             t.state = TaskState::Closed;
             t.state_since_ms = e.ts_ms;
             t.outcome = outcome;
+            t.blocked = None;
+            t.attention = None;
         }
         Kind::TaskTurn {
             origin, working_ms, ..
@@ -440,7 +471,7 @@ pub fn apply(s: &mut State, e: &Entry) {
                 t.stalled_ms = Some(e.ts_ms);
             }
         }
-        Kind::TaskAttention { state, .. } => {
+        Kind::TaskAttention { state, msg } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
                 anomaly(s, e, "unknown task");
                 return;
@@ -453,8 +484,21 @@ pub fn apply(s: &mut State, e: &Entry) {
                 t.attention = None;
                 t.start_blocked = None;
                 t.start_blocked_ms = None;
+                t.blocked = None;
             } else {
                 t.attention = Some(state);
+                if state == AttentionState::Blocked {
+                    block(t, e, msg.unwrap_or_else(|| "Delegate is waiting on the person.".into()), super::kinds::Outcome::Blocked);
+                }
+            }
+        }
+        Kind::TaskBlockedReminder { task, episode_seq } => {
+            if let Some(item) = s.tasks.get_mut(&task)
+                .and_then(|t| t.blocked.as_mut())
+                .filter(|item| item.seq == episode_seq)
+            {
+                item.reminders = item.reminders.saturating_add(1);
+                item.last_reminded_ms = e.ts_ms;
             }
         }
         Kind::TaskNote { .. } => {
@@ -643,6 +687,7 @@ pub fn apply(s: &mut State, e: &Entry) {
             s.coordinator.started_ms = Some(e.ts_ms);
             s.coordinator.sessions_started += 1;
             s.coordinator.handoff = None;
+            s.coordinator.handoff_note = None;
         }
         Kind::CoordSessionEnded { terminal, .. } => {
             if s.coordinator.terminal.as_deref() == Some(&terminal) {
@@ -651,8 +696,11 @@ pub fn apply(s: &mut State, e: &Entry) {
                 anomaly(s, e, "unknown coordinator session");
             }
         }
-        Kind::CoordHandoffRequested { by, .. } => {
+        Kind::CoordHandoffRequested { by, note } => {
             s.coordinator.handoff = Some((e.seq, by));
+            if note.is_some() {
+                s.coordinator.handoff_note = note;
+            }
         }
         Kind::Decision {
             what,
@@ -707,6 +755,11 @@ pub fn apply(s: &mut State, e: &Entry) {
                 seq: e.seq,
                 ts_ms: e.ts_ms,
             });
+            if let Some(t) = q.task.as_ref().and_then(|id| s.tasks.get_mut(id)) {
+                if t.blocked.as_ref().is_some_and(|item| item.seq <= q.asked_seq) {
+                    t.blocked = None;
+                }
+            }
         }
         Kind::InstructionSet { id, text } => {
             counter(&id, &mut s.counters.instruction);
@@ -743,6 +796,19 @@ pub fn apply(s: &mut State, e: &Entry) {
         | Kind::Correction { .. }
         | Kind::CoordSent { .. }
         | Kind::Unknown => {}
+    }
+    if let Some((id, episode_seq)) = e.task.as_ref().zip(prior_episode) {
+        if s.tasks.get(id).is_some_and(|t| t.blocked.is_none()) {
+            for q in s.questions.values_mut().filter(|q| {
+                q.task.as_ref() == Some(id) && q.asked_seq >= episode_seq && q.answered.is_none()
+            }) {
+                q.answered = Some(Answer {
+                    text: "Resolved by delegate state change.".into(),
+                    seq: e.seq,
+                    ts_ms: e.ts_ms,
+                });
+            }
+        }
     }
 }
 

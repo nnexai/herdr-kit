@@ -79,6 +79,7 @@ Write each brief to a file and pass it with `--brief <file>`. A brief states
 the goal, the delivery target, the scope (repository, files, what not to
 touch), the acceptance check, and where earlier results are. The system adds
 the role instructions and the reporting contract; do not repeat them.
+Kit lifecycle actions on the coordinator are person-only for delegates; arrange person-only steps with the person before briefing.
 
 Record the person's original words with `--request` when opening a workstream
 or starting a task. For reactions, pass `--cause <journal-seq>`. Link related

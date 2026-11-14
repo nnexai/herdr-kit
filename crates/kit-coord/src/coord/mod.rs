@@ -22,6 +22,8 @@ pub mod state;
 pub mod stats;
 pub mod views;
 pub mod watch;
+#[cfg(test)]
+mod blocked_tests;
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};

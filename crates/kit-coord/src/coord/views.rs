@@ -33,6 +33,9 @@ pub struct Counts {
 pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention> {
     let mut items = Vec::new();
     for (qid, q) in state.questions.iter().filter(|(_, q)| q.answered.is_none()) {
+        if q.task.as_ref().and_then(|id| state.tasks.get(id)).and_then(|t| t.blocked.as_ref()).is_some_and(|item| q.asked_seq >= item.seq) {
+            continue;
+        }
         items.push(Attention {
             id: format!("q-{}", q.asked_seq),
             kind: "question".into(),
@@ -46,25 +49,22 @@ pub fn attention(state: &State, coordinator_word: Option<&str>) -> Vec<Attention
         });
     }
     for t in state.tasks.values() {
-        if t.state == TaskState::Reported {
-            let kind = match t.report {
-                Some(Outcome::Question) => Some("task_question"),
-                Some(Outcome::Blocked) => Some("task_blocked"),
-                _ => None,
-            };
-            if let (Some(kind), Some(seq)) = (kind, t.reported_seq) {
-                items.push(Attention {
-                    id: format!("r-{seq}"),
-                    kind: kind.into(),
-                    ws: Some(t.ws.clone()),
-                    task: Some(t.id.clone()),
-                    since_ms: t.state_since_ms,
-                    text: t.summary.clone().unwrap_or_default(),
-                    options: None,
-                    seq: Some(seq),
-                    qid: None,
-                });
-            }
+        if let Some(item) = &t.blocked {
+            let question = state.questions.iter().find(|(_, q)| {
+                q.answered.is_none() && q.task.as_ref() == Some(&t.id) && q.asked_seq >= item.seq
+            });
+            items.push(Attention {
+                id: format!("blocked-{}", item.seq),
+                kind: if item.outcome == Outcome::Question { "task_question" } else { "task_blocked" }.into(),
+                ws: Some(t.ws.clone()),
+                task: Some(t.id.clone()),
+                since_ms: item.since_ms,
+                text: item.text.clone(),
+                options: question.and_then(|(_, q)| q.options.clone()),
+                seq: Some(item.seq),
+                qid: question.map(|(id, _)| id.clone()),
+            });
+            continue;
         }
         if t.state == TaskState::Running || t.state == TaskState::Placed {
             for (seq, since, prefix, kind, text) in [
@@ -124,8 +124,8 @@ pub fn counts(state: &State, attention_len: usize) -> Counts {
             .tasks
             .values()
             .filter(|t| {
-                t.state == TaskState::Placed
-                    || (t.state == TaskState::Running && t.stalled.is_none())
+                t.blocked.is_none() && (t.state == TaskState::Placed
+                    || (t.state == TaskState::Running && t.stalled.is_none()))
             })
             .count(),
         needs_you: attention_len,
@@ -146,6 +146,7 @@ fn task_json(t: &Task) -> Value {
     json!({
         "id":t.id, "number":t.n, "title":t.title, "state":t.state,
         "report": if t.state == TaskState::Reported { t.report } else { None },
+        "needs_you": t.blocked.is_some(),
         "start_blocked": matches!(t.state, TaskState::Running | TaskState::Placed) && t.start_blocked.is_some(),
         "stalled": t.state == TaskState::Running && t.stalled.is_some(),
         "state_since_ms":t.state_since_ms, "placed_ms":t.placed_ms, "started_ms":t.started_ms,
@@ -185,6 +186,23 @@ pub fn board_text(state: &State, now_ms: u64, all: bool) -> String {
         "# Coordinator board\n\nJournal sequence: {} (at {now_ms})\n",
         state.last_seq
     );
+    out.push_str("\n## Needs you\n");
+    let items = attention(state, None);
+    if items.is_empty() {
+        out.push_str("\nNone\n");
+    }
+    for item in items {
+        let task = item.task.as_ref().and_then(|id| state.tasks.get(id));
+        out.push_str(&format!(
+            "- {}: {} — tab {}, terminal {}, since {} ({} min ago)\n",
+            item.task.as_ref().map(|id| id.as_str()).unwrap_or("Coordinator"),
+            item.text,
+            task.and_then(|t| t.tab.as_deref()).unwrap_or("unknown"),
+            task.and_then(|t| t.terminal.as_deref()).unwrap_or("unavailable"),
+            item.since_ms,
+            now_ms.saturating_sub(item.since_ms) / 60_000,
+        ));
+    }
     for w in state
         .workstreams
         .values()
@@ -198,15 +216,13 @@ pub fn board_text(state: &State, now_ms: u64, all: bool) -> String {
             out.push_str(&format!("Retained: {}\n", r.reason));
         }
         for t in w.tasks.iter().filter_map(|id| state.tasks.get(id)) {
-            out.push_str(&format!("- {}: {} ({:?})", t.id.as_str(), t.title, t.state));
+            let label = if t.blocked.is_some() { "Needs you".to_owned() } else { format!("{:?}", t.state) };
+            out.push_str(&format!("- {}: {} ({label})", t.id.as_str(), t.title));
             if let Some(summary) = &t.summary {
                 out.push_str(&format!(" — {summary}"));
             }
             out.push('\n');
         }
-    }
-    for item in attention(state, None) {
-        out.push_str(&format!("\n- Needs attention: {}\n", item.text));
     }
     out
 }
@@ -294,7 +310,11 @@ pub fn explain_text(v: &Value) -> String {
 }
 
 pub fn startup_read(state: &State, waking: &[Entry], now_ms: u64) -> String {
-    let mut out = board_text(state, now_ms, false);
+    let mut out = String::new();
+    if let Some(note) = &state.coordinator.handoff_note {
+        out.push_str(&format!("## Handoff note\n\n{note}\n\n"));
+    }
+    out.push_str(&board_text(state, now_ms, false));
     out.push_str(&format!(
         "\n## Inbox\n\n{} waking entries pending\n",
         state.waking.len()
@@ -374,26 +394,9 @@ mod tests {
         );
         assert_eq!(b["attention"][0]["kind"], "task_question");
         let id = TaskId::parse("ws-k3m2ab-t1").unwrap();
-        for outcome in [
-            Some(Outcome::Question),
-            Some(Outcome::Blocked),
-            Some(Outcome::Done),
-            None,
-        ] {
-            let t = s.tasks.get_mut(&id).unwrap();
-            t.report = outcome;
-            let a = attention(&s, None);
-            assert_eq!(counts(&s, a.len()).needs_you, a.len());
-            assert_eq!(
-                a.len(),
-                usize::from(matches!(
-                    outcome,
-                    Some(Outcome::Question | Outcome::Blocked)
-                ))
-            );
-        }
         let t = s.tasks.get_mut(&id).unwrap();
         t.state = TaskState::Running;
+        t.blocked = None;
         t.start_blocked = Some(30);
         t.start_blocked_ms = Some(300);
         t.stalled = Some(31);
@@ -426,7 +429,7 @@ mod tests {
                 .len(),
             1
         );
-        assert!(!board_text(&s, 0, false).contains("ws-k3m2ab"));
+        assert!(!board_text(&s, 0, false).contains("## ws-k3m2ab"));
         assert!(board_text(&s, 0, true).contains("ws-k3m2ab"));
     }
     #[test]

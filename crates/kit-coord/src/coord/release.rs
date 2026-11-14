@@ -587,6 +587,7 @@ mod tests {
                 start_blocked_ms: None,
                 stalled_ms: None,
                 attention: None,
+                blocked: None,
                 state_since_ms: 0,
                 placed_ms: 0,
                 started_ms: None,

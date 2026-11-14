@@ -330,6 +330,38 @@ output is readable with `hc read`, and it is visible like any other terminal.
 - It writes a heartbeat. `kit-coord status` reports a stale heartbeat, and the status bar shows it.
 - After a reboot, hc may restore kept terminals as shells instead of re-running programs, so `kit-coord up` repairs the coordinator and watcher. The tested private core restart preserved live programs and `kit-coord up` correctly made no duplicates. See "Autostart" below.
 
+### Durable person-attention episodes
+
+`task.attention blocked` and delegate `report blocked|question` open one
+journal-derived task item, independent of the inbox acknowledgement cursor.
+Repeated blocked signals update that episode's text without resetting its
+start time or reminder history. Board/startup **Needs you** includes its
+message, task, tab, terminal and since-time. Board task JSON exposes
+`needs_you`; the task's lifecycle `state` remains separate. The existing
+status count and compact bar icon retain the attention indication.
+
+Attention clear, a non-blocked report, task close, coordinator `task send`,
+or answering a question linked to the episode resolves the open item.
+Progress does not imply resolution. Questions linked to that episode also
+close when a task-state change resolves it. A later blocked episode gets
+its own start time and schedule.
+
+The first coordinator reminder is due after 600 seconds. Subsequent gaps
+double (1200, 2400, 4800, 9600), capped at 14400 seconds. This starts slowly
+enough for normal coordinator handling and becomes quiet during long absences.
+`task.blocked_reminder` records a successful coordinator delivery, including
+task and episode sequence. Its count and timestamp are replayed from the
+journal; computing a send or failed delivery never consumes the interval.
+An overdue episode is delivered once, not once per missed interval.
+Reminder turns use the normal coordinator terminal lock/readiness checks.
+They do not create a new inbox item or send a push alert to the person.
+
+`ask --task TASK` (or `decide --tier ask --task TASK`) links the explicit
+person-facing question; while it is open, the episode needs no coordinator
+reminder. The task item and its linked question count only once in Needs you.
+Person attention is a persistent, non-repeating bar indication, not a ping.
+
+
 ### Autostart and the status icon
 
 - Autostart is a setting, on by default once the coordinator has been enabled with a first `kit-coord up`. `kit-coord down` turns it off.
@@ -361,7 +393,7 @@ coordinator space, the watcher, the coordinator agent.
 - The coordinator lives in its own owned space named `coordinator`, in `<data-dir>/coord/home`.
 - Its terminal is named `coordinator`, so `hc send coordinator "..."` always reaches it, and it is pinned to the top of the agents list.
 - Tabs in that space: `coordinator` (the agent) and `watcher` (the watcher's output).
-- Its first message is the `coord-main` role's instructions plus a startup read produced by `kit-coord board`: open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads.
+- Its first message is the `coord-main` role's instructions plus a startup read: the latest unconsumed handoff note, Needs you, open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads and questions. Starting the replacement consumes the note, not the blocked items.
 
 ### Restart
 
@@ -502,6 +534,8 @@ and watch the journal, which is the cheapest way to find design errors.
 | `nudge_delegate_secs` | 60 | Time after a turn end without a report |
 | `stall_secs` | 300 | Time after the delegate nudge before `task.stalled` |
 | `start_blocked_secs` | 30 | Time after launch without `working` |
+| `blocked_reminder_secs` | 600 | Initial blocked-episode coordinator reminder gap |
+| `blocked_reminder_cap_secs` | 14400 | Maximum exponential reminder gap (4 hours) |
 | `reconcile_secs` | 120 | Slow tick |
 | `idle_restart_hours` | 8 | Idle gap after which the coordinator session is replaced |
 | `worktree_root` | `~/.herdr/worktrees` | Where owned worktrees go |

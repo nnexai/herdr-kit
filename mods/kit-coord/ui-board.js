@@ -141,9 +141,7 @@ function boardRow(row, view, t, first, last) {
       if (row.source.summary) meta.child(div().flex_1().min_w(0).truncate().tooltip(clip(row.source.summary,600)).child(clip(oneLine(row.source.summary),240)));
       else meta.child(div().flex_1());
     } else {
-      const context = row.kind === 'attention'
-        ? [view.store.board?.workstreams.find(ws => ws.id === row.source.ws)?.title, row.source.kind === 'task_question' ? 'Delegate question' : row.source.kind === 'question' ? 'Coordinator question' : null].filter(Boolean).join('  /  ')
-        : row.meta;
+      const context = row.meta;
       meta.child(div().flex_1().min_w(0).truncate().tooltip(clip(row.meta || '',600)).child(clip(oneLine(context),240)));
     }
     if (selected && !narrow) meta.child(rowActions(row,view,t));
