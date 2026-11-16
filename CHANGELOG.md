@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Project all open questions from the coordinator fold for Mission Log, including
+  questions sharing a blocked episode, and close their indicators on any resolution.
 - Collect unused generations containing Herdr-generated `jsconfig.json` inside
   nested mod roots, using the same exact-name exception as per-mod receipts.
   Other unreceipted files still prevent collection.

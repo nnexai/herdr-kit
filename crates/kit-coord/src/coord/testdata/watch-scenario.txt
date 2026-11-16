@@ -126,6 +126,7 @@ board: {
   ],
   "generated_at_ms": 1800000520000,
   "journal_seq": 46,
+  "open_questions": [],
   "schema_version": 1,
   "workstreams": [
     {
@@ -391,6 +392,20 @@ board: {
   ],
   "generated_at_ms": 1800009000000,
   "journal_seq": 49,
+  "open_questions": [
+    {
+      "options": [
+        "staging",
+        "production"
+      ],
+      "qid": "q1",
+      "seq": 49,
+      "since_ms": 1800002400000,
+      "task": "ws-aaaaaa-t1",
+      "text": "Which credentials?",
+      "ws": "ws-aaaaaa"
+    }
+  ],
   "schema_version": 1,
   "workstreams": [
     {
@@ -788,6 +803,7 @@ board: {
   "attention": [],
   "generated_at_ms": 1800009800000,
   "journal_seq": 112,
+  "open_questions": [],
   "schema_version": 1,
   "workstreams": [
     {
@@ -1285,6 +1301,7 @@ board: {
   "attention": [],
   "generated_at_ms": 1800010520000,
   "journal_seq": 134,
+  "open_questions": [],
   "schema_version": 1,
   "workstreams": [
     {
@@ -1622,6 +1639,7 @@ board: {
   "attention": [],
   "generated_at_ms": 1800039801000,
   "journal_seq": 156,
+  "open_questions": [],
   "schema_version": 1,
   "workstreams": [
     {

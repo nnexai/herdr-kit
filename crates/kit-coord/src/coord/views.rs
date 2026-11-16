@@ -189,7 +189,10 @@ fn ws_json(state: &State, w: &Ws) -> Value {
 pub fn board(state: &State, coordinator_word: Option<&str>, now_ms: u64, all: bool) -> Value {
     json!({"schema_version":1,"generated_at_ms":now_ms,"journal_seq":state.last_seq,
         "workstreams":state.workstreams.values().filter(|w| all || w.state != WsState::Cleaned).map(|w| ws_json(state,w)).collect::<Vec<_>>(),
-        "attention":attention(state,coordinator_word)})
+        "attention":attention(state,coordinator_word),
+        "open_questions":state.questions.iter().filter(|(_,q)| q.answered.is_none()).map(|(qid,q)|
+            json!({"qid":qid,"text":q.text,"options":q.options,"ws":q.ws,"task":q.task,
+                "seq":q.asked_seq,"since_ms":q.asked_ms})).collect::<Vec<_>>()})
 }
 
 pub fn board_text(state: &State, now_ms: u64, all: bool) -> String {

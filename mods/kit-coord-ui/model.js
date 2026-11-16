@@ -4,7 +4,7 @@ export function decode(text, kind) {
   if (!value || value.schema_version !== 1) throw new Error(`Unsupported coordinator ${kind} format`);
   if (kind === 'log' && !Array.isArray(value.entries)) throw new Error('Invalid coordinator journal');
   if (kind === 'conversation' && !Array.isArray(value.messages)) throw new Error('Invalid coordinator conversation');
-  if (kind === 'board' && !Array.isArray(value.workstreams)) throw new Error('Invalid coordinator board');
+  if (kind === 'board' && (!Array.isArray(value.workstreams) || !Array.isArray(value.open_questions))) throw new Error('Invalid coordinator board');
   return value;
 }
 export function clock(ms) {
@@ -28,7 +28,7 @@ export function focusAction(link) {
   return [];
 }
 export function quickReply(row, option) {
-  return row.kind === 'question' && !row.answer && row.options.includes(option)
+  return row.kind === 'question' && !row.closed && row.options.includes(option)
     ? {text:option, question:{id:row.questionId, time:clock(row.ts_ms)}} : null;
 }
 export function sayArgs(value, question) {
@@ -38,6 +38,7 @@ export function sayArgs(value, question) {
 export function railRows(log, conversation, board) {
   const entries = log?.entries || [], rows = [];
   const answers = new Map(entries.filter(e => e.kind === 'question.answered').map(e => [e.data.qid, e.data.text]));
+  const openQuestions = new Map((board?.open_questions || []).map(q => [q.qid,q]));
   const workstreams = new Map((board?.workstreams || []).map(ws => [ws.id, ws]));
   const tasks = new Map((board?.workstreams || []).flatMap(ws => (ws.tasks || []).map(task => [task.id, task])));
   for (const message of conversation?.messages || []) {
@@ -53,15 +54,15 @@ export function railRows(log, conversation, board) {
     else if (entry.kind === 'task.progress') Object.assign(row,{kind:'progress',label:'Progress',text:text(d.summary)});
     else if (entry.kind === 'decision') Object.assign(row,{kind:'decision',label:'Decision noted',text:text(d.what),detail:text(d.why)});
     else if (entry.kind === 'instruction.set' && d.text) Object.assign(row,{kind:'decision',label:'Instruction',text:text(d.text)});
-    else if (entry.kind === 'question.asked') Object.assign(row,{kind:'question',label:'Question',text:text(d.text),questionId:d.qid,options:(d.options || []).filter(option => typeof option === 'string'),answer:answers.get(d.qid)});
+    else if (entry.kind === 'question.asked') Object.assign(row,{kind:'question',label:'Question',text:text(d.text),questionId:d.qid,options:(d.options || []).filter(option => typeof option === 'string'),answer:answers.get(d.qid),closed:!openQuestions.has(d.qid)});
     else if (entry.kind === 'coord.session_started') Object.assign(row,{kind:'neutral',label:'Session',text:'Coordinator session started',detail:d.reason,links:[]});
     else if (entry.kind === 'coord.session_ended') Object.assign(row,{kind:'neutral',label:'Session',text:'Coordinator session ended',detail:d.reason,links:[]});
     else continue;
     rows.push(row);
   }
-  // Pending questions outlive the bounded journal page. Board carries their real IDs.
-  for (const item of board?.attention || []) {
-    if (item.kind !== 'question' || !item.qid || rows.some(row => row.questionId === item.qid)) continue;
+  // Open questions can outlive the bounded journal page.
+  for (const item of openQuestions.values()) {
+    if (!item.qid || rows.some(row => row.questionId === item.qid)) continue;
     const ws = workstreams.get(item.ws), task = tasks.get(item.task);
     rows.push({key:`journal:${item.seq}`,seq:item.seq,ts_ms:item.since_ms,kind:'question',label:'Question',
       text:item.text,questionId:item.qid,options:item.options || [],scope:item.task || item.ws || '',links:linksFor(task,ws)});
@@ -74,7 +75,7 @@ export function railModel({status, log, conversation, board, error = '', now = D
   const working = available && conversation?.coordinator?.status === 'working';
   const canSend = available && !error && ['idle','done'].includes(conversation?.coordinator?.status);
   const since = conversation?.coordinator?.working_since_ms;
-  const questions = rows.filter(row => row.kind === 'question' && row.questionId && !row.answer);
+  const questions = rows.filter(row => row.kind === 'question' && row.questionId && !row.closed);
   let head = !status ? 'Reading coordinator…' : !status.enabled ? 'Coordinator is off' : !available ? 'Coordinator is not running' : working ? 'Coordinator is working' : 'Coordinator idle · listening';
   let step = working ? conversation?.coordinator?.step?.label || 'Working on the current turn' : questions.length ? `${questions.length} ${questions.length === 1 ? 'question is' : 'questions are'} waiting for your answer` : 'Ready when you are';
   if (error) { head = 'Coordinator unavailable'; step = error; }

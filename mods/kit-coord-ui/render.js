@@ -29,7 +29,7 @@ function bead(row, width, t, view, color) {
   rail.child(div().absolute().left(width/2-1).top(15).bottom(-27).w(2).bg(tint(color,'80')));
   rail.child(div().absolute().left(width/2+7).top(15).w(width/2-7).h(1).bg(tint(color,'80')));
   if (row.kind === 'person') return rail.child(svg(`mods/${MOD_NAME}/person.svg`).absolute().left(width/2-7).top(8).size(14).text_color(color));
-  const big = row.kind === 'reply', question = row.kind === 'question' && !row.answer;
+  const big = row.kind === 'reply', question = row.kind === 'question' && !row.closed;
   const size = big ? 14 : question ? 12 : 8;
   if (big || question) {
     const halo = div().absolute().left(width/2-(size+10)/2).top(15-(size+10)/2).size(size+10).rounded(20)
@@ -51,13 +51,13 @@ function chip(view, row, link, index, t) {
       .child(mono(div().min_w(0).truncate().text_color(t.accent).child(link.label))));
 }
 function entry(view, row, t) {
-  const narrow = view.width < 520, color = row.answer ? t.done : colors(t)[row.kind];
-  const reply = row.kind === 'reply', question = row.kind === 'question' && !row.answer;
+  const narrow = view.width < 520, color = row.closed ? t.done : colors(t)[row.kind];
+  const reply = row.kind === 'reply', question = row.kind === 'question' && !row.closed;
   const card = v_flex().min_w(0).flex_1().gap(3).px(reply || question ? 12 : 10).pt(6).pb(reply || question ? 10 : 7)
     .rounded(6).border(1).border_color(question ? tint(color,'70') : reply ? t.selected : tint(t.border,'55'))
     .bg(question ? tint(color,'12') : reply ? t.raised : row.kind === 'person' ? tint(t.foreground,'0c') : t.canvas);
   const header = h_flex().min_w(0).gap(8).items_center()
-    .child(mono(div().flex_shrink_0().text_size(10).font_semibold().text_color(color).child(row.answer ? 'ANSWERED' : row.label.toUpperCase())));
+    .child(mono(div().flex_shrink_0().text_size(10).font_semibold().text_color(color).child(row.answer ? 'ANSWERED' : row.closed ? 'RESOLVED' : row.label.toUpperCase())));
   if (row.scope) header.child(mono(div().min_w(0).flex_1().text_right().truncate().text_size(10.5).text_color(t.muted).child(row.scope)));
   card.child(header);
   if (row.answer) card.child(div().text_size(12).text_color(t.muted).child(`↳ you answered: ${row.answer}`));

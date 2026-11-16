@@ -18,20 +18,33 @@ test('conversation text and key journal events interleave chronologically withou
   assert.equal(rows[3].text,'Delivered');
 });
 test('question chips fill a draft; only a confirmed journal answer collapses the question',() => {
-  const before = railRows({entries:[question]},conversation,null).find(row => row.kind === 'question');
+  const before = railRows({entries:[question]},conversation,{workstreams:[],open_questions:[{qid:'q1'}]}).find(row => row.kind === 'question');
   const selection = quickReply(before,'Queue');
   assert.deepEqual(sayArgs(selection.text,selection.question),['say','--text','Queue','--question','q1']);
   assert.equal(before.answer,undefined);
   assert.equal(quickReply(before,'Not an option'),null);
-  const after = railRows({entries:[question,entry(6,'question.answered',{qid:'q1',text:'Queue'})]},conversation,null).find(row => row.kind === 'question');
+  const after = railRows({entries:[question,entry(6,'question.answered',{qid:'q1',text:'Queue'})]},conversation,{workstreams:[],open_questions:[]}).find(row => row.kind === 'question');
   assert.equal(after.answer,'Queue'); assert.equal(quickReply(after,'Queue'),null);
 });
 test('pending questions outside the journal page remain answerable from Board',() => {
-  const board = {workstreams:[],attention:[{kind:'question',qid:'old-q',seq:2,since_ms:100,text:'Still pending?',options:['Yes']}]};
+  const board = {workstreams:[],open_questions:[{qid:'old-q',seq:2,since_ms:100,text:'Still pending?',options:['Yes']}]};
   const vm = railModel({status,conversation,log:{entries:[]},board});
   assert.equal(vm.questions[0].questionId,'old-q');
   assert.deepEqual(quickReply(vm.questions[0],'Yes').text,'Yes');
   assert.equal(vm.rows[0].kind,'question');
+});
+test('only the complete open-question projection controls waiting and replies',() => {
+  const second = entry(4,'question.asked',{qid:'q2',text:'Another?',options:['Yes']});
+  const board = {workstreams:[],attention:[],open_questions:[{qid:'q1'},{qid:'q2'}]};
+  const log = {entries:[question,second]};
+  let vm = railModel({status,conversation,log,board});
+  assert.deepEqual(vm.questions.map(q => q.questionId),['q1','q2']);
+  vm = railModel({status,conversation,log,board:{...board,open_questions:[{qid:'q2'}]}});
+  assert.deepEqual(vm.questions.map(q => q.questionId),['q2']);
+  assert.equal(quickReply(vm.rows.find(q => q.questionId === 'q1'),'Queue'),null);
+  vm = railModel({status,conversation,log,board:{...board,open_questions:[]}});
+  assert.equal(vm.questions.length,0);
+  assert.equal(vm.step,'Ready when you are');
 });
 test('working state and elapsed derive only from the real coordinator turn',() => {
   const working = {...conversation,coordinator:{status:'working',working_since_ms:10000,step:{tool:'bash',label:'coord task start'}}};

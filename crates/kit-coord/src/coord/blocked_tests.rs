@@ -225,6 +225,7 @@ fn blocked_item_closes_on_clear_answer_send_close_or_later_report() {
         let s = j.read_state().unwrap();
         assert!(s.tasks[&id].blocked.is_none());
         assert!(views::attention(&s, None).is_empty());
+        assert_eq!(views::board(&s, None, START + 1, false)["open_questions"], serde_json::json!([]));
         assert!(
             s.questions["q1"].answered.is_some(),
             "resolved episodes must not leave a stale person question"
@@ -260,6 +261,26 @@ fn blocked_item_closes_on_clear_answer_send_close_or_later_report() {
         assert!(s.tasks[&id].blocked.is_none());
         assert!(s.anomalies.is_empty());
     }
+}
+
+#[test]
+fn board_exposes_every_open_linked_question_after_one_is_answered() {
+    let (_dir, j, id, _) = fixture();
+    block(&j, &id);
+    for qid in ["q1", "q2"] {
+        task_event(&j, &id, START, Kind::QuestionAsked {
+            qid: qid.into(), text: qid.into(), options: None,
+        });
+    }
+    let s = j.read_state().unwrap();
+    assert_eq!(views::attention(&s, None).len(), 1);
+    let board = views::board(&s, None, START, false);
+    assert_eq!(board["open_questions"].as_array().unwrap().len(), 2);
+    global(&j, START + 1, Kind::QuestionAnswered { qid: "q1".into(), text: "yes".into() });
+    let s = j.read_state().unwrap();
+    let board = views::board(&s, None, START + 1, false);
+    assert_eq!(board["open_questions"].as_array().unwrap().len(), 1);
+    assert_eq!(board["open_questions"][0]["qid"], "q2");
 }
 
 #[test]
