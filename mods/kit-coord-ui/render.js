@@ -183,7 +183,7 @@ export function renderRail(view) {
   const line = h_flex().h(36).gap(8).items_center().pl(12).pr(5).min_w(0).rounded(6).border(1)
     .border_color(view.draft ? t.accent : t.border).bg(t.input)
     .child(mono(div().flex_shrink_0().font_semibold().text_size(15).text_color(vm.working ? t.working : t.accent).child('›')));
-  line.child(div().flex_1().min_w(0).h(30).overflow_hidden().child(Input.new(view.input).tab_index(4).text_size(13)));
+  line.child(h_flex().flex_1().min_w(0).items_center().tab_index(4).child(Input.new(view.input).w_full().text_size(13)));
   line.child(button('rail-send',narrow ? 'Send' : 'Send ↵',cx => view.store.send(cx,view),t,{disabled:!enabled,primary:enabled,height:26,tabIndex:5,color:enabled ? undefined : t.muted}));
   composer.child(line);
   const footer = h_flex().flex_shrink_0().gap(12).min_w(0).text_size(11).text_color(t.muted)
