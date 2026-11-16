@@ -1,4 +1,4 @@
-# Distributing coordinator work across machines — plan
+# Distributing coordinator work across machines, deployment and access — plan
 
 Plan, 2026-11-16. Follows [multi-machine-research.md](multi-machine-research.md): **one authoritative coordinator, other machines run delegates through Herdr machines (`hc run --on`).** Nothing here is implemented or tested; remote behaviour of `hc` is taken from installed `hc 0.1.21` help and is [INFERENCE] until the probes below have run.
 
@@ -101,38 +101,106 @@ Pulling means workers never need to reach the authority, reports survive network
 
 ## 4. Quick to set up (target: under 10 minutes)
 
+Section 6 defines the deployment itself. The coordinator part adds only `--worker`.
+
 The person does these steps by hand, because they are logins:
 
-1. On the new machine, install Tailscale and run `tailscale up` (browser login). Enable Tailscale SSH, or add the authority's SSH key.
-2. On it, run `omp` once and log in (browser or device code). Run `gh auth login`, or add a deploy key, for Git push.
-3. Optionally, if `loginctl enable-linger` needs an admin, allow linger for the user.
+1. On the new machine, run `tailscale up --advertise-tags=tag:herdr-worker` (browser login).
+2. As the `agent` user, run `omp` once and log in.
+3. Add the machine's GitHub credential (§6).
 
 Then one command on the authority:
 
 ```sh
-herdr-kit worker add box --ssh agent@box --repo herdr-kit=git@github.com:nnexai/herdr-kit.git
+herdr-kit machine add box --ssh agent@box --repo herdr-kit=git@github.com:nnexai/herdr-kit.git --worker
 ```
 
-It runs these steps idempotently and can be re-run:
+It runs the §6 bootstrap: the stack at the authority's pinned revision, the core unit and linger, clones, and an auth check. Then, because of `--worker`, it also:
 
-1. Checks that SSH works.
-2. `hc machine add box --install`.
-3. Copies the active release's `kit-coord` with `hc file write --on`, marked as a worker by `worker.json`.
-4. Installs and enables `herdr-core.service` and linger.
-5. Runs `git clone` (or `fetch`) into the target path.
-6. Checks `omp --version` and auth, reporting any missing logins.
-7. Writes the host record with epoch 1.
-8. Runs a smoke test: `hc run --on box -- kit-coord worker exec --dry-run`.
+1. Marks the worker data dir with `worker.json`.
+2. Writes the host record with epoch 1.
+3. Runs a smoke test: `hc run --on box -- kit-coord worker exec --dry-run`.
 
-`hc machine update box` keeps `hc` current. `herdr-kit update apply` re-pushes the worker binary.
+The command is idempotent and can be re-run. `herdr-kit fleet sync` (§6) keeps the worker binary and `hc` current.
 
 ## 5. Milestones
 
 | # | Usable result | Size | Probe first | Riskiest unknown |
 |---|---|---|---|---|
+| M0 | **Deployment and access only (§6).** Tailscale tags and ACLs, the `agent` user, `herdr-kit machine add` without `--worker`, and `fleet sync`. Machines are reachable with `hc attach`; no coordinator changes. | S, ~2–3 d | P0: on one box, run `herdr-kit install` headless from a detached GitHub clone, then roll forward and back with two shas. | Whether a headless install (core only, no app home) works with today's manager. |
 | M1 | **Remote delegate.** `--on` for rungs 3 and 4 on a manually added host, with remote brief, outbox report and result pull. Remote release is retained as `remote_release_manual`, and the person cleans up. | M, ~3–4 d | P1: `hc machine add box --install`, then `hc run --on box --bg --keep --name probe --label coord.task=probe --cwd ~/dev/herdr-kit -- omp --model @smol "reply hi"`. Check `hc get box/tN`, `hc events` working/idle words, `hc send` steering, `HC_TERMINAL_ID` inside, and whether `herdr-app ls` shows the remote space. | Whether labels, `--keep` and the app space/tab view work for remote terminals. |
 | M2 | **Host-aware reconcile and release.** Three-state presence, `host_unreachable` retention, remote Git checks, resume on host, epoch-tagged launches. | M, ~1 wk | P2: during P1, run `tailscale down` on the box, then record what `hc get box/tN`, `hc ls --label` and `hc events` return, compared with a truly killed terminal. | Whether "unreachable" and "absent" can be told apart at all. Until they can, [reconcile.rs#L353](../../crates/kit-coord/src/coord/reconcile.rs#L353) must skip remote resources. |
-| M3 | **`herdr-kit worker add`** and worker systemd units; a new machine in under 10 minutes. | S, ~2–3 d | P3: bootstrap a fresh VM by hand with a stopwatch, and test headless omp login. | omp login without a browser, and linger permissions. |
+| M3 | **`machine add --worker`.** Registers the host with the coordinator; a new worker machine in under 10 minutes. | S, ~1–2 d | P3: bootstrap a fresh VM by hand with a stopwatch, and test headless omp login. | omp login without a browser, and linger permissions. |
 | M4 (optional) | **Authority on the always-on box.** `kit authority move` with an epoch bump; desktop Board/Mission Log run through `hc exec --on box kit-coord …`. | L, ~1–2 wk | P4: run herdr-app, or only `herdr-core`, on the box, and run `kit-coord status`/`board` there through `hc exec --on` from the desktop mods. | kit-coord's dependency on herdr-app for spaces ([adapter.rs#L133](../../crates/kit-coord/src/coord/adapter.rs#L133)) on a headless host. |
 
-Order: run P1 and P2 before writing any code. If P2 shows that unreachable and absent cannot be distinguished, M1 ships with remote resources excluded from automatic release.
+Order: M0 can ship on its own. For the coordinator milestones, run P1 and P2 before writing any code. If P2 shows that unreachable and absent cannot be distinguished, M1 ships with remote resources excluded from automatic release.
+
+## 6. Deployment and access (standalone, no coordinator needed)
+
+**What a machine gets.**
+
+| Piece | How it is installed | Needed on |
+|---|---|---|
+| herdr-core + `hc` | `hc machine add <m> --install`, then `hc machine update <m>` copies the desktop's exact `hc` | every machine |
+| herdr-app | its normal installer; only machines with a display | desktop/laptops |
+| herdr-kit (manager, mods, layout) | `herdr-kit install --source <clone> --app-home …` from a clone of `github.com/nnexai/herdr-kit`; it builds with `cargo` ([build.rs#L192](../../crates/kit-manager/src/manager/deployment/build.rs#L192)) | every machine; mods/layout only where herdr-app runs |
+| omp | the same package manager and version as the desktop | every machine that runs agents |
+| Toolchains | `git`, rustup (needed by the updater build), plus each repo's own pinned toolchain (`rust-toolchain.toml`, `.tool-versions`) | per repo |
+
+**Source channel and version sync.**
+
+- **Desktop:** keeps the local dev checkout as its trusted source, as today.
+- **Every other machine:** uses a plain clone of the published GitHub repo as its source, checked out **detached at an exact commit**. Never track a branch there.
+
+The updater builds whatever `HEAD` the source has ([manager.rs#L186](../../crates/kit-manager/src/manager.rs#L186), [deployment.rs#L264](../../crates/kit-manager/src/manager/deployment.rs#L264)). So "version" means one commit, and syncing means moving `HEAD`.
+
+One command rolls a fleet forward: `herdr-kit fleet sync --rev <sha>` (default: the desktop's current revision). Over `hc exec --on <m>`, it runs on each machine:
+
+1. `git fetch && git checkout --detach <sha>`
+2. `herdr-kit update apply`
+3. `hc machine update`
+
+It reports per-machine `herdr-kit status`; unreachable machines are listed, not retried in a loop.
+
+A **rollback** is the same command with an older sha. The updater activates it as a new generation; there is no separate rollback path. Superseded generations are swept only once unused (`generations.rs`), so a rollback usually rebuilds. Ship to the desktop first and to the fleet only after it has run there.
+
+**Recommended tool: a kit command plus a ~50-line bootstrap script, not Nix or Ansible.**
+
+- The manager already has a receipted, transactional install/update. `hc` already provides authenticated transport, file copy and remote exec. A configuration-management layer would be a second, competing convention for the same state.
+- Nix does not fit `hc update` self-updating, nor a brew-installed omp.
+- Ansible adds inventory and Python to keep in sync with Tailscale's own device list.
+- chezmoi is optional, and only for the person's own dotfiles. herdr-kit never edits the omp config.
+
+The script is `herdr-kit machine add`: it installs `hc`, rustup, omp, the clone at the pinned sha, `herdr-kit install` (headless: core component only), the `herdr-core.service` user unit and linger.
+
+**Access.**
+
+- **Network: Tailscale ACLs with tags.**
+  - Workers join as `tag:herdr-worker`, so they are owned by the tailnet rather than by the person's account, and do not expire with a user's key.
+  - Grants: the person's devices may SSH to `tag:herdr-worker` as user `agent`, and workers reach `tag:model-server` on its one port.
+  - Workers get **no** access to the desktop or to each other. The pull model in §2 needs none.
+- **SSH: prefer Tailscale SSH over key files.** Identity comes from the tailnet ACL, there are no keys to distribute, and revocation is central. Use `check` mode for the person's user and plain `accept` for `agent`, so `hc` can connect unattended. Plain SSH keys are the fallback: one ed25519 key per authority, placed only in `agent`'s `authorized_keys`, never the person's personal key. The client side is unchanged either way, because `hc machine add` simply runs `ssh`.
+- **Agent user and sandboxing.**
+  - On workers, all agents run as a dedicated unprivileged `agent` user: no sudo, linger on. That user owns its repos, worktrees, omp login and Herdr core.
+  - On the desktop, agents keep running as the person, because the GUI and herdr-app integration depend on it.
+  - Use a rootless podman container only for untrusted code; it is not the default, since it would break `hc`/omp session paths.
+- **Credentials are minted on the machine, never copied.**
+  - omp/provider: interactive login on that machine, which gives one revocable session per machine and per-machine quota.
+  - GitHub: one **deploy key per repo per machine** (push to that repo only, no API) for plain push. Use a fine-grained PAT, limited to the listed repos with Contents and Pull requests read/write and a 90-day expiry, only where `gh` PR work is needed, via `gh auth login` on the machine.
+  - Commit identity: the nnexai noreply address.
+  - No secrets in kit-coord state. The Telegram bot token exists only on the single bridge host.
+- **Revoking a machine that leaves,** in this order:
+  1. Disable its host record: no new tasks.
+  2. Collect or retain its open work.
+  3. Remove the device in the Tailscale admin, which cuts SSH and the tailnet.
+  4. Delete its GitHub deploy keys or PAT, and revoke its omp/provider sessions.
+  5. `hc machine rm <m>`.
+  6. Wipe `/home/agent` if the hardware is reused.
+
+  Because nothing was copied, no other machine needs a credential rotation.
+
+**Reaching the UI from another device.**
+
+- **Board and Mission Log:** these mods execute a local `kit-coord` and watch the local journal ([mods/kit-coord/store.js](../../mods/kit-coord/store.js)). On a laptop they therefore show the laptop's empty data root. The fix is small: a configured authority machine makes the mods run `hc exec --on <authority> kit-coord …` and poll instead of `watchFolder`. This is the same change M4 needs. Until then, attach to the coordinator terminal with `hc attach <authority>/tN` over Tailscale SSH, from any device, phones included via an SSH app [INFERENCE: untested].
+- **Telegram:** there is no code yet. Plan one bridge process on the authority, or on the always-on box once it is the authority. It long-polls outbound, so it needs no inbound port, accepts only the allowlisted user ID, sends `Needs you` questions once per episode, and turns replies into person input. It is useful for answering, not for reviewing work.
+- **Not used:** Tailscale Funnel and public ports. A later read-only web Board would be tailnet-only, via `tailscale serve`.
