@@ -1,5 +1,5 @@
 import { View, div, svg } from 'gpui-kit';
-import { Button, ScrollHandle, InputState } from 'gpui-base';
+import { Button, ScrollHandle, TextareaState } from 'gpui-base';
 import { props, theme, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { MOD_NAME, DEPENDENCY_MOD } from './runtime.js';
 import { railModel, focusAction, quickReply } from './model.js';
@@ -22,12 +22,12 @@ export default class MissionLog extends View {
     }
     if (p.overlay) dialog = p.overlay;
     this.store = new RailStore(); this.scroll = ScrollHandle.new(); this.logFocus = cx.focus_handle();
-    this.idleInput = InputState.new({placeholder:'Tell the coordinator…',value:''});
-    this.busyInput = InputState.new({placeholder:'Coordinator working…',value:''});
+    this.idleInput = TextareaState.new({placeholder:'Tell the coordinator…',value:''});
+    this.busyInput = TextareaState.new({placeholder:'Coordinator working…',value:''});
     this.input = this.idleInput;
     for (const input of [this.idleInput,this.busyInput]) {
+      input.set_auto_grow(1,6);
       input.on('change',(_event,cx) => { if (input === this.input) this.draft = input.value(); cx.notify(); });
-      input.on('submit',(_event,cx) => this.store.send(cx,this));
       input.on('focus',() => { this.inputFocused = true; });
       input.on('blur',() => { this.inputFocused = false; });
     }

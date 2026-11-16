@@ -26,9 +26,9 @@ globalThis.railElement = element;
 const nativeUrl = 'data:text/javascript,'+encodeURIComponent(`
 export const div=()=>globalThis.railElement('div'),svg=()=>globalThis.railElement('svg');
 export class View {}
-export const ScrollHandle={new:()=>({})},InputState={new:()=>({})};
+export const ScrollHandle={new:()=>({})},TextareaState={new:()=>({})};
 export const h_flex=()=>globalThis.railElement('h_flex'),v_flex=()=>globalThis.railElement('v_flex');
-export const Button={new:id=>{const e=globalThis.railElement('button');e.id(id);return e;}},Input={new:()=>globalThis.railElement('input')},
+export const Button={new:id=>{const e=globalThis.railElement('button');e.id(id);return e;}},Textarea={new:()=>globalThis.railElement('textarea')},
 TextView={markdown:()=>globalThis.railElement('markdown')},Popover={new:()=>globalThis.railElement('popover')};
 `);
 const hostUrl = 'data:text/javascript,'+encodeURIComponent(`

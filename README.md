@@ -273,9 +273,10 @@ requires selecting both together; a mismatched generation is refused.
 
 The rail interleaves real coordinator replies with placed tasks, delegate
 reports, progress, decisions and questions. Question pills only fill the
-composer; Enter or Send delivers the draft. Working state and elapsed time
-come from the coordinator's actual hc turn, and the step is its latest tool
-operation—not a simulated sequence. Send stays disabled during a turn.
+composer; the send icon delivers the draft. Enter inserts a newline. The
+composer wraps and grows to six lines, then scrolls. Working state and elapsed
+time come from the coordinator's actual hc turn, and the step is its latest
+tool operation—not a simulated sequence. Send stays disabled during a turn.
 The narrow working placeholder is deliberately short. Reduce motion in the
 menu disables the orbit, shimmer and question pulse; the OS animation
 preference is read once when the view opens when no override is set. The

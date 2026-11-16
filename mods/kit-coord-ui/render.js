@@ -1,5 +1,5 @@
 import { div, svg } from 'gpui-kit';
-import { h_flex, v_flex, Button, Input, TextView, Popover } from 'gpui-base';
+import { h_flex, v_flex, Button, Textarea, TextView, Popover } from 'gpui-base';
 import { theme, settings } from 'herdr';
 import { MOD_NAME } from './runtime.js';
 import { clock } from './model.js';
@@ -79,7 +79,7 @@ function entry(view, row, t) {
     row.options.forEach((option,index) => options.child(button(`reply-${row.key}-${index}`,option,cx => view.chooseReply(row,option,cx),t,
       {height:26,pill:true,color:t.accent,bg:t.canvas,primary:view.question?.id === row.questionId && view.draft === option})
       .max_w(Math.max(100,view.width - 132)).truncate().tooltip(option)));
-    card.child(options).child(div().mt(3).text_size(11).text_color(t.muted).child('Fills the composer — press Enter to send.'));
+    card.child(options).child(div().mt(3).text_size(11).text_color(t.muted).child('Fills the composer — select Send to deliver.'));
   }
   const line = h_flex().id(row.key).relative().items_start().min_w(0).max_w(780).flex_shrink_0().pb(12).role('article')
     .on_size_change((size,cx) => { if (view.rowHeights.get(row.key) !== size.height) { view.rowHeights.set(row.key,size.height); cx.notify(); } })
@@ -180,16 +180,20 @@ export function renderRail(view) {
     .child(div().min_w(0).flex_1().truncate().child(`↳ replying to question · ${view.question.time}`))
     .child(button('rail-context-clear','×',cx => { view.question = null; view.input.focus(); cx.notify(); },t,{px:5,label:'Clear reply context'}).border(0)));
   const enabled = vm.canSend && !view.store.sending && !!view.draft.trim();
-  const line = h_flex().h(36).gap(8).items_center().pl(12).pr(5).min_w(0).rounded(6).border(1)
+  const line = h_flex().min_h(36).gap(8).items_end().pl(12).pr(5).py(3).min_w(0).rounded(6).border(1)
     .border_color(view.draft ? t.accent : t.border).bg(t.input)
-    .child(mono(div().flex_shrink_0().font_semibold().text_size(15).text_color(vm.working ? t.working : t.accent).child('›')));
-  line.child(h_flex().flex_1().min_w(0).items_center().tab_index(4).child(Input.new(view.input).w_full().text_size(13)));
-  line.child(button('rail-send',narrow ? 'Send' : 'Send ↵',cx => view.store.send(cx,view),t,{disabled:!enabled,primary:enabled,height:26,tabIndex:5,color:enabled ? undefined : t.muted}));
+    .child(mono(div().flex_shrink_0().h(26).font_semibold().text_size(15).text_color(vm.working ? t.working : t.accent).child('›')));
+  line.child(h_flex().flex_1().min_w(0).items_center().tab_index(4).child(Textarea.new(view.input).w_full().text_size(13)));
+  line.child(Button.new('rail-send').tab_index(5).size(26).rounded(4).flex_shrink_0()
+    .disabled(!enabled).text_color(enabled ? t.accent : t.muted).hover(s => s.bg(t.hover))
+    .accessibility_label('Send message').tooltip('Send message')
+    .on_click((_e,cx) => { cx.stop_propagation(); view.store.send(cx,view); })
+    .child(svg(`mods/${MOD_NAME}/send.svg`).size(16).text_color(enabled ? t.accent : t.muted)));
   composer.child(line);
   const footer = h_flex().flex_shrink_0().gap(12).min_w(0).text_size(11).text_color(t.muted)
-    .child(div().flex_1().min_w(0).truncate().tooltip(view.store.notice || 'Enter send · Esc close')
+    .child(div().flex_1().min_w(0).truncate().tooltip(view.store.notice || 'Enter newline · Esc close')
       .child(view.store.notice || h_flex().gap(3).items_center()
-        .child(mono(div().px(3).rounded(3).border(1).border_color(t.border).text_size(10.5).child('Enter'))).child('send ·')
+        .child(mono(div().px(3).rounded(3).border(1).border_color(t.border).text_size(10.5).child('Enter'))).child('newline ·')
         .child(mono(div().px(3).rounded(3).border(1).border_color(t.border).text_size(10.5).child('Esc'))).child('close')));
   if (!narrow) footer.child(div().flex_shrink_0().child(`journal · synced ${vm.sync}`));
   const root = v_flex().id('rail-dialog').relative().size_full().min_h(0).min_w(0).px(16).pt(14).pb(12).gap(10)

@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Center the Mission Log's single-line composer input inside its border without
-  clipping the native text field.
+- Align the Mission Log composer and make it wrap and grow up to six lines;
+  Enter inserts a newline and the send icon delivers the draft.
 - Project all open questions from the coordinator fold for Mission Log, including
   questions sharing a blocked episode, and close their indicators on any resolution.
 - Collect unused generations containing Herdr-generated `jsconfig.json` inside
