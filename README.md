@@ -226,8 +226,9 @@ The Coordinator dialog and each new coordinator session's startup read keep a **
 item for every blocked/question episode, including its message, tab, terminal
 and start time. Acknowledging the inbox or handing off does not dismiss it;
 blocked tasks are not counted or displayed as simply running. The existing
-80px coordinator bar icon stays in its attention color while anything needs
-you, even when compacted to an icon; the bottom-bar layout is unchanged.
+80px coordinator bar item stays in its attention color while anything needs
+you; when the counts do not fit, it keeps the needs-you count (`● 1`) beside
+the icon. The bottom-bar layout is unchanged.
 
 These open items are derived directly from journal events, not a second queue.
 They resolve on attention clear, a subsequent non-blocked report, task close,
@@ -252,25 +253,30 @@ read and consumed when that coordinator session starts successfully.
 
 ### Coordinator dialog
 
-The `kit-coord-ui` sidebar launcher and the running coordinator status item
-open the same dialog. It shows needs-you items, your messages, coordinator
-replies and workstream receipts; each receipt can expand to a trace. The menu
-offers the Journal, raw terminal, Clear context and Restart. When off or
-degraded, the status item starts or repairs the coordinator instead.
-Standalone `kit-coord` focuses the raw terminal when running.
+Clicking the running coordinator status item in the bottom bar opens the
+dialog. It shows needs-you items, your messages, coordinator replies and
+workstream receipts; each receipt can expand to a trace. The menu offers the
+Journal, raw terminal and Clear context. When off or degraded, the
+status item starts or repairs the coordinator instead. Standalone `kit-coord`
+focuses the raw terminal when running. See
+[docs/coordinator/dialog.md](docs/coordinator/dialog.md) for the full layout.
+
+The Journal lists events newest first, grouped by day and workstream, in plain
+sentences; click an event for its reason, task and raw fields. System events
+(watcher, inbox, resources, nudges, turns, coordinator sessions) are hidden
+unless "System events" is checked.
 
 The package manager binds the dialog to the coordinator at the same revision.
-In another layout, mount the coordinator status view as well as the dialog
-launcher so the coordinator's registered handlers remain available.
+`kit-coord-ui` is mounted as an invisible block that receives the `show`
+command; the herdr-kit bar sends it through its `coord_ui_mod` prop.
 
 Question options send an answer; Reply selects a question for the composer.
 The send icon delivers the draft, and Enter inserts a newline. The composer
 wraps and grows to six lines, then scrolls. Working state and elapsed time
 come from the coordinator's actual hc turn.
-The narrow working placeholder is deliberately short. Reduce motion in the
-menu disables the orbit, shimmer and question pulse; the OS animation
-preference is read once when the view opens when no override is set. The
-motion override is kept across revision-named suite updates.
+Reduce motion in the menu stops the receipt spinner and the working pulse; the
+OS animation preference is read once when the view opens when no override is
+set. The motion override is kept across revision-named suite updates.
 
 ```sh
 kit-coord conversation --json

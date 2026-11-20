@@ -22,7 +22,7 @@ and provide a working Herdr and OMP environment.
      --app-home /absolute/app-home
    ```
 
-   For the optional Coordinator dialog launcher, select `kit-coord-ui` instead; its
+   For the optional Coordinator dialog, select `kit-coord-ui` instead; its
    `kit-coord` dependency is included at the same revision. The response's
    `resolved_mods` gives the exact installed mod names. The manager does not
    change the consumer layout or install itself as an updater.
@@ -35,9 +35,10 @@ and provide a working Herdr and OMP environment.
 
    It owns polling and registered commands; clicking the running standalone
    strip focuses the coordinator terminal. For the Coordinator dialog, also
-   mount a visible block with `content.mod` set to the returned `kit-coord-ui`
-   name and `props.view` set to `launcher`. Keep the coordinator block mounted
-   for its actions. The layout owner activates their own layout.
+   mount an invisible block (`"size":{"px":0}`) with `content.mod` set to the
+   returned `kit-coord-ui` name and `props.view` set to `source`, and run that
+   mod's `show` command from your own control to open it. Keep the coordinator
+   block mounted for its actions. The layout owner activates their own layout.
 4. As the person, start the coordinator and its watcher and inspect status:
 
    ```sh

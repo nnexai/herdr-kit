@@ -49,7 +49,8 @@ function fixture(overrides = {}) {
   const view = {width:680,reducedMotion:true,store:{status:{coordinator:{}},notice:''},rowHeights:new Map(),windowStart:0,
     expandedDays:new Set(),expandedReceipts:new Set(),expandedQuestions:new Set(),clampedQuestions:new Set(),expandedJournal:new Set(),hoveredReceipt:null,
     rootFocus:{},logFocus:{},menuFocus:{},scroll:{},input:{},draft:'',question:null,follow:true,model:()=>vm,key(){},
-    toggle(set,key,cx){if (set.has(key)) set.delete(key); else set.add(key); cx.notify();}};
+    toggle(set,key,cx){if (set.has(key)) set.delete(key); else set.add(key); cx.notify();},
+    toggleReceipt(key,cx){this.toggle(this.expandedReceipts,key,cx);}};
   return {vm,view};
 }
 const byId = (nodes,id) => nodes.find(node => node.attributes?.id === id);
@@ -112,61 +113,54 @@ test('stream renders at most one window of rows',() => {
   assert.ok(byId(nodes,'entry-p100')); assert.ok(byId(nodes,'entry-p199'));
   assert.equal(byId(nodes,'entry-p200'),undefined);
 });
-test('journal filters events and exposes raw fields on expansion',() => {
+test('journal rows expand to the full sentence and labelled fields; system events stay hidden',() => {
   const {view} = fixture(); view.page='journal'; view.showSystem=false;
   view.filter={value:() => 'progress'};
   view.store.board={workstreams:[]};
   view.store.journal={entries:[
-    {seq:1,ts_ms:1000,kind:'task.progress',data:{summary:'Progress update '.repeat(30)}},
-    {seq:2,ts_ms:2000,kind:'watcher.started',data:{}},
+    {seq:1,ts_ms:1000,kind:'task.progress',actor:'delegate',ws:'w',task:'w-t1',data:{summary:'Progress update '.repeat(30)}},
+    {seq:2,ts_ms:2000,kind:'watcher.started',actor:'watcher',data:{}},
   ],has_more:true};
   view.expandedJournal.add('journal:1');
   const nodes = all(renderRail(view));
   assert.ok(byId(nodes,'journal-journal:1')); assert.equal(byId(nodes,'journal-journal:2'),undefined);
-  const row = byId(nodes,'journal-journal:1');
-  assert.equal(row.attributes.h_auto,true);
-  assert.equal(row.attributes.flex_shrink_0,true);
-  assert.ok(all(row).some(n => n.nodes?.some(x => typeof x === 'string' && x.includes('Progress update '.repeat(3)))));
-  assert.ok(nodes.some(n => n.nodes?.some(x => typeof x === 'string' && x.includes('"task.progress"'))));
+  const texts = nodes.flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.ok(texts.some(x => x.startsWith('Progress update Progress update')));
+  assert.ok(texts.includes('Task') && texts.includes('w-t1'));
+  assert.ok(texts.includes('summary'));
   assert.ok(byId(nodes,'journal-older'));
 });
-test('journal uses stream day labels and a controlled system-events checkbox',() => {
+test('journal shows day labels and the system-events checkbox toggles the filter',() => {
   const {view} = fixture(); view.page='journal'; view.showSystem=false; view.journalStart=0;
   view.filter={value:() => ''}; view.store.board={workstreams:[]};
   const now = new Date(), today = new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
   const yesterday = new Date(today.getFullYear(),today.getMonth(),today.getDate()-1,12);
-  const older = new Date(2020,0,2,12);
-  view.store.journal={entries:[today,yesterday,older].map((date,i) =>
-    ({seq:i+1,ts_ms:date.getTime(),kind:'task.progress',data:{summary:'Progress'}}))};
+  view.store.journal={entries:[
+    ...[today,yesterday].map((date,i) => ({seq:i+1,ts_ms:date.getTime(),kind:'task.progress',actor:'d',data:{summary:'Progress'}})),
+    {seq:3,ts_ms:today.getTime()+1000,kind:'watcher.started',actor:'watcher',data:{}},
+  ]};
   const nodes = all(renderRail(view)), checkbox = byId(nodes,'journal-system');
   assert.equal(checkbox.kind,'checkbox'); assert.equal(checkbox.attributes.checked,false);
-  assert.equal(checkbox.attributes.accessibility_label,'Show system events');
   assert.ok(nodes.some(n => n.nodes?.includes('Today')));
   assert.ok(nodes.some(n => n.nodes?.includes('Yesterday')));
-  assert.ok(nodes.some(n => n.nodes?.includes('Thu Jan 2, 2020')));
-  const controls = nodes.find(n => n.nodes?.includes(checkbox));
-  assert.equal(controls.attributes.pt,12);
-  assert.ok(all(checkbox).some(n => n.nodes?.includes('Show system events') && n.attributes.justify_start));
+  assert.equal(byId(nodes,'journal-journal:3'),undefined);
   let notifications=0; view.journalStart=12;
   checkbox.attributes.on_change(true,{notify(){notifications++;}});
   assert.equal(view.showSystem,true); assert.equal(view.journalStart,0); assert.equal(notifications,1);
-  const checked = byId(all(renderRail(view)),'journal-system');
-  assert.equal(checked.attributes.checked,true);
-  checked.attributes.on_change(false,{notify(){notifications++;}});
-  assert.equal(view.showSystem,false); assert.equal(notifications,2);
+  const shown = all(renderRail(view));
+  assert.equal(byId(shown,'journal-system').attributes.checked,true);
+  assert.ok(byId(shown,'journal-journal:3'));
 });
 test('collapsed past-day summary and echo link are present',() => {
   const rows = [
-    {key:'day:y',kind:'day',day:'2020-01-01',label:'Yesterday',collapsed:true,countLabel:'2 asks',summary:'all done'},
-    {key:'day:x',kind:'day',day:'2019-12-31',label:'Tue Dec 31, 2019',collapsed:true,countLabel:'1 workstream',summary:'all done'},
+    {key:'day:y',kind:'day',day:'2020-01-01',label:'Yesterday',collapsible:true,collapsed:true,countLabel:'2 asks',summary:'all done'},
+    {key:'day:x',kind:'day',day:'2019-12-31',label:'Tue Dec 31, 2019',collapsible:true,collapsed:true,countLabel:'1 workstream',summary:'all done'},
     {key:'echo:1',kind:'echo',receiptKey:'receipt:w',title:'Build',text:'Finished',state:'done'},
   ];
   const {view} = fixture({rows}), nodes = all(renderRail(view));
   assert.ok(nodes.some(n => n.nodes?.includes('▸ Yesterday — 2 asks, all done')));
   assert.ok(nodes.some(n => n.nodes?.includes('▸ Tue Dec 31, 2019 — 1 workstream, all done')));
-  const day = byId(nodes,'day-day:y');
-  assert.equal(day.attributes.justify_start,true);
-  assert.equal(day.attributes.text_color,'#9a9ea5');
+  assert.ok(byId(nodes,'day-day:y'),'past days are toggles');
   assert.ok(nodes.some(n => n.nodes?.includes('Build — Finished') && n.attributes?.truncate),'echo text stays on one line');
   assert.ok(byId(nodes,'echo-echo:1'));
 });

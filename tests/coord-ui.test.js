@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,summarize} from '../mods/kit-coord-ui/model.js';
+import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,journalFields} from '../mods/kit-coord-ui/model.js';
 
 const status = {enabled:true,state:'running',coordinator:{terminal:'c1'},counts:{open_workstreams:2},generated_at_ms:1000};
 const entry = (seq,kind,data,more = {}) => ({seq,ts_ms:seq*1000,kind,data,...more});
@@ -97,17 +97,28 @@ test('local day groups collapse old days and expand by stable day key',() => {
   assert.deepEqual(expanded.map(r=>r.kind),['day','person','receipt','day','reply']);
   assert.equal(expanded[3].label,'Today');
 });
-test('journal is newest-first, filters text and raw fields, and keeps raw events',() => {
-  const report=entry(2,'task.reported',{outcome:'done',summary:'Delivered',result:'/tmp/result'},{ws:'w',task:'t',actor:'delegate',v:1});
-  const system=entry(3,'watcher.started',{release:'abcdef0123'},{actor:'watcher',v:1});
-  const unknown=entry(4,'new.event',{text:'Novel detail'},{ws:'w',actor:'coord',v:1});
-  const log={entries:[report,system,unknown]}, board={workstreams:[{id:'w',title:'Calendar'}]};
-  assert.deepEqual(journalRows(log,board).map(r=>r.key),['journal:4','journal:2']);
-  assert.deepEqual(journalRows(log,board,{showSystem:true}).map(r=>r.key),['journal:4','journal:3','journal:2']);
-  assert.equal(journalRows(log,board,{filter:'calendar'}).length,2);
-  assert.equal(journalRows(log,board,{filter:'/tmp/result'})[0].source,report);
-  assert.equal(journalRows(log,board,{filter:'novel'})[0].text,'new.event — Novel detail');
-  assert.equal(summarize(report).glyph,'✓');
+test('journal groups newest-first events by day and workstream run, hiding system events by default',() => {
+  const at = (seq,h,kind,data,more={}) => ({...entry(seq,kind,data,more),ts_ms:new Date(2026,10,20,h).getTime(),actor:'coord',v:1});
+  const log={entries:[
+    at(1,9,'ws.opened',{title:'Old title'},{ws:'w'}),
+    at(2,10,'task.reported',{outcome:'done',summary:'Delivered',result:'/tmp/result'},{ws:'w',task:'t'}),
+    at(3,11,'coord.session_started',{role:'coord-main'}),
+    at(4,12,'watcher.started',{release:'abcdef0123'}),
+    at(5,13,'ws.opened',{title:'Closed work'},{ws:'gone'}),
+  ]};
+  const now=new Date(2026,10,20,14).getTime();
+  const rows=journalRows(log,{workstreams:[{id:'w',title:'Calendar'}]},{now});
+  assert.deepEqual(rows.map(r=>r.kind==='event'?r.key:`${r.kind}:${r.label ?? r.title}`),
+    ['day:Today','group:Closed work','journal:5','group:Calendar','journal:2','journal:1']);
+  const all=journalRows(log,{workstreams:[]},{now,showSystem:true});
+  assert.deepEqual(all.filter(r=>r.kind==='event').map(r=>r.key),['journal:5','journal:4','journal:3','journal:2','journal:1']);
+  assert.deepEqual(all.filter(r=>r.kind==='group').map(r=>r.title),['Closed work','Coordinator','Old title']);
+  const found=journalRows(log,{},{now,filter:'/tmp/result'}).filter(r=>r.kind==='event');
+  assert.equal(found.length,1); assert.equal(found[0].source.seq,2); assert.equal(found[0].tone,'done');
+  const partial=journalRows({entries:[
+    at(6,8,'task.placed',{title:'Recovered name'},{ws:'early'}),at(7,9,'task.reported',{outcome:'done'},{ws:'early'}),
+    at(8,10,'ws.closed',{summary:'Gone'},{ws:'unknown'})]},{},{now});
+  assert.deepEqual(partial.filter(r=>r.kind==='group').map(r=>r.title),['Earlier workstream','Recovered name']);
 });
 test('working state and elapsed derive only from the real coordinator turn',() => {
   const working = {...conversation,coordinator:{status:'working',working_since_ms:10000,step:{tool:'bash',label:'coord task start'}}};
@@ -169,12 +180,17 @@ test('collapsed historical group identifies retained work when its ask is outsid
   assert.equal(dayLabel(new Date(2025,10,14,12).getTime(),now),'Fri Nov 14, 2025');
 });
 
-test('journal summarizes real coordinator and delegate events in readable language',() => {
-  const events=[entry(1,'coord.sent',{text:'Show me mocks'}),entry(2,'task.sent',{message:'/path/to/brief'}),
-    entry(3,'task.note',{text:'Follow-up scope'}),entry(4,'coord.handoff_requested',{by:'user'})];
-  assert.deepEqual(journalRows({entries:events},{}).map(r=>r.text),[
-    'Coordinator handoff requested by user','Task note: Follow-up scope',
-    'Sent follow-up to delegate','Sent to coordinator: Show me mocks']);
+test('journal sentences are plain language; reasons and internals move to the expanded fields',() => {
+  const decision=entry(1,'decision',{tier:'silent',what:'Deploy on main',why:'Tree is clean'},{ws:'w',actor:'coord',v:1});
+  const placed=entry(2,'task.placed',{title:'Deploy',rung:3,role:'coord-deep',reason:'Deploys run on the main checkout'},{ws:'w',task:'w-t1',actor:'coord',v:1});
+  const blocked=entry(3,'task.reported',{outcome:'blocked',summary:'Needs approval'},{ws:'w',task:'w-t1',actor:'delegate',v:1});
+  const rows=journalRows({entries:[decision,placed,blocked]},{}).filter(r=>r.kind==='event');
+  assert.deepEqual(rows.map(r=>r.text),['Blocked: Needs approval','Started task “Deploy”: Deploys run on the main checkout','Decided: Deploy on main']);
+  assert.deepEqual(rows.map(r=>r.tone),['blocked','quiet','quiet']);
+  assert.ok(rows.every(r=>!/silent|rung|coord-deep|w-t1/.test(r.text)));
+  const fields=Object.fromEntries(journalFields(rows[2]));
+  assert.equal(fields.Why,'Tree is clean'); assert.match(fields.Event,/^decision · coord · #1$/);
+  assert.equal(Object.fromEntries(journalFields(rows[1])).Task,'w-t1');
 });
 
 test('historical journal workstreams produce receipts with closed outcomes and board precedence',() => {

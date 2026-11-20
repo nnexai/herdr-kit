@@ -37,6 +37,10 @@ export function statusbarModel(status,ctx={}) {
  else { state='unavailable'; text='Coordinator unavailable'; compactText='n/a'; tooltip=`Coordinator status unavailable: ${clip(oneLine((ctx.error ?? '').split('\n')[0]),120)}. Click to retry.`; }
  if(c.needs_you>0 && state!=='running') tooltip+=` ${c.needs_you} needs you.`;
  if(stale) { text+=' ~'; compactText+=' ~'; tooltip+=` Last updated ${formatClock(status.generated_at_ms).slice(0,5)}.`; }
- const inner=(ctx.width ?? 280)-53, tier=estimateWidth(text)<=inner?'full':estimateWidth(compactText)<=inner?'dots':'icon';
- return {state,tier,icon:({running:'coord-running.svg',not_running:'coord-off.svg',degraded:'coord-degraded.svg',starting:'coord-starting.svg'})[state] ?? 'coord-off.svg',iconRole:c.needs_you>0?'blocked':({running:'accent',degraded:'working'})[state] ?? 'dim',segments,text,compactText,tooltip,label:tooltip,click,stale};
+ // Room for text beside the icon: item padding, border, icon and gap take 41px.
+ const inner=(ctx.width ?? 280)-41;
+ let tier=estimateWidth(text)<=inner?'full':estimateWidth(compactText)<=inner?'dots':'icon', shown=segments;
+ // When every count does not fit, keep the one that needs the person.
+ if(tier==='icon' && state==='running' && c.needs_you>0 && estimateWidth(`● ${c.needs_you}`)<=inner) { tier='dots'; shown=segments.filter(s=>s.key==='needs_you'); compactText=`● ${c.needs_you}`; }
+ return {state,tier,icon:({running:'coord-running.svg',not_running:'coord-off.svg',degraded:'coord-degraded.svg',starting:'coord-starting.svg'})[state] ?? 'coord-off.svg',iconRole:c.needs_you>0?'blocked':({running:'accent',degraded:'working'})[state] ?? 'dim',segments:shown,text,compactText,tooltip,label:tooltip,click,stale};
 }

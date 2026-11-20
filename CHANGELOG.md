@@ -3,7 +3,9 @@
 ## Unreleased
 
 - Replace the separate coordinator views with one dialog for needs-you items,
-  messages, workstream receipts and the journal; route the status item to it.
+  messages, workstream receipts and the journal, opened from the bottom-bar
+  coordinator item (the sidebar row is gone). The journal groups plain-language
+  events by day and workstream, and the compact bar item keeps the needs-you count.
 - Align the Coordinator composer and make it wrap and grow up to six lines;
   Enter inserts a newline and the send icon delivers the draft.
 - Project all open questions from the coordinator fold for the dialog, including

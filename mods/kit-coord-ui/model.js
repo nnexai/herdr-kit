@@ -1,4 +1,4 @@
-// The Mission Log consumes coordinator CLI JSON only. No journal or session I/O here.
+// The Coordinator dialog consumes coordinator CLI JSON only. No journal or session I/O here.
 export function decode(text, kind) {
   const value = JSON.parse(text);
   if (!value || value.schema_version !== 1) throw new Error(`Unsupported coordinator ${kind} format`);
@@ -35,57 +35,64 @@ export function sayArgs(value, question) {
   if (!value.trim()) return null;
   return ['say', '--text', value, ...(question?.id ? ['--question', question.id] : [])];
 }
-const clip = (value, max) => { const s=String(value ?? ''); return s.length>max ? s.slice(0,Math.max(0,max-1))+'…' : s; };
 const oneLine = value => String(value ?? '').replace(/\s+/g,' ').trim();
 const pad = n => String(n).padStart(2,'0');
-const formatClock = ms => { const d=new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
-const formatDateTime = ms => { const d=new Date(ms); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${formatClock(ms)}`; };
-const formatAge = ms => { let s=Math.max(0,Math.floor(ms/1000)); if(s<60) return `${s}s`; let m=Math.floor(s/60); if(m<60) return `${m}m${s%60 ? ` ${s%60}s` : ''}`; let h=Math.floor(m/60); if(h<24) return `${h}h${m%60 ? ` ${m%60}m` : ''}`; return `${Math.floor(h/24)}d${h%24 ? ` ${h%24}h` : ''}`; };
-const rungLabel = n => ({1:'same session',2:'same space',3:'other space',4:'new worktree',5:'new project'})[n] ?? '';
-const detail = (label,value,copy=false) => ({label,value:String(value),...(copy?{copy:true}:{})});
+const formatAge = ms => { const s=Math.max(0,Math.floor(ms/1000)); if(s<60) return `${s}s`; const m=Math.floor(s/60); if(m<60) return `${m}m`; const h=Math.floor(m/60); if(h<24) return `${h}h${m%60 ? ` ${m%60}m` : ''}`; return `${Math.floor(h/24)}d${h%24 ? ` ${h%24}h` : ''}`; };
 
-// Kept local so kit-coord-ui depends on the CLI contract, not another mod.
-export function summarize(e) {
- const d=e.data ?? {}, v=k=>typeof d[k]==='string'||typeof d[k]==='number'?clip(oneLine(d[k]),90):'', part=(prefix,k,suffix='')=>v(k)?`${prefix}${v(k)}${suffix}`:'', resource=()=>[v('type'),v('name')].filter(Boolean).join(' ');
- let glyph='·',tone='quiet',text=e.kind;
- switch(e.kind) {
-  case 'ws.opened': glyph='◻';tone='neutral';text='Opened workstream'+part(' “','title','”')+(v('repo')||v('delivery_target')?` (${[v('repo'),v('delivery_target')].filter(Boolean).join(' → ')})`:'');break;
-  case 'ws.closed': glyph='◼';tone='neutral';text='Closed workstream'+part(' — ','summary');break;
-  case 'ws.cleaned': glyph='✓';tone='ok';text='Cleaned up workstream';break;
-  case 'ws.retained': glyph='⚠';tone='warning';text='Retained'+part(': ','reason');break;
-  case 'task.placed': glyph='▣';tone='neutral';text=['Placed',v('role'),v('rung')?`rung ${v('rung')} ${rungLabel(d.rung)}`.trim():''].filter(Boolean).join(' · ')+part(' — ','reason');break;
-  case 'task.started': glyph='●';tone='neutral';text='Started'+part(' in tab “','tab_name','”')+part(' (','terminal',')');break;
-  case 'task.reported': glyph=d.outcome==='done'?'✓':d.outcome==='question'?'?':'!';tone=d.outcome==='done'?'ok':'attention';text='Reported'+part(' ','outcome')+part(': ','summary');break;
-  case 'task.progress': glyph='●';tone='neutral';text='Progress'+part(': ','summary');break;
-  case 'task.closed': glyph='✓';text='Closed task'+part(' — ','reason');break;
-  case 'task.sent': glyph='›';tone='neutral';text='Sent follow-up to delegate';break;
-  case 'task.note': glyph='✎';tone='neutral';text='Task note'+part(': ','text');break;
-  case 'task.dormant': glyph='◌';text='Agent ended; session recorded (dormant)';break;
-  case 'task.start_blocked': glyph='!';tone='attention';text='Did not start'+part(' within ','after_secs','s')+' — probably a start-up dialog';break;
-  case 'task.stalled': glyph='!';tone='attention';text='Stalled: no report'+(typeof d.silent_secs==='number'?` ${formatAge(d.silent_secs*1000)}`:'')+' after nudge';break;
-  case 'res.intent': text='Intent: create'+(resource()?` ${resource()}`:'');break;
-  case 'res.created': case 'res.adopted': case 'res.released': glyph=e.kind==='res.released'?'−':'+';tone='neutral';text=({'res.created':'Created','res.adopted':'Adopted','res.released':'Released'})[e.kind]+(resource()?` ${resource()}`:'')+(e.kind==='res.adopted'?' (yours; never removed)':'');break;
-  case 'res.release_checked': glyph=d.ok?'✓':'✕';tone=d.ok?'quiet':'warning';text='Release check'+part(' · ','check')+(typeof d.ok==='boolean'?` → ${d.ok?'passed':'failed'}`:'')+part(' (','detail',')');break;
-  case 'nudge.sent': glyph='›';text='Nudged'+part(' ','target');break;
-  case 'reconcile.finding': glyph='⚠';tone='warning';text='Reconcile'+part(': ','summary');break;
-  case 'watcher.started': text='Watcher started'+(v('release')?` (release ${v('release').slice(0,7)})`:'');break;
-  case 'watcher.stopped': text='Watcher stopped'+part(' — ','reason');break;
-  case 'coord.session_started': glyph='●';tone='neutral';text='Coordinator session started'+part(' (','role',')');break;
-  case 'coord.session_ended': glyph='○';tone='neutral';text='Coordinator session ended'+part(' — ','reason');break;
-  case 'coord.handoff_requested': glyph='↗';tone='neutral';text='Coordinator handoff requested'+part(' by ','by')+part(': ','note');break;
-  case 'coord.sent': glyph='›';tone='neutral';text='Sent to coordinator'+part(': ','text');break;
-  case 'inbox.drained': text='Inbox drained'+part(' (','count',')');break;
-  case 'decision': glyph='↗';tone=d.tier==='ask'?'attention':'neutral';text='Decision'+part(' (','tier',')')+part(': ','what')+part(' — ','why');break;
-  case 'question.asked': glyph='?';tone='attention';text='Asked'+part(': ','text');break;
-  case 'question.answered': glyph='✓';tone='ok';text='Answered'+part(': ','text');break;
-  case 'scout.result': glyph='⌕';tone='neutral';text='Scout'+part(': ','summary');break;
-  case 'instruction.set': glyph='✎';tone='neutral';text='Standing instruction'+part(': ','text');break;
-  case 'thread.opened': case 'thread.closed': glyph=e.kind==='thread.opened'?'◻':'◼';tone='neutral';text=(e.kind==='thread.opened'?'Opened':'Closed')+' thread'+part(' “','title','”');break;
-  case 'correction': glyph='⟲';tone='warning';text='You corrected'+part(': ','what')+part(' — ','why');break;
-  default: text=e.kind+part(' — ',['summary','text','title'].find(k=>typeof d[k]==='string') ?? '');
- }
- const details=[detail('Entry',`seq ${e.seq} · ${formatDateTime(e.ts_ms)} · actor ${e.actor} · v${e.v}`),...Object.entries(d).slice(0,12).map(([k,value])=>detail(k,clip(typeof value==='string'?value:JSON.stringify(value),300),/brief|result|path/i.test(k) && typeof value==='string'))];
- return {glyph,tone,text,scopeId:e.task ?? e.ws ?? '',actorLabel:e.actor,details};
+// Journal sentences: plain language for the person; ids, tiers, rungs and paths
+// stay in the expanded fields. Kept local so kit-coord-ui depends on the CLI
+// contract, not another mod.
+const SYSTEM_KINDS = /^(watcher\.|inbox\.|nudge\.|res\.|coord\.(turn|session_started|session_ended|handoff_requested)$|task\.(turn|launch_details|session)$)/;
+export const isSystemEvent = e => SYSTEM_KINDS.test(e.kind);
+export function journalEntry(e) {
+  const d = e.data ?? {}, s = k => oneLine(typeof d[k] === 'string' || typeof d[k] === 'number' ? d[k] : '');
+  const said = (prefix, value) => value ? `${prefix}: ${value}` : prefix;
+  let tone = 'quiet', text;
+  switch (e.kind) {
+    case 'ws.opened': text = said('Opened', s('title')); break;
+    case 'ws.closed': tone = 'done'; text = said('Closed', s('summary')); break;
+    case 'ws.cleaned': text = 'Cleaned up'; break;
+    case 'ws.retained': tone = 'blocked'; text = said('Kept open', s('reason')); break;
+    case 'task.placed': text = said(`Started task${s('title') ? ` “${s('title')}”` : ''}`, s('reason')); break;
+    case 'task.started': text = `Agent started${s('tab_name') ? ` in “${s('tab_name')}”` : ''}`; break;
+    case 'task.progress': text = s('summary') || 'Progress'; break;
+    case 'task.reported':
+      tone = d.outcome === 'done' ? 'done' : d.outcome === 'question' ? 'question' : 'blocked';
+      text = said(d.outcome === 'done' ? 'Done' : d.outcome === 'question' ? 'Asks' : 'Blocked', s('summary')); break;
+    case 'task.closed': text = d.outcome && !['accepted','done','delivered'].includes(d.outcome) ? said('Task closed', s('reason') || s('outcome')) : 'Task closed'; break;
+    case 'task.sent': text = 'Sent the agent a follow-up'; break;
+    case 'task.note': text = said('Note', s('text')); break;
+    case 'task.dormant': text = 'Agent ended; its session can be resumed'; break;
+    case 'task.start_blocked': tone = 'blocked'; text = 'Agent did not start, probably a start-up dialog'; break;
+    case 'task.stalled': tone = 'blocked'; text = 'No report after a nudge'; break;
+    case 'decision': tone = d.tier === 'ask' ? 'question' : 'quiet'; text = said('Decided', s('what')); break;
+    case 'question.asked': tone = 'question'; text = said('Asked you', s('text')); break;
+    case 'question.answered': tone = 'done'; text = said('You answered', s('text')); break;
+    case 'coord.sent': text = said('You', s('text')); break;
+    case 'coord.session_started': text = 'Coordinator session started'; break;
+    case 'coord.session_ended': text = said('Coordinator session ended', s('reason')); break;
+    case 'coord.handoff_requested': text = 'Coordinator restart requested'; break;
+    case 'instruction.set': text = said('Standing instruction', s('text')); break;
+    case 'correction': tone = 'blocked'; text = said('You corrected', s('what')); break;
+    case 'thread.opened': text = said('Opened thread', s('title')); break;
+    case 'thread.closed': text = said('Closed thread', s('title')); break;
+    case 'scout.result': text = said('Scout', s('summary')); break;
+    case 'reconcile.finding': tone = 'blocked'; text = said('Check', s('summary')); break;
+    case 'watcher.started': text = 'Watcher started'; break;
+    case 'watcher.stopped': text = said('Watcher stopped', s('reason')); break;
+    case 'nudge.sent': text = 'Nudged an agent'; break;
+    case 'inbox.drained': text = 'Read the inbox'; break;
+    case 'coord.turn': text = `Coordinator turn${typeof d.working_ms === 'number' ? ` (${formatAge(d.working_ms)})` : ''}`; break;
+    case 'task.turn': text = `Agent turn${typeof d.working_ms === 'number' ? ` (${formatAge(d.working_ms)})` : ''}`; break;
+    case 'task.launch_details': text = 'Recorded the agent launch'; break;
+    case 'task.session': text = 'Recorded the agent session'; break;
+    case 'res.created': case 'res.adopted': case 'res.released': case 'res.intent':
+      text = `${({'res.created':'Created','res.adopted':'Adopted','res.released':'Released','res.intent':'Creating'})[e.kind]} ${[s('type'),s('name')].filter(Boolean).join(' ')}`.trim(); break;
+    case 'res.release_checked': tone = d.ok === false ? 'blocked' : 'quiet'; text = `Release check ${s('check')} ${d.ok === false ? 'failed' : 'passed'}`.replace(/\s+/g,' '); break;
+    default: text = said(e.kind, s('summary') || s('text') || s('title'));
+  }
+  const why = e.kind === 'decision' ? s('why') : e.kind === 'correction' ? s('why') : '';
+  return {tone, text, why, system: isSystemEvent(e)};
 }
 
 const chronological = (a,b) => (a.ts_ms ?? 0)-(b.ts_ms ?? 0) || (a.order ?? 0)-(b.order ?? 0) || a.key.localeCompare(b.key);
@@ -211,21 +218,46 @@ export function groupDays(rows, now = Date.now(), expanded = new Set()) {
     const countLabel=`${count} ${count === 1 ? 'workstream' : 'workstreams'}`;
     const blocked=receipts.filter(r => r.state === 'blocked' || r.state === 'question').length;
     const summary=count && receipts.every(r => r.state === 'done') ? 'all done' : blocked ? `${blocked} blocked` : '';
-    result.push({key:`day:${day}`,kind:'day',day,label:dayLabel(items[0].ts_ms,now),ts_ms:items[0].ts_ms,collapsed,count,countLabel,summary});
+    result.push({key:`day:${day}`,kind:'day',day,label:dayLabel(items[0].ts_ms,now),ts_ms:items[0].ts_ms,collapsible:day<dayKey(now),collapsed,count,countLabel,summary});
     if (!collapsed) result.push(...items);
   }
   return result;
 }
-export function journalRows(log, board, {filter = '', showSystem = false} = {}) {
-  const workstreams=new Map((board?.workstreams || []).map(ws => [ws.id,ws]));
-  const query=oneLine(filter).toLowerCase();
-  const system=e => /^(watcher\.|inbox\.|nudge\.|res\.|coord\.turn$|task\.turn$|task\.launch_details$|task\.session$)/.test(e.kind);
-  return (log?.entries || []).filter(e => showSystem || !system(e)).map(e => {
-    const ws=workstreams.get(e.ws), summary=summarize(e);
-    return {key:`journal:${e.seq}`,ts_ms:e.ts_ms,ws:e.ws,title:ws?.title || '',...summary,source:e};
-  }).filter(row => !query || [row.text,row.title,row.ws,row.source.task,row.source.kind,row.source.actor,JSON.stringify(row.source.data)].some(v => String(v ?? '').toLowerCase().includes(query)))
+// Newest first, grouped by day, then by consecutive runs of one workstream so
+// its title is shown once instead of on every line.
+export function journalRows(log, board, {filter = '', showSystem = false, now = Date.now()} = {}) {
+  const entries = log?.entries || [];
+  // A workstream opened before the loaded page still has a readable name from its tasks.
+  const titles = new Map();
+  for (const e of entries) if (e.ws && e.kind === 'task.placed' && e.data?.title && !titles.has(e.ws)) titles.set(e.ws, oneLine(e.data.title));
+  for (const e of entries) if (e.ws && e.kind === 'ws.opened' && e.data?.title) titles.set(e.ws, oneLine(e.data.title));
+  for (const ws of board?.workstreams || []) titles.set(ws.id, ws.title);
+  const query = oneLine(filter).toLowerCase();
+  const events = entries.filter(e => showSystem || !isSystemEvent(e)).map(e => {
+    const title = e.ws ? titles.get(e.ws) || 'Earlier workstream' : 'Coordinator';
+    return {key:`journal:${e.seq}`, kind:'event', ts_ms:e.ts_ms, ws:e.ws, title, ...journalEntry(e), source:e};
+  }).filter(row => !query || [row.text,row.why,row.title,row.ws,row.source.task,row.source.kind,JSON.stringify(row.source.data)]
+    .some(v => String(v ?? '').toLowerCase().includes(query)))
     .sort((a,b) => (b.ts_ms-a.ts_ms) || (b.source.seq-a.source.seq));
+  const rows = [];
+  let day = null, group = null;
+  for (const row of events) {
+    const key = dayKey(row.ts_ms);
+    if (key !== day) { day = key; group = null; rows.push({key:`jday:${key}:${row.key}`, kind:'day', label:dayLabel(row.ts_ms, now)}); }
+    const scope = row.ws || '';
+    if (scope !== group) { group = scope; rows.push({key:`jgroup:${row.key}`, kind:'group', title:row.title, ws:row.ws}); }
+    rows.push(row);
+  }
+  return rows;
 }
+export const journalFields = row => [
+  ...(row.why ? [['Why', row.why]] : []),
+  ['When', `${dayKey(row.ts_ms)} ${clock(row.ts_ms)}`],
+  ['Event', `${row.source.kind} · ${row.source.actor} · #${row.source.seq}`],
+  ...(row.source.task ? [['Task', row.source.task]] : []),
+  ...Object.entries(row.source.data || {}).filter(([k]) => !['what','why'].includes(k))
+    .slice(0, 12).map(([k, v]) => [k, oneLine(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 300)]),
+];
 export function railModel({status, log, conversation, board, error = '', now = Date.now(), expandedDays = new Set()}) {
   const entries=log?.entries || [], attention=needsYou(board,entries), questions=attention.filter(item => item.kind === 'question');
   const rows=groupDays(railRows(log,conversation,board,now),now,expandedDays);

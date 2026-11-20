@@ -67,12 +67,6 @@
           ]
         },
         {
-          "id": "mission-log",
-          "type": "block",
-          "size": { "px": 28 },
-          "content": { "mod": "kit-coord-ui", "props": { "view": "launcher" } }
-        },
-        {
           "id": "sidebar-footer",
           "type": "block",
           "size": {
@@ -194,6 +188,14 @@
               "min": 0,
               "max": 0,
               "content": { "mod": "kit-coord", "props": { "view": "source" } }
+            },
+            {
+              "id": "coord-ui-source",
+              "type": "block",
+              "size": { "px": 0 },
+              "min": 0,
+              "max": 0,
+              "content": { "mod": "kit-coord-ui", "props": { "view": "source" } }
             },
             {
               "id": "status-bar",

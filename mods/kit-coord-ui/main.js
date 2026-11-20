@@ -1,6 +1,6 @@
-import { View, div, svg } from 'gpui-kit';
-import { Button, ScrollHandle, TextareaState, InputState } from 'gpui-base';
-import { props, theme, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
+import { View, div } from 'gpui-kit';
+import { ScrollHandle, TextareaState, InputState } from 'gpui-base';
+import { props, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { MOD_NAME, DEPENDENCY_MOD } from './runtime.js';
 import { railModel, focusAction, clock } from './model.js';
 import { RailStore } from './store.js';
@@ -9,7 +9,7 @@ import { systemReducedMotion } from './motion.js';
 
 const MOTION_KEY = 'herdr-kit.coord-ui.reduced-motion';
 let dialog = null;
-export default class MissionLog extends View {
+export default class CoordinatorDialog extends View {
   init(_props,cx) {
     const p = props() || {};
     this.details = p.view === 'log' || (!p.view && !!p.overlay);
@@ -17,12 +17,8 @@ export default class MissionLog extends View {
     this.overlayId = p.overlay; this.rootFocus = cx.focus_handle(); this.menuFocus = cx.focus_handle();
     this.menuOpen = false; this.confirmRestart = false;
     if (!this.details) {
-      this.needsCount = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
-      cx.timer.every(2000,cx => {
-        const count = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
-        if (!this.closed && count !== this.needsCount) { this.needsCount=count; cx.notify(); }
-      });
-      cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.open(); else if (command === 'focus') this.rootFocus.focus(); } });
+      // Invisible mount: receives the `show` command the status bar sends.
+      cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.open(); } });
       return;
     }
     if (p.overlay) dialog = p.overlay;
@@ -72,15 +68,13 @@ export default class MissionLog extends View {
     if (!this.store.status?.coordinator?.restart_pending) this.confirmRestart = false;
     if (this.question && !vm.questions.some(row => row.questionId === this.question.id)) this.question = null;
     if ((keys !== this.lastRows || availabilityChanged) && this.follow) {
-      this.windowStart = Math.max(0,vm.rows.length-100);
-      this.scroll.scroll_to_item(vm.rows.length-this.windowStart+(this.windowStart > 0 ? 1 : 0)+(vm.rows.length ? 1 : 2));
+      this.windowStart = Math.max(0,vm.rows.length-100); this.pinBottom = true;
     }
     this.lastRows = keys; cx.notify();
   }
   latest(cx) {
-    const count = this.model().rows.length;
-    this.follow = true; this.windowStart = Math.max(0,count-100);
-    this.scroll.scroll_to_item(count-this.windowStart+(this.windowStart > 0 ? 1 : 0)+(count ? 1 : 2)); cx.notify();
+    this.follow = true; this.windowStart = Math.max(0,this.model().rows.length-100);
+    this.pinBottom = true; cx.notify();
   }
   logMetrics(vm = this.model()) {
     let bottom = 18 + (this.windowStart > 0 ? 24 : 0);
@@ -113,15 +107,25 @@ export default class MissionLog extends View {
     this.input.focus(); cx.notify();
   }
   toggle(set,key,cx) { if (set.has(key)) set.delete(key); else set.add(key); cx.notify(); }
+  toggleReceipt(key,cx) {
+    const opening = !this.expandedReceipts.has(key);
+    this.toggle(this.expandedReceipts,key,cx);
+    if (!opening) return;
+    const rows = this.model().rows, index = rows.findIndex(row => row.key === key);
+    // The newest receipts open below the fold: follow the bottom as the trace grows.
+    if (index >= rows.length-2) this.latest(cx);
+    else if (index >= 0) { this.follow = false; this.scroll.scroll_to_item(index-this.windowStart+(this.windowStart > 0 ? 1 : 0)); }
+  }
   focusLink(link,_cx) { this.dismiss(); for (const action of focusAction(link)) run(action.name,action.args); }
   showCoordinator(_cx) {
     const terminal = this.store.status?.coordinator?.terminal;
     if (terminal) { this.dismiss(); run('agent.focus',{terminal}); }
   }
   coordinatorAction(action,cx) {
-    // Reuse the Board's registered handlers; this mod never owns lifecycle logic.
+    // Run kit-coord's registered handlers; this mod never owns lifecycle logic.
     run(`${DEPENDENCY_MOD}.${action}`); this.menuOpen = false; this.confirmRestart = false;
     this.store.notice = 'Request sent. Coordinator status will confirm the change.';
+    this.store.noticeUntil = Date.now()+6000;
     cx.notify();
   }
   toggleMotion(cx) { this.reducedMotion = !this.reducedMotion; setShared(MOTION_KEY,this.reducedMotion); cx.notify(); }
@@ -135,22 +139,12 @@ export default class MissionLog extends View {
     }
   }
   render() {
-    const t = theme();
-    const root = div().id('mission-log-root').size_full().min_w(0).min_h(0)
+    if (!this.details) return div().w(0).h(0);
+    return div().id('coord-dialog-root').size_full().min_w(0).min_h(0)
       .on_size_change((size,cx) => {
         if (this.width === size.width && this.height === size.height) return;
         this.width = size.width; this.height = size.height;
-        if (this.details && this.follow) this.latest(cx); else cx.notify();
-      });
-    if (this.details) return root.child(renderRail(this));
-    const launcher = Button.new('mission-log-open').size_full().px(12).gap(8).justify_start().items_center()
-      .track_focus(this.rootFocus).tab_index(0).text_color(t.muted).text_size(12)
-      .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip('Coordinator')
-      .accessibility_label('Open Coordinator').on_click(() => this.open())
-      .child(svg(`mods/${MOD_NAME}/rail.svg`).w(16).h(22).text_color(t.accent));
-    if (this.width > 80) launcher.child(div().flex_1().min_w(0).truncate().child('Coordinator'));
-    const count = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
-    if (count) launcher.child(div().px(5).rounded(8).bg(t.blocked).text_color(t.accent_foreground).text_size(11).child(String(count)));
-    return root.bg(t.chrome).child(launcher);
+        if (this.follow) this.latest(cx); else cx.notify();
+      }).child(renderRail(this));
   }
 }

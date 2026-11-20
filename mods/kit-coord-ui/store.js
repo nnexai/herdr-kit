@@ -68,8 +68,10 @@ export class RailStore {
         this.notice = outcome.coordinator_changed
           ? 'Delivered to the previous session; the question was not marked answered.'
           : 'Message delivered to the coordinator.';
+        // A plain confirmation fades; anything that needs reading stays.
+        this.noticeUntil = outcome.coordinator_changed ? 0 : Date.now()+6000;
         view.follow = true;
-      } catch (error) { this.notice = firstLine(error); }
+      } catch (error) { this.notice = firstLine(error); this.noticeUntil = 0; }
       finally { this.sending = false; this.pending = null; this.refresh(cx,view); if (!view.closed) cx.notify(); }
     });
   }
