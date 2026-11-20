@@ -1,8 +1,8 @@
 import { div, svg } from 'gpui-kit';
-import { h_flex, v_flex, Button, Textarea, TextView, Popover } from 'gpui-base';
+import { h_flex, v_flex, Button, Checkbox, Textarea, TextView, Popover, Input } from 'gpui-base';
 import { theme, settings } from 'herdr';
 import { MOD_NAME } from './runtime.js';
-import { clock } from './model.js';
+import { clock, dayLabel, journalRows } from './model.js';
 
 const tint = (color, alpha) => (color.length === 4 ? '#' + [...color.slice(1)].map(c => c+c).join('') : color.slice(0,7)) + alpha;
 const mono = element => element.font_family('JetBrains Mono');
@@ -20,191 +20,199 @@ export function button(id, label, handler, t, options = {}) {
     .hover(s => s.bg(options.primary ? t.accent : t.hover).text_color(options.primary ? t.accent_foreground : options.color || t.foreground)).accessibility_label(options.label || label)
     .on_click((_e,cx) => { cx.stop_propagation(); handler(cx); }).child(label);
 }
-function colors(t) {
-  return {person:t.foreground,reply:t.accent,placed:settings().dark === false ? t.ansi6 : '#6cc4c9',
-    report:t.done,progress:t.working,question:t.blocked,decision:settings().dark === false ? t.ansi5 : '#b79ae6',neutral:t.muted};
-}
-function bead(row, width, t, view, color) {
-  const rail = div().relative().w(width).flex_shrink_0().self_stretch();
-  rail.child(div().absolute().left(width/2-1).top(15).bottom(-27).w(2).bg(tint(color,'80')));
-  rail.child(div().absolute().left(width/2+7).top(15).w(width/2-7).h(1).bg(tint(color,'80')));
-  if (row.kind === 'person') return rail.child(svg(`mods/${MOD_NAME}/person.svg`).absolute().left(width/2-7).top(8).size(14).text_color(color));
-  const big = row.kind === 'reply', question = row.kind === 'question' && !row.closed;
-  const size = big ? 14 : question ? 12 : 8;
-  if (big || question) {
-    const halo = div().absolute().left(width/2-(size+10)/2).top(15-(size+10)/2).size(size+10).rounded(20)
-      .bg(tint(color,'18')).border(1).border_color(tint(color,'80'));
-    if (question && !view.reducedMotion) halo.loop('opacity',{from:.3,to:.9,period:1900});
-    rail.child(halo);
+const age = ms => {
+  const s = Math.max(0,Math.floor((Date.now()-ms)/1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s/60)}m` : `${Math.floor(s/3600)}h`;
+};
+function glyph(state,t,view) {
+  const color = state === 'done' ? t.done : state === 'question' ? t.blocked : state === 'blocked' || state === 'running' ? t.working : t.muted;
+  if (state === 'running') {
+    const ring = svg(`mods/${MOD_NAME}/orbit.svg`).size(14).text_color(color);
+    if (!view.reducedMotion) ring.spin(1200);
+    return ring;
   }
-  const node = div().absolute().left(width/2-size/2).top(15-size/2).size(size)
-    .rounded(row.kind === 'decision' ? 2 : size/2).border(row.kind === 'placed' ? 2 : 1).border_color(color)
-    .bg(row.kind === 'placed' ? t.canvas : color);
-  return rail.child(node);
+  return div().w(14).text_color(color).child(({done:'✓',question:'?',blocked:'!',placed:'○'})[state] || '○');
 }
-function chip(view, row, link, index, t) {
-  return Button.new(`link-${row.key}-${index}`).tab_index(3).h(20).px(8).rounded(10).border(1).border_dashed()
-    .border_color(tint(t.accent,'80')).bg(t.canvas).text_size(11).max_w(view.width < 520 ? 180 : 320)
-    .hover(s => s.bg(tint(t.accent,'24'))).tooltip(link.label).accessibility_label(`${link.kind === 'terminal' ? 'tab' : 'space'} ${link.label}`)
-    .on_click((_event,cx) => { cx.stop_propagation(); view.focusLink(link,cx); })
-    .child(h_flex().min_w(0).gap(5).child(mono(div().flex_shrink_0().text_color(t.muted).child(link.kind === 'terminal' ? 'tab' : 'space')))
-      .child(mono(div().min_w(0).truncate().text_color(t.accent).child(link.label))));
-}
-function entry(view, row, t) {
-  const narrow = view.width < 520, color = row.closed ? t.done : colors(t)[row.kind];
-  const reply = row.kind === 'reply', question = row.kind === 'question' && !row.closed;
-  const card = v_flex().min_w(0).flex_1().gap(3).px(reply || question ? 12 : 10).pt(6).pb(reply || question ? 10 : 7)
-    .rounded(6).border(1).border_color(question ? tint(color,'70') : reply ? t.selected : tint(t.border,'55'))
-    .bg(question ? tint(color,'12') : reply ? t.raised : row.kind === 'person' ? tint(t.foreground,'0c') : t.canvas);
-  const header = h_flex().min_w(0).gap(8).items_center()
-    .child(mono(div().flex_shrink_0().text_size(10).font_semibold().text_color(color).child(row.answer ? 'ANSWERED' : row.closed ? 'RESOLVED' : row.label.toUpperCase())));
-  if (row.scope) header.child(mono(div().min_w(0).flex_1().text_right().truncate().text_size(10.5).text_color(t.muted).child(row.scope)));
-  card.child(header);
-  if (row.answer) card.child(div().text_size(12).text_color(t.muted).child(`↳ you answered: ${row.answer}`));
-  else if (reply) card.child(TextView.markdown(`body-${row.key}`,row.text).selectable(true).scrollable(false).text_size(13.5).line_height(1.55));
-  else if (row.kind === 'person') card.child(h_flex().gap(8).items_start()
-    .child(mono(div().text_color(t.accent).font_semibold().child('›')))
-    .child(div().min_w(0).flex_1().child(row.text)));
-  else if (row.kind === 'decision') card.child(div().border_l(2).border_color(tint(color,'99')).pl(8).text_size(12.5).child(row.text));
-  else card.child(div().min_w(0).text_size(12.5).line_height(1.5).child(row.text));
-  if (row.detail && !row.answer) card.child(div().text_size(12).text_color(t.muted).line_height(1.4).child(row.detail));
-  if (row.meta?.length) card.child(mono(div().text_size(11).text_color(t.muted).child(row.meta.join('  /  '))));
-  if (row.links?.length) {
-    const chips = h_flex().gap(6).mt(3).flex_wrap().min_w(0);
-    row.links.forEach((link,index) => chips.child(chip(view,row,link,index,t)));
-    card.child(chips);
-  }
-  if (question && row.options?.length) {
-    const options = h_flex().gap(8).mt(7).flex_wrap();
-    row.options.forEach((option,index) => options.child(button(`reply-${row.key}-${index}`,option,cx => view.chooseReply(row,option,cx),t,
-      {height:26,pill:true,color:t.accent,bg:t.canvas,primary:view.question?.id === row.questionId && view.draft === option})
-      .max_w(Math.max(100,view.width - 132)).truncate().tooltip(option)));
-    card.child(options).child(div().mt(3).text_size(11).text_color(t.muted).child('Fills the composer — select Send to deliver.'));
-  }
-  const line = h_flex().id(row.key).relative().items_start().min_w(0).max_w(780).flex_shrink_0().pb(12).role('article')
-    .on_size_change((size,cx) => { if (view.rowHeights.get(row.key) !== size.height) { view.rowHeights.set(row.key,size.height); cx.notify(); } })
-    .accessibility_label(`${clock(row.ts_ms)} ${row.label}: ${row.text}`)
-    .child(mono(div().w(narrow ? 38 : 50).flex_shrink_0().pt(6).pr(narrow ? 6 : 8).whitespace_nowrap().text_right().text_size(narrow ? 10.5 : 11).text_color(t.gutter).child(clock(row.ts_ms))))
-    .child(bead(row,narrow ? 24 : 30,t,view,color)).child(card);
-  return line;
-}
-function head(view, vm, t) {
-  const narrow = view.width < 520, width = narrow ? 24 : 30, color = vm.working ? t.working : t.muted;
-  const node = div().relative().w(width).h(44).flex_shrink_0();
-  if (vm.working) {
-    const flow = v_flex().absolute().w(2).h(135).top(-120).left(width/2-1);
-    for (const alpha of ['00','0c','19','26','40','59','80','b3','cc','80']) flow.child(div().w(2).h(13.5).flex_shrink_0().bg(tint(color,alpha)));
-    if (!view.reducedMotion) flow.loop('opacity',{from:.45,to:1,period:3200});
-    node.child(flow).child(div().absolute().left(width/2-10).top(5).size(20).rounded(10).bg(tint(color,'18')))
-      .child(div().absolute().left(width/2-7).top(8).size(14).rounded(7).bg(tint(color,'30')));
-    if (view.reducedMotion) node.child(div().absolute().left(width/2-11).top(4).size(22).rounded(11).border(2).border_color(tint(color,'b0')));
-    else node.child(svg(`mods/${MOD_NAME}/orbit.svg`).absolute().left(width/2-14).top(1).size(28).text_color(color).spin(2400));
-  }
-  node.child(div().absolute().left(width/2-4).top(11).size(8).rounded(4).border(2).border_color(color).bg(vm.working ? color : t.canvas));
-  const title = h_flex().gap(4).items_center().min_w(0).child(div().min_w(0).text_size(12.5).text_color(color).child(vm.head));
-  if (vm.working) {
-    const caret = div().w(6).h(11).flex_shrink_0().bg(color);
-    if (!view.reducedMotion) caret.loop('opacity',{from:.2,to:.9,period:1100});
-    title.child(caret);
-  }
-  return h_flex().id('rail-head').items_start().min_w(0).max_w(780).flex_shrink_0().min_h(44)
-    .child(mono(div().w(narrow ? 38 : 50).flex_shrink_0().pt(6).pr(8).text_size(11).text_right().text_color(color).child(vm.elapsed)))
-    .child(node).child(v_flex().min_w(0).flex_1().pt(5).gap(3).child(title)
-      .child(mono(div().min_w(0).truncate().text_size(11).text_color(t.muted).tooltip(vm.step).child(vm.working ? `› ${vm.step}` : vm.step))));
-}
-function menu(view, vm, t) {
-  const panel = v_flex().id('rail-menu').role('menu').w(232)
-    .p(5).gap(3).rounded(6).border(1).border_color(t.border).bg(t.raised).shadow_lg();
-  const item = (id,label,action,hint = '',danger = false) => Button.new(id).tab_index(1).w_full().h(28).px(8).rounded(4)
-    .bg(t.raised).text_size(12.5).text_color(danger ? t.blocked : t.foreground).justify_between()
-    .hover(s => s.bg(t.hover)).role('menu_item').accessibility_label(label)
-    .on_click((_event,cx) => { cx.stop_propagation(); action(cx); }).child(label)
-    .child(div().text_size(11).text_color(t.muted).child(hint));
-  if (vm.available) {
-    panel.child(item('rail-clear','Clear context',cx => view.coordinatorAction('clear-context',cx),'new session'));
-    panel.child(item('rail-restart','Restart',cx => view.coordinatorAction('restart',cx),'when idle'));
+function menu(view,vm,t) {
+  const panel = v_flex().id('rail-menu').role('menu').w(210).p(5).gap(3).rounded(6).border(1).border_color(t.border).bg(t.raised).shadow_lg();
+  const item = (id,label,action) => panel.child(button(id,label,action,t,{height:28}).w_full());
+  item('rail-journal','Journal',cx => { view.page='journal'; view.menuOpen=false; view.journalStart=0; view.store.journal=view.store.log; cx.notify(); });
+  if (view.store.status?.coordinator?.terminal) item('rail-show','Show raw coordinator',cx => view.showCoordinator(cx));
+  if (vm.status !== 'off') {
+    item('rail-clear','Clear context',cx => view.coordinatorAction('clear-context',cx));
+    item('rail-restart','Restart',cx => view.coordinatorAction('restart',cx));
     if (view.store.status?.coordinator?.restart_pending) {
-      panel.child(div().h(1).my(3).bg(t.border));
-      if (view.confirmRestart) panel.child(div().p(8).text_size(12).text_color(t.muted).child('Restart now interrupts the coordinator mid-turn.'))
-        .child(item('rail-force-confirm','Confirm restart now',cx => view.coordinatorAction('restart-now',cx),'',true))
-        .child(item('rail-force-cancel','Cancel',cx => { view.confirmRestart = false; cx.notify(); }));
-      else panel.child(item('rail-force','Restart now…',cx => { view.confirmRestart = true; cx.notify(); },'interrupts turn',true));
+      if (view.confirmRestart) {
+        panel.child(div().p(8).text_size(12).text_color(t.muted).child('Restart now interrupts the coordinator mid-turn.'));
+        item('rail-force-confirm','Confirm restart now',cx => view.coordinatorAction('restart-now',cx));
+        item('rail-force-cancel','Cancel',cx => { view.confirmRestart=false; cx.notify(); });
+      } else item('rail-force','Restart now…',cx => { view.confirmRestart=true; cx.notify(); });
     }
   }
-  if (view.store.status?.coordinator?.terminal) panel.child(item('rail-show','Show coordinator',cx => view.showCoordinator(cx),'raw terminal'));
-  panel.child(div().h(1).my(3).bg(t.border));
-  panel.child(item('rail-motion','Reduce motion',cx => view.toggleMotion(cx),view.reducedMotion ? 'On' : 'Off'));
+  item('rail-motion',`Reduce motion: ${view.reducedMotion ? 'On' : 'Off'}`,cx => view.toggleMotion(cx));
   return panel;
 }
+function needs(view,vm,t) {
+  const items = vm.needsYou || [], wrap = v_flex().gap(6).flex_shrink_0().max_h(240).overflow_y_scrollbar();
+  for (const [index,row] of (view.needsAll ? items : items.slice(0,2)).entries()) {
+    const key = row.questionId || `${row.title}:${row.ts_ms}`, expanded = view.expandedQuestions.has(key);
+    const text = row.text || '';
+    const card = v_flex().id(`needs-${index}`).gap(4).px(10).py(8).border_l(2).border_color(t.blocked).bg(tint(t.blocked,'14')).rounded(5);
+    card.child(h_flex().gap(8).items_center().text_size(12)
+      .child(div().text_color(t.blocked).child('Needs you'))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(row.title || ''))
+      .child(div().text_color(t.muted).child(age(row.ts_ms))));
+    const content = div().min_w(0).flex_shrink_0().text_size(13).line_height('18px').child(text)
+      .on_size_change((size,cx) => {
+        const long = size.height > 54, wasLong = view.clampedQuestions.has(key);
+        if (long !== wasLong) { if (long) view.clampedQuestions.add(key); else view.clampedQuestions.delete(key); cx.notify(); }
+      });
+    const textBox = div().min_w(0);
+    if (!expanded) textBox.max_h(54).overflow_hidden();
+    card.child(textBox.child(content));
+    if (view.clampedQuestions.has(key)) card.child(button(`needs-more-text-${index}`,expanded ? 'less' : 'more',cx => view.toggle(view.expandedQuestions,key,cx),t,{size:11,px:4}).border(0).self_start());
+    if (row.kind === 'question') {
+      const actions = h_flex().gap(6).flex_wrap();
+      (row.options || []).forEach((option,i) => actions.child(button(`needs-option-${index}-${i}`,option,cx => view.chooseReply(row,option,cx),t,{pill:true,height:26,disabled:!vm.canSend || vm.working || view.store.sending})));
+      actions.child(button(`needs-reply-${index}`,'Reply…',cx => view.answer(row,cx),t,{pill:true,height:26}));
+      card.child(actions);
+    }
+    wrap.child(card);
+  }
+  if (items.length > 2) wrap.child(button('needs-all',view.needsAll ? 'Show less' : `${items.length-2} more`,cx => { view.needsAll=!view.needsAll; cx.notify(); },t,{size:11}).border(0));
+  return wrap;
+}
+function receipt(view,row,t) {
+  const open = view.expandedReceipts.has(row.key), active = open || view.hoveredReceipt === row.key;
+  const terminal = (row.links || []).find(link => link.kind === 'terminal');
+  const box = v_flex().id(row.key).ml(12).pl(12).border_l(1).border_color(t.border).gap(3).py(4)
+    .on_hover((hovered,cx) => {
+      const next = hovered ? row.key : view.hoveredReceipt === row.key ? null : view.hoveredReceipt;
+      if (next !== view.hoveredReceipt) { view.hoveredReceipt = next; cx.notify(); }
+    });
+  const top = h_flex().gap(8).items_center().min_w(0);
+  top.child(Button.new(`receipt-select-${row.key}`).flex_1().min_w(0).justify_start()
+    .accessibility_label(`${open ? 'Hide' : 'Show'} trace for ${row.title || 'workstream'}`)
+    .on_click((_e,cx) => { cx.stop_propagation(); view.toggle(view.expandedReceipts,row.key,cx); })
+    .child(h_flex().gap(8).items_center().min_w(0).w_full().child(glyph(row.state,t,view))
+      .child(div().flex_1().min_w(0).truncate().font_semibold().child(row.title || 'Workstream'))));
+  if (!active) top.child(div().text_size(11).text_color(t.muted).child([row.space,row.duration].filter(Boolean).join('  ')));
+  else {
+    if (terminal) top.child(button(`terminal-${row.key}`,'Open terminal',cx => view.focusLink(terminal,cx),t,{size:11,px:4}).border(0));
+    top.child(button(`trace-${row.key}`,open ? 'Hide trace' : 'Trace',cx => view.toggle(view.expandedReceipts,row.key,cx),t,{size:11,px:4}).border(0));
+  }
+  box.child(top).child(div().pl(22).min_w(0).truncate().text_size(12).text_color(row.state === 'question' ? t.blocked : row.state === 'blocked' ? t.working : t.muted).child(row.text || ''));
+  if (open) {
+    for (const line of (row.trace || [])) box.child(h_flex().gap(8).pl(22).text_size(12)
+      .child(div().w(40).flex_shrink_0().text_color(t.muted).child(clock(line.ts_ms)))
+      .child(div().flex_1().min_w(0).child(line.text || '')));
+    if (row.text && !(row.trace || []).some(line => line.text?.includes(row.text)))
+      box.child(div().pl(70).text_size(12).text_color(t.muted).child(row.text));
+    const links = h_flex().gap(8).pl(22).flex_wrap();
+    (row.links || []).forEach((link,i) => links.child(button(`receipt-link-${row.key}-${i}`,link.kind === 'terminal' ? 'Open terminal' : 'Show space',cx => view.focusLink(link,cx),t,{size:11,px:4}).border(0)));
+    box.child(links);
+  }
+  return box;
+}
+function entry(view,row,t) {
+  let body;
+  if (row.kind === 'day') {
+    body = button(`day-${row.key}`,`${row.collapsed ? '▸ ' : ''}${row.label}${row.collapsed ? ` — ${row.countLabel}${row.summary ? `, ${row.summary}` : ''}` : ''}`,cx => { view.toggle(view.expandedDays,row.day,cx); view.follow=false; },t,{size:11,px:0}).w_full().justify_start().border(0).text_color(t.muted);
+  } else if (row.kind === 'receipt') body = receipt(view,row,t);
+  else if (row.kind === 'person') body = h_flex().gap(8).items_start().px(10).py(8).rounded(6).bg(t.raised)
+    .child(div().flex_1().min_w(0).child(row.text || '')).child(div().text_size(11).text_color(t.muted).child(row.sending ? 'sending…' : clock(row.ts_ms)));
+  else if (row.kind === 'reply') body = TextView.markdown(`body-${row.key}`,row.text || '').selectable(true).scrollable(false).text_size(13).line_height(1.5);
+  else if (row.kind === 'echo') body = h_flex().gap(8).items_center().min_w(0).text_size(12).text_color(t.muted)
+    .child(glyph(row.state,t,view)).child(div().flex_1().min_w(0).truncate().child(`${row.title || 'Workstream'}${row.text ? ` — ${row.text}` : ''}`))
+    .child(button(`echo-${row.key}`,'↑',cx => view.jumpReceipt(row.receiptKey,cx),t,{label:'Show receipt',px:5}).border(0));
+  else body = div().child(row.text || '');
+  return v_flex().id(`entry-${row.key}`).min_w(0).flex_shrink_0().pb(8)
+    .on_size_change((size,cx) => { if (view.rowHeights.get(row.key) !== size.height) { view.rowHeights.set(row.key,size.height); cx.notify(); } }).child(body);
+}
+function journal(view,t) {
+  const rows = journalRows(view.store.journal || view.store.log,view.store.board,{filter:view.filter.value(),showSystem:view.showSystem});
+  const start = Math.min(view.journalStart || 0,Math.max(0,rows.length-1));
+  const body = v_flex().flex_1().min_h(0).overflow_y_scrollbar().px(12).gap(2);
+  if (start) body.child(button('journal-newer','Show newer',cx => { view.journalStart=Math.max(0,start-100); cx.notify(); },t));
+  let day = '';
+  for (const row of rows.slice(start,start+100)) {
+    const date = new Date(row.ts_ms), label = Number.isFinite(date.getTime()) ? dayLabel(row.ts_ms) : 'Unknown date';
+    if (label !== day) { day=label; body.child(div().pt(10).text_size(11).text_color(t.muted).child(day)); }
+    const line = h_flex().w_full().gap(8).items_start().min_w(0).text_size(12)
+      .child(div().w(38).text_color(t.muted).child(clock(row.ts_ms)))
+      .child(div().w(14).text_color(t.muted).child(row.glyph || '·'))
+      .child(div().flex_1().min_w(0).child(`${row.text || ''}${row.title ? ` (${row.title})` : ''}`));
+    body.child(Button.new(`journal-${row.key}`).w_full().h_auto().flex_shrink_0().px(4).py(4).justify_start().hover(s => s.bg(t.hover))
+      .on_click((_e,cx) => view.toggle(view.expandedJournal,row.key,cx)).child(line));
+    if (view.expandedJournal.has(row.key)) body.child(mono(div().ml(52).p(8).rounded(5).bg(t.canvas).text_size(11).child(JSON.stringify(row.source,null,2))));
+  }
+  if (!rows.length) body.child(div().p(12).text_color(t.muted).child('No events match.'));
+  if (start+100 < rows.length) body.child(button('journal-older-loaded','Show older loaded entries',cx => { view.journalStart=start+100; cx.notify(); },t));
+  else if (view.store.journal?.has_more) body.child(button('journal-older',view.store.loadingOlder ? 'Loading…' : 'Load older',cx => view.store.loadOlder(cx,view),t,{disabled:view.store.loadingOlder}));
+  if (view.store.journalError) body.child(div().text_color(t.blocked).child(view.store.journalError));
+  const indicator = h_flex().size(14).items_center().justify_center().rounded(3).border(1).border_color(view.showSystem ? t.accent : t.muted)
+    .bg(view.showSystem ? t.accent : t.input).flex_shrink_0();
+  if (view.showSystem) indicator.child(div().size(6).rounded(1).bg(t.accent_foreground));
+  return v_flex().flex_1().min_h(0).child(v_flex().gap(6).px(12).pt(12).pb(8)
+    .child(div().h(28).px(6).rounded(4).border(1).border_color(t.border).bg(t.input).child(Input.new(view.filter).w_full()))
+    .child(Checkbox.new('journal-system').w_full().checked(!!view.showSystem).accessibility_label('Show system events')
+      .on_change((checked,cx) => { view.showSystem=checked; view.journalStart=0; cx.notify(); })
+      .child(h_flex().gap(6).items_center().justify_start().text_size(11).text_color(t.muted)
+        .child(indicator).child('Show system events'))))
+    .child(body);
+}
 export function renderRail(view) {
-  const t = palette(), vm = view.model(), narrow = view.width < 520;
-  const title = h_flex().gap(8).items_center().flex_shrink_0()
-    .child(svg(`mods/${MOD_NAME}/rail.svg`).w(18).h(24).text_color(t.accent))
-    .child(div().font_semibold().text_size(15).child('Coordinator'));
-  if (!narrow) title.child(mono(div().text_size(11).text_color(t.muted).child('mission log')));
-  const status = h_flex().gap(8).items_center().min_w(0).text_size(11.5).text_color(t.muted)
-    .child(h_flex().gap(5).items_center().text_color(vm.available ? t.accent : t.muted)
-      .child(div().size(6).rounded(3).bg(vm.available ? t.accent : t.muted)).child(vm.status));
-  if (vm.model) status.child(div().max_w(narrow ? 120 : 180).truncate().tooltip(vm.model).child(vm.model));
-  status.child(div().min_w(0).truncate().child(`${vm.active} active${narrow ? '' : ' workstreams'}`));
-  const header = v_flex().relative().flex_shrink_0().gap(6);
-  const top = h_flex().gap(10).items_center().min_w(0).child(title);
-  if (!narrow) top.child(status);
-  top.child(div().flex_1().min_w(0)).child(Popover.new('rail-actions').open(view.menuOpen)
-    .on_open_change((open,cx) => { view.menuOpen = open; if (!open) view.confirmRestart = false; cx.notify(); })
-    .trigger(Button.new('rail-more').tab_index(0).h(24).w(26).rounded(4).border(1).border_color(t.border)
-      .bg(t.popover).text_color(t.muted).hover(s => s.bg(t.hover)).track_focus(view.menuFocus)
-      .accessibility_label('Coordinator menu').child('⋯'))
-    .content(menu(view,vm,t)));
-  header.child(top);
-  if (narrow) header.child(status);
-  const rows = vm.rows.slice(view.windowStart,view.windowStart + 100);
-  const body = v_flex().id('rail-log').relative().flex_1().min_h(0).min_w(0).rounded(6).border(1).border_color(tint(t.border,'80')).bg(t.canvas)
-    .overflow_y_scrollbar().track_scroll(view.scroll).track_focus(view.logFocus).tab_index(1).role('log').accessibility_label('Coordinator mission log')
-    .px(narrow ? 8 : 10).pt(18).on_size_change((size,cx) => {
-      if (view.logHeight === size.height) return;
-      view.logHeight = size.height; if (view.follow) view.latest(cx); else cx.notify();
-    })
+  const t = palette(), vm = view.model(), isJournal = view.page === 'journal';
+  const state = vm.working ? `Working · ${vm.elapsed}` : vm.status === 'off' ? 'Off' : vm.available ? 'Idle' : 'Degraded';
+  const header = h_flex().h(36).px(12).gap(8).items_center().border_b(1).border_color(t.border);
+  if (isJournal) header.child(button('journal-back','←',cx => { view.page='stream'; view.follow=true; view.latest(cx); },t,{px:4,label:'Back to stream'}).border(0));
+  header.child(div().font_semibold().child(isJournal ? 'Journal' : 'Coordinator'));
+  if (!isJournal) header.child(div().text_size(12).text_color(vm.working ? t.working : t.muted).child(state));
+  header.child(div().flex_1()).child(Popover.new('rail-actions').open(view.menuOpen)
+    .on_open_change((open,cx) => { view.menuOpen=open; if (!open) view.confirmRestart=false; cx.notify(); })
+    .trigger(Button.new('rail-more').h(24).w(26).track_focus(view.menuFocus).accessibility_label('Coordinator menu').child('⋯'))
+    .content(menu(view,vm,t)))
+    .child(button('rail-close','×',() => view.dismiss(),t,{px:6,label:'Close coordinator'}).border(0));
+  const root = v_flex().id('rail-dialog').relative().size_full().min_h(0).min_w(0).bg(t.popover).text_color(t.foreground).text_size(13)
+    .role('dialog').accessibility_label('Coordinator').track_focus(view.rootFocus).on_key_down((event,cx) => view.key(event,cx)).child(header);
+  if (isJournal) return root.child(journal(view,t));
+  if (vm.needsYou?.length) root.child(div().px(12).pt(8).child(needs(view,vm,t)));
+  const body = v_flex().id('rail-log').flex_1().min_h(0).min_w(0).overflow_y_scrollbar().track_scroll(view.scroll)
+    .track_focus(view.logFocus).tab_index(1).role('log').accessibility_label('Coordinator stream').px(12).pt(12)
+    .on_size_change((size,cx) => { if (view.logHeight !== size.height) { view.logHeight=size.height; if (view.follow) view.latest(cx); else cx.notify(); } })
     .on_scroll_wheel((event,cx) => view.scrolled(event.delta.y,cx));
   if (view.windowStart > 0) body.child(button('rail-older','Show older entries',cx => view.older(cx),t,{size:11}));
-  if (!vm.rows.length) body.child(v_flex().min_h(140).justify_center().pl(narrow ? 62 : 80).gap(8)
-    .child(div().text_size(16).font_semibold().text_color(t.foreground).child(view.store.error ? 'Coordinator is unavailable' : vm.available ? 'Your mission log starts here' : 'A quiet place to coordinate'))
-    .child(div().text_color(t.muted).max_w(400).line_height(1.5).child(view.store.error ? 'kit-coord may be missing or unavailable. Open Board or the raw coordinator; your draft is kept.' : vm.available ? 'Tell the coordinator what you need. Its replies and key events will meet on this rail.' : 'Start the coordinator from Board. Its terminal and the existing Timeline remain available.'))
-    .child(h_flex().child(button('rail-empty-board','Open Board',cx => view.coordinatorAction('show',cx),t,{color:t.accent}))));
-  rows.forEach(row => body.child(entry(view,row,t)));
-  body.child(head(view,vm,t));
-  body.child(div().h(20).flex_shrink_0());
-  const logWrap = div().relative().flex_1().min_h(0).min_w(0).child(body.size_full());
-  const composer = v_flex().flex_shrink_0().gap(6);
+  if (!vm.rows.length) body.child(div().text_color(t.muted).child('Nothing in flight. Ask for something below.'));
+  vm.rows.slice(view.windowStart,view.windowStart+100).forEach(row => body.child(entry(view,row,t)));
+  if (view.store.pending && view.follow) body.child(entry(view,view.store.pending,t));
+  root.child(body);
+  if (!view.follow || view.windowStart+100 < vm.rows.length) root.child(button('rail-latest','Back to live',cx => view.latest(cx),t,{size:11}));
+  if (vm.working) {
+    const dot = div().size(5).rounded(3).bg(t.working);
+    if (!view.reducedMotion) dot.loop('opacity',{from:.3,to:1,period:1200});
+    root.child(h_flex().px(12).gap(8).h(22).items_center().text_size(12).text_color(t.muted)
+      .child(dot).child(div().flex_1().child(vm.step)).child(div().child(vm.elapsed)));
+  }
+  const composer = v_flex().flex_shrink_0().gap(6).px(12).pb(12);
   if (view.question) composer.child(h_flex().gap(8).items_center().min_w(0).text_size(11.5).text_color(t.muted)
-    .child(div().min_w(0).flex_1().truncate().child(`↳ replying to question · ${view.question.time}`))
+    .child(div().min_w(0).flex_1().truncate().child(`Answering: ${view.question.text || view.question.time}`))
     .child(button('rail-context-clear','×',cx => { view.question = null; view.input.focus(); cx.notify(); },t,{px:5,label:'Clear reply context'}).border(0)));
-  const enabled = vm.canSend && !view.store.sending && !!view.draft.trim();
-  const line = h_flex().min_h(36).gap(8).items_end().pl(12).pr(5).py(3).min_w(0).rounded(6).border(1)
-    .border_color(view.draft ? t.accent : t.border).bg(t.input)
-    .child(mono(div().flex_shrink_0().h(26).font_semibold().text_size(15).text_color(vm.working ? t.working : t.accent).child('›')));
-  line.child(h_flex().flex_1().min_w(0).items_center().tab_index(4).child(Textarea.new(view.input).w_full().text_size(13)));
-  line.child(Button.new('rail-send').tab_index(5).size(26).rounded(4).flex_shrink_0()
-    .disabled(!enabled).text_color(enabled ? t.accent : t.muted).hover(s => s.bg(t.hover))
-    .accessibility_label('Send message').tooltip('Send message')
-    .on_click((_e,cx) => { cx.stop_propagation(); view.store.send(cx,view); })
-    .child(svg(`mods/${MOD_NAME}/send.svg`).size(16).text_color(enabled ? t.accent : t.muted)));
-  composer.child(line);
-  const footer = h_flex().flex_shrink_0().gap(12).min_w(0).text_size(11).text_color(t.muted)
-    .child(div().flex_1().min_w(0).truncate().tooltip(view.store.notice || 'Enter newline · Esc close')
-      .child(view.store.notice || h_flex().gap(3).items_center()
-        .child(mono(div().px(3).rounded(3).border(1).border_color(t.border).text_size(10.5).child('Enter'))).child('newline ·')
-        .child(mono(div().px(3).rounded(3).border(1).border_color(t.border).text_size(10.5).child('Esc'))).child('close')));
-  if (!narrow) footer.child(div().flex_shrink_0().child(`journal · synced ${vm.sync}`));
-  const root = v_flex().id('rail-dialog').relative().size_full().min_h(0).min_w(0).px(16).pt(14).pb(12).gap(10)
-    .bg(t.popover).text_color(t.foreground).text_size(13).role('dialog').accessibility_label('Coordinator Mission Log')
-    .track_focus(view.rootFocus).on_key_down((event,cx) => view.key(event,cx)).child(header);
-  if (view.questionOffscreen(vm)) logWrap.child(h_flex().absolute().left(0).right(0).bottom(12).justify_center()
-    .child(div().rounded(13).bg('#2c1f20').shadow_md()
-      .child(button('rail-question-jump',`↑ ${vm.questions.length} question${vm.questions.length === 1 ? '' : 's'} waiting`,cx => view.jumpQuestion(cx),t,{pill:true,height:26,color:t.blocked,bg:'#2c1f20'}))));
-  else if (vm.rows.length && (!view.follow || view.windowStart + 100 < vm.rows.length)) logWrap.child(h_flex().absolute().left(0).right(0).bottom(12).justify_center()
-    .child(div().rounded(13).bg(t.popover).shadow_md()
-      .child(button('rail-latest','Back to live',cx => view.latest(cx),t,{pill:true,height:24,color:t.accent}))));
-  root.child(logWrap).child(composer).child(footer);
-  return root;
+  if (vm.status === 'off') composer.child(h_flex().h(36).px(10).items_center().rounded(6).border(1).border_dashed().border_color(t.border)
+    .child(div().flex_1().text_color(t.muted).child('Coordinator is off'))
+    .child(button('rail-start','Start',cx => view.coordinatorAction('start-coordinator',cx),t,{color:t.accent})));
+  else {
+    const enabled = vm.canSend && !view.store.sending && !!view.draft.trim();
+    const line = h_flex().min_h(36).gap(8).items_end().pl(12).pr(5).py(3).min_w(0).rounded(6).border(1)
+      .border_color(view.draft ? t.accent : t.border).bg(t.input)
+      .child(mono(div().flex_shrink_0().h(26).font_semibold().text_size(15).text_color(vm.working ? t.working : t.accent).child('›')));
+    line.child(h_flex().flex_1().min_w(0).items_center().tab_index(4).child(Textarea.new(view.input).w_full().text_size(13)));
+    line.child(Button.new('rail-send').tab_index(5).size(26).rounded(4).flex_shrink_0()
+      .disabled(!enabled).text_color(enabled ? t.accent : t.muted).hover(s => s.bg(t.hover))
+      .accessibility_label('Send message').tooltip('Send message')
+      .on_click((_e,cx) => { cx.stop_propagation(); view.store.send(cx,view); })
+      .child(svg(`mods/${MOD_NAME}/send.svg`).size(16).text_color(enabled ? t.accent : t.muted)));
+    composer.child(line);
+  }
+  if (view.store.notice || view.store.error) composer.child(div().text_size(11).text_color(view.store.error ? t.blocked : t.muted).child(view.store.error || view.store.notice));
+  return root.child(composer);
 }

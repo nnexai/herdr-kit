@@ -51,17 +51,30 @@ export default class KitBar extends View {
         } else content.child(div().min_w(0).truncate().child(vm.compactText));
       }
     } else content.child('…');
-    const label = vm?.tooltip ?? 'Reading coordinator status';
+    const label = vm?.state === 'running' && this.options.coord_ui_mod
+      ? vm.tooltip.replace('Click to focus the coordinator.', 'Click to open the Coordinator dialog.')
+      : vm?.tooltip ?? 'Reading coordinator status';
     return Button.new('coord-readout').track_focus(this.coordFocus).tab_index(0)
       .w(80).flex_shrink_0().h(26).px(6).min_w(0).rounded(3).border(1)
       .border_color(this.coordFocus.is_focused() ? t.accent : t.chrome)
       .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip(label).accessibility_label(label)
       .on_click(() => {
         if (vm?.click === 'none') return;
-        const command = vm?.click === 'up' ? 'start-coordinator' : vm?.click === 'reread' ? 'reread-status' : 'show';
-        run(`${this.options.coord_mod}.${command}`, {});
+        if (vm?.state === 'running') {
+          if (this.options.coord_ui_mod) run(`${this.options.coord_ui_mod}.show`, {});
+          else {
+            const terminal = shared('herdr-kit.coord.status.v1')?.coordinator?.terminal;
+            if (terminal) run('agent.focus', {terminal});
+          }
+        } else {
+          const command = vm?.click === 'up' ? 'start-coordinator' : 'reread-status';
+          run(`${this.options.coord_mod}.${command}`, {});
+        }
       })
-      .on_mouse_down('right', (_e,cx) => { cx.stop_propagation(); run(`${this.options.coord_mod}.show`, {}); })
+      .on_mouse_down('right', (_e,cx) => {
+        cx.stop_propagation();
+        if (this.options.coord_ui_mod) run(`${this.options.coord_ui_mod}.show`, {});
+      })
       .child(content);
   }
   usage(t) {

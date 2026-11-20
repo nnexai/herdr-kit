@@ -238,6 +238,7 @@ pub(super) fn project_layout(
             if base == "herdr-kit-bar" {
                 value["content"]["props"] = json!({
                     "coord_mod": bindings.get("kit-coord"),
+                    "coord_ui_mod": bindings.get("kit-coord-ui"),
                     "usage_mod": bindings.get("kit-usage"),
                     "manager": manager,
                     "data_dir": data,

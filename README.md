@@ -206,9 +206,8 @@ cargo build --locked --release -p kit-coord
 ```
 
 Keep that executable in place while the preview runs; rebuilding a running
-development binary can invalidate its saved launch path. The app icon, board
-and timeline ship as the separate `kit-coord` mod with normal suite
-installation. Installation still reads committed source as described above.
+development binary can invalidate its saved launch path. Suite installation
+includes the coordinator status source and the Coordinator dialog.
 
 The person can open and close workstreams, start, send to and close tasks,
 release resources, record decisions and instructions, and rate outcomes.
@@ -217,21 +216,13 @@ can change configuration or ratings and start or stop the coordinator. Delegates
 report and add notes to their own tasks. Anyone can read the board, log,
 explanations, inbox, roles and statistics. `kit-coord --help` lists commands.
 
-In the Coordinator dialog, choose **Clear context** (or press `n` while the
-dialog list has focus) to request a fresh session when the coordinator is idle.
-While waiting, **Restart now** (or `n` again) offers a confirmation before
-interrupting a turn; press Enter to confirm or Esc to cancel.
-The prior session remains in the session history.
-
-The mod also receives a `restart` command through Herdr's key bindings. Because
-installed mod names include the release revision, use the current coordinator
-folder name in `keys.json`, for example:
-`"global": { "ctrl-alt-n": "kit-coord-<revision>.restart" }`.
-Update that binding when the installed revision changes.
+In the Coordinator dialog, choose **Clear context** to request a fresh session
+when the coordinator is idle. While waiting, **Restart now** offers a
+confirmation before interrupting a turn. The prior session remains in history.
 
 ### Blocked delegates
 
-The Board and each new coordinator session's startup read keep a **Needs you**
+The Coordinator dialog and each new coordinator session's startup read keep a **Needs you**
 item for every blocked/question episode, including its message, tab, terminal
 and start time. Acknowledging the inbox or handing off does not dismiss it;
 blocked tasks are not counted or displayed as simply running. The existing
@@ -259,24 +250,23 @@ The latest handoff note is included at the beginning of the next startup
 read and consumed when that coordinator session starts successfully.
 
 
-### Mission Log
+### Coordinator dialog
 
-The separate `kit-coord-ui` mod adds **Mission log** to the sidebar. It opens
-the Rail conversation view without replacing Board/Timeline or the raw
-coordinator terminal. Its menu reuses the coordinator's Clear context,
-Restart and Show actions. No key bindings are installed.
-The package manager stamps its coordinator command binding in runtime metadata,
-not by rewriting JS literals. In another layout, mount the kit-coord status view
-as well as the Mission log launcher so the coordinator's existing registered
-handlers are shown. Updating either member of that pinned UI/dependency pair
-requires selecting both together; a mismatched generation is refused.
+The `kit-coord-ui` sidebar launcher and the running coordinator status item
+open the same dialog. It shows needs-you items, your messages, coordinator
+replies and workstream receipts; each receipt can expand to a trace. The menu
+offers the Journal, raw terminal, Clear context and Restart. When off or
+degraded, the status item starts or repairs the coordinator instead.
+Standalone `kit-coord` focuses the raw terminal when running.
 
-The rail interleaves real coordinator replies with placed tasks, delegate
-reports, progress, decisions and questions. Question pills only fill the
-composer; the send icon delivers the draft. Enter inserts a newline. The
-composer wraps and grows to six lines, then scrolls. Working state and elapsed
-time come from the coordinator's actual hc turn, and the step is its latest
-tool operation—not a simulated sequence. Send stays disabled during a turn.
+The package manager binds the dialog to the coordinator at the same revision.
+In another layout, mount the coordinator status view as well as the dialog
+launcher so the coordinator's registered handlers remain available.
+
+Question options send an answer; Reply selects a question for the composer.
+The send icon delivers the draft, and Enter inserts a newline. The composer
+wraps and grows to six lines, then scrolls. Working state and elapsed time
+come from the coordinator's actual hc turn.
 The narrow working placeholder is deliberately short. Reduce motion in the
 menu disables the orbit, shimmer and question pulse; the OS animation
 preference is read once when the view opens when no override is set. The
@@ -329,7 +319,7 @@ and safety rules.
 - `kit-packages.json`: explicit packages, binary/mod/layout ownership and bundle.
 - `crates/kit-manager/src/main.rs`: optional installation/update CLI only.
 - `crates/kit-coord/`: independent coordinator CLI, engine, roles and fixtures.
-- `mods/kit-coord/`: independent native status, Board and Timeline.
+- `mods/kit-coord/`: independent native status source and strip.
 - `crates/kit-usage/`: independent usage CLI, bounded OMP adapter and cache.
 - `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
 - `mods/kit-usage/`: native GPUI presentation and pure view model.

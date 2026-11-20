@@ -9,7 +9,7 @@ P5 release work remains separately authorized.
 | Package | Executable / native assets |
 |---|---|
 | kit-coord | `kit-coord`; `mods/kit-coord/`, engine, built-in roles and tests |
-| kit-coord-ui | Mission Log; depends only on kit-coord |
+| kit-coord-ui | Coordinator dialog; depends only on kit-coord |
 | kit-usage | `kit-usage`; `mods/kit-usage/`, anonymous collector/cache and Limits |
 | kit-manager, optional | `herdr-kit`; trusted committed-source installation/update |
 | herdr-kit | Layout plus `mods/herdr-kit-bar/` composition/maintenance glue |
@@ -56,10 +56,10 @@ Mount the returned exact module pin in that layout's visible status block:
 {"type":"block","size":{"px":80},"content":{"mod":"kit-coord-FULL_COMMIT","props":{"view":"statusbar"}}}
 ```
 
-That copy owns polling, command receipt and the Board/Timeline overlay.
-`<resolved-mod>.show` opens Board and `.timeline` opens Timeline. Lifecycle is
-still person-owned. The external layout is never rewritten by the manager,
-and has no maintenance invocation or installed updater.
+That copy owns polling and command receipt; clicking its running status strip
+focuses the coordinator terminal. For the dialog, select `kit-coord-ui` as well
+and mount its launcher. Lifecycle is still person-owned. The external layout is
+never rewritten by the manager, and has no maintenance invocation or updater.
 
 An owner can instead export committed source with `git archive`, retain
 Cargo.lock, the workspace manifest and `crates/kit-core`, and build only

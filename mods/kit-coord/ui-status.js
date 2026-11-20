@@ -33,7 +33,6 @@ export function renderStatus(view, cx) {
   const button = Button.new('coord-readout').track_focus(view.focus).tab_index(0).h(26).px(6).min_w(0).rounded(3).border(1)
     .border_color(view.focus.is_focused() ? t.accent : t.chrome).hover(s => s.bg(t.hover).text_color(t.foreground))
     .tooltip(vm.tooltip).accessibility_label(vm.label || vm.tooltip)
-    .on_click((_e, cx) => { if (vm.click === 'board') view.openBoard('board'); else if (vm.click === 'up') view.start(cx); else if (vm.click === 'reread') view.refresh(cx); })
-    .on_mouse_down('right', (_e, cx) => { cx.stop_propagation(); view.openBoard('board'); }).child(content);
+    .on_click((_e, cx) => { if (vm.click === 'focus') view.focusCoordinator(); else if (vm.click === 'up') view.start(cx); else if (vm.click === 'reread') view.refresh(cx); }).child(content);
   return h_flex().size_full().px(4).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8).text_color(t.muted).child(button);
 }

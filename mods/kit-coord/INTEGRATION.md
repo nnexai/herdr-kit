@@ -22,7 +22,7 @@ and provide a working Herdr and OMP environment.
      --app-home /absolute/app-home
    ```
 
-   For the optional Mission Log launcher, select `kit-coord-ui` instead; its
+   For the optional Coordinator dialog launcher, select `kit-coord-ui` instead; its
    `kit-coord` dependency is included at the same revision. The response's
    `resolved_mods` gives the exact installed mod names. The manager does not
    change the consumer layout or install itself as an updater.
@@ -33,10 +33,11 @@ and provide a working Herdr and OMP environment.
    {"type":"block","size":{"px":80},"content":{"mod":"kit-coord-FULL_COMMIT","props":{"view":"statusbar"}}}
    ```
 
-   It owns polling and registered commands and opens the Board/Timeline overlay.
-   For Mission Log, also mount a visible block with `content.mod` set to the
-   returned `kit-coord-ui` name; keep the coordinator block mounted for its
-   actions. The layout owner activates their own layout.
+   It owns polling and registered commands; clicking the running standalone
+   strip focuses the coordinator terminal. For the Coordinator dialog, also
+   mount a visible block with `content.mod` set to the returned `kit-coord-ui`
+   name and `props.view` set to `launcher`. Keep the coordinator block mounted
+   for its actions. The layout owner activates their own layout.
 4. As the person, start the coordinator and its watcher and inspect status:
 
    ```sh
@@ -58,7 +59,7 @@ and provide a working Herdr and OMP environment.
   package. Source builds need the workspace manifest, `Cargo.lock`, and
   `crates/kit-core`; `kit-packages.json` declares the runtime artifacts.
 - Pins are revision-specific. The consumer owns layout changes on upgrades;
-  Mission Log and coordinator must remain on the same selected revision.
+  the dialog and coordinator must remain on the same selected revision.
   Capability-only installs do not schedule manager maintenance.
 - No hard dependency on the suite layout, bar, or usage mod was found in this
   quick source review. The shared-state keys retain `herdr-kit` names; custom

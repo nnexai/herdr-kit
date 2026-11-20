@@ -38,3 +38,32 @@ test('editing during delivery keeps the new draft; confirmed old-session deliver
   h.store.send(h.cx,h.view); await h.drain();
   assert.equal(h.draft(),'New draft'); assert.match(h.store.notice,/previous session/);
 });
+test('answer options send directly without overwriting an unrelated draft',async () => {
+  const h = setup('Unrelated draft');
+  h.store.send(h.cx,h.view,{text:'Yes',question:{id:'q2'}}); await h.drain();
+  assert.deepEqual(h.calls,[['say','--text','Yes','--question','q2']]);
+  assert.equal(h.draft(),'Unrelated draft');
+});
+test('board includes cleaned workstreams and journal pages use before-seq',async () => {
+  const h = setup();
+  globalThis.railHost = async (_binary,args) => {
+    h.calls.push(args);
+    if (args[0] === 'board') return {code:0,stdout:JSON.stringify({schema_version:1,workstreams:[],open_questions:[]})};
+    return {code:0,stdout:JSON.stringify({schema_version:1,entries:[{seq:1},{seq:2}],has_more:false})};
+  };
+  await h.store.read('board');
+  h.store.journal = {entries:[{seq:3},{seq:4}],has_more:true};
+  h.store.loadOlder(h.cx,h.view); await h.drain();
+  assert.deepEqual(h.calls,[['board','--json','--all'],['log','--json','--limit','200','--before-seq','3']]);
+  assert.deepEqual(h.store.journal.entries.map(e => e.seq),[1,2,3,4]);
+  assert.equal(h.store.journal.has_more,false);
+});
+test('journal retains at most 500 entries while paging backwards',async () => {
+  const h = setup();
+  h.store.journal = {entries:Array.from({length:400},(_,i) => ({seq:i+201})),has_more:true};
+  globalThis.railHost = async () => ({code:0,stdout:JSON.stringify({schema_version:1,entries:Array.from({length:200},(_,i) => ({seq:i+1})),has_more:false})});
+  h.store.loadOlder(h.cx,h.view); await h.drain();
+  assert.equal(h.store.journal.entries.length,500);
+  assert.equal(h.store.journal.entries[0].seq,1);
+  assert.equal(h.store.journal.entries[499].seq,500);
+});

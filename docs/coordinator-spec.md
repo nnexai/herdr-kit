@@ -335,9 +335,9 @@ output is readable with `hc read`, and it is visible like any other terminal.
 `task.attention blocked` and delegate `report blocked|question` open one
 journal-derived task item, independent of the inbox acknowledgement cursor.
 Repeated blocked signals update that episode's text without resetting its
-start time or reminder history. Board/startup **Needs you** includes its
-message, task, tab, terminal and since-time. Board task JSON exposes
-`needs_you`; the task's lifecycle `state` remains separate. The existing
+start time or reminder history. Dialog/startup **Needs you** includes the
+episode. Board CLI task JSON exposes `needs_you`; the task's lifecycle `state`
+remains separate. The existing
 status count and compact bar icon retain the attention indication.
 
 Attention clear, a non-blocked report, task close, coordinator `task send`,
@@ -451,12 +451,10 @@ Closing by id does not move the person's view *(verified)*.
 |---|---|
 | `coordinator` space | The coordinator agent tab and the watcher tab |
 | Ordinary spaces and tabs | Delegates appear as normal tabs; owned worktree spaces are recognisable by name |
-| Status bar | A coordinator icon (running / not running / degraded; click to start or open the board) and a compact readout next to the usage readout: running, needing the person, retained |
-| Board (click the readout) | Workstreams → tasks with state, placement reason, role, age; pending questions; retained reasons |
-| Timeline (second view of the board) | The journal, newest first, filterable by workstream or task |
+| Status bar | A coordinator icon (running / not running / degraded; click to start, repair or open the dialog) and a compact readout next to usage |
+| Coordinator dialog | Needs-you items, messages, replies and workstream receipts with expandable traces; a filterable Journal is available from the menu |
 
-The board and timeline are one new native mod reading `kit-coord board --json` and
-`kit-coord log --json`, refreshed through `watchFolder` on the journal folder.
+The dialog reads the coordinator CLI and watches the journal folder for changes.
 Herdr's own `done` and `blocked` agent states keep working as attention signals.
 
 App commands that move the view (`agent.focus`, `space.select`) are used only

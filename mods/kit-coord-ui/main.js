@@ -1,8 +1,8 @@
 import { View, div, svg } from 'gpui-kit';
-import { Button, ScrollHandle, TextareaState } from 'gpui-base';
+import { Button, ScrollHandle, TextareaState, InputState } from 'gpui-base';
 import { props, theme, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { MOD_NAME, DEPENDENCY_MOD } from './runtime.js';
-import { railModel, focusAction, quickReply } from './model.js';
+import { railModel, focusAction, clock } from './model.js';
 import { RailStore } from './store.js';
 import { renderRail } from './render.js';
 import { systemReducedMotion } from './motion.js';
@@ -13,15 +13,25 @@ export default class MissionLog extends View {
   init(_props,cx) {
     const p = props() || {};
     this.details = p.view === 'log' || (!p.view && !!p.overlay);
-    this.closed = false; this.width = this.details ? 960 : 240;
+    this.closed = false; this.width = this.details ? 680 : 240;
     this.overlayId = p.overlay; this.rootFocus = cx.focus_handle(); this.menuFocus = cx.focus_handle();
     this.menuOpen = false; this.confirmRestart = false;
     if (!this.details) {
+      this.needsCount = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
+      cx.timer.every(2000,cx => {
+        const count = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
+        if (!this.closed && count !== this.needsCount) { this.needsCount=count; cx.notify(); }
+      });
       cx.spawn(async cx => { while (!this.closed) { const command = await nextCommand(); if (this.closed) break; if (command === 'show') this.open(); else if (command === 'focus') this.rootFocus.focus(); } });
       return;
     }
     if (p.overlay) dialog = p.overlay;
     this.store = new RailStore(); this.scroll = ScrollHandle.new(); this.logFocus = cx.focus_handle();
+    this.page = 'stream'; this.expandedDays = new Set(); this.expandedReceipts = new Set();
+    this.expandedQuestions = new Set(); this.clampedQuestions = new Set(); this.expandedJournal = new Set(); this.needsAll = false;
+    this.hoveredReceipt = null;
+    this.showSystem = false; this.filter = InputState.new({placeholder:'Filter journal',value:''});
+    this.filter.on('change',(_event,cx) => cx.notify());
     this.idleInput = TextareaState.new({placeholder:'Tell the coordinator…',value:''});
     this.busyInput = TextareaState.new({placeholder:'Coordinator working…',value:''});
     this.input = this.idleInput;
@@ -45,9 +55,9 @@ export default class MissionLog extends View {
     cx.timer.every(1000,cx => { if (!this.closed && this.model().working) cx.notify(); });
   }
   close() { this.closed = true; if (this.details && dialog === this.overlayId) dialog = null; }
-  open() { if (!dialog) dialog = openOverlay({mod:MOD_NAME,props:{view:'log'},kind:'dialog',width:960,height:660}); }
+  open() { if (!dialog) dialog = openOverlay({mod:MOD_NAME,props:{view:'log'},kind:'dialog',width:680,height:760}); }
   dismiss() { if (this.overlayId) closeOverlay(this.overlayId); }
-  model() { return railModel({...this.store,now:Date.now()}); }
+  model() { return railModel({...this.store,now:Date.now(),expandedDays:this.expandedDays}); }
   didRefresh(cx) {
     const vm = this.model(), keys = vm.rows.map(row => row.key).join('|');
     const availabilityChanged = this.lastAvailable !== vm.available;
@@ -73,21 +83,9 @@ export default class MissionLog extends View {
     this.scroll.scroll_to_item(count-this.windowStart+(this.windowStart > 0 ? 1 : 0)+(count ? 1 : 2)); cx.notify();
   }
   logMetrics(vm = this.model()) {
-    let bottom = 18 + (this.windowStart > 0 ? 24 : 0), questionBottom = null;
-    const question = vm.questions[0]?.key;
-    for (const row of vm.rows.slice(this.windowStart,this.windowStart+100)) {
-      bottom += this.rowHeights.get(row.key) || 72;
-      if (row.key === question) questionBottom = bottom;
-    }
-    return {questionBottom,maxScroll:Math.max(0,bottom+64-this.logHeight)};
-  }
-  questionOffscreen(vm) {
-    if (!vm.questions.length) return false;
-    const index = vm.rows.findIndex(row => row.key === vm.questions[0].key);
-    if (index < this.windowStart) return true;
-    if (index >= this.windowStart+100) return false;
-    const metrics = this.logMetrics(vm), offset = this.follow ? metrics.maxScroll : this.scrollTop;
-    return metrics.questionBottom != null && metrics.questionBottom < offset + 1;
+    let bottom = 18 + (this.windowStart > 0 ? 24 : 0);
+    for (const row of vm.rows.slice(this.windowStart,this.windowStart+100)) bottom += this.rowHeights.get(row.key) || 72;
+    return {maxScroll:Math.max(0,bottom+64-this.logHeight)};
   }
   scrolled(delta,cx) {
     const metrics = this.logMetrics(), offset = this.follow ? metrics.maxScroll : this.scrollTop;
@@ -95,20 +93,26 @@ export default class MissionLog extends View {
     this.follow = this.scrollTop >= metrics.maxScroll-1; cx.notify();
   }
   older(cx) { this.follow = false; this.scrollTop = 0; this.windowStart = Math.max(0,this.windowStart-100); this.scroll.scroll_to_item(0); cx.notify(); }
-  jumpQuestion(cx) {
-    const vm = this.model(), row = vm.questions[0]; if (!row) return;
-    const index = vm.rows.findIndex(item => item.key === row.key);
+  jumpReceipt(key,cx) {
+    const vm = this.model(); let index = vm.rows.findIndex(item => item.key === key);
+    if (index < 0) {
+      for (const row of vm.rows) if (row.kind === 'day' && row.collapsed) this.expandedDays.add(row.day);
+      index = this.model().rows.findIndex(item => item.key === key);
+    }
+    if (index < 0) return;
     this.follow = false; this.windowStart = Math.max(0,index-5);
-    this.scrollTop = 18 + (this.windowStart > 0 ? 24 : 0);
-    for (const item of vm.rows.slice(this.windowStart,index)) this.scrollTop += this.rowHeights.get(item.key) || 72;
-    this.scroll.scroll_to_item(index-this.windowStart+(this.windowStart > 0 ? 1 : 0));
-    this.logFocus.focus(); cx.notify();
+    this.scroll.scroll_to_item(index-this.windowStart+(this.windowStart > 0 ? 1 : 0)); cx.notify();
   }
   chooseReply(row,option,cx) {
-    const reply = quickReply(row,option); if (!reply) return;
-    this.question = reply.question; this.input.set_value(reply.text); this.draft = reply.text;
+    if (row.kind !== 'question' || !row.questionId || !row.options?.includes(option)) return;
+    this.store.send(cx,this,{text:option,question:{id:row.questionId}});
+  }
+  answer(row,cx) {
+    if (row.kind !== 'question' || !row.questionId) return;
+    this.question = {id:row.questionId,time:clock(row.ts_ms),text:row.text};
     this.input.focus(); cx.notify();
   }
+  toggle(set,key,cx) { if (set.has(key)) set.delete(key); else set.add(key); cx.notify(); }
   focusLink(link,_cx) { this.dismiss(); for (const action of focusAction(link)) run(action.name,action.args); }
   showCoordinator(_cx) {
     const terminal = this.store.status?.coordinator?.terminal;
@@ -117,7 +121,7 @@ export default class MissionLog extends View {
   coordinatorAction(action,cx) {
     // Reuse the Board's registered handlers; this mod never owns lifecycle logic.
     run(`${DEPENDENCY_MOD}.${action}`); this.menuOpen = false; this.confirmRestart = false;
-    this.store.notice = action === 'show' ? 'Opening Coordinator Board / Timeline…' : 'Request sent. Coordinator status will confirm the change.';
+    this.store.notice = 'Request sent. Coordinator status will confirm the change.';
     cx.notify();
   }
   toggleMotion(cx) { this.reducedMotion = !this.reducedMotion; setShared(MOTION_KEY,this.reducedMotion); cx.notify(); }
@@ -141,10 +145,12 @@ export default class MissionLog extends View {
     if (this.details) return root.child(renderRail(this));
     const launcher = Button.new('mission-log-open').size_full().px(12).gap(8).justify_start().items_center()
       .track_focus(this.rootFocus).tab_index(0).text_color(t.muted).text_size(12)
-      .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip('Coordinator Mission Log')
-      .accessibility_label('Open Coordinator Mission Log').on_click(() => this.open())
+      .hover(s => s.bg(t.hover).text_color(t.foreground)).tooltip('Coordinator')
+      .accessibility_label('Open Coordinator').on_click(() => this.open())
       .child(svg(`mods/${MOD_NAME}/rail.svg`).w(16).h(22).text_color(t.accent));
-    if (this.width > 80) launcher.child(div().flex_1().min_w(0).truncate().child('Mission log'));
+    if (this.width > 80) launcher.child(div().flex_1().min_w(0).truncate().child('Coordinator'));
+    const count = shared('herdr-kit.coord.status.v1')?.counts?.needs_you || 0;
+    if (count) launcher.child(div().px(5).rounded(8).bg(t.blocked).text_color(t.accent_foreground).text_size(11).child(String(count)));
     return root.bg(t.chrome).child(launcher);
   }
 }

@@ -143,13 +143,18 @@ fn structural_layout_projection_does_not_rewrite_protocol_keys() {
     let mut layout = json!({"id":"root","type":"row","children":[
         {"id":"coord","content":{"mod":"kit-coord","props":{"key":"kit-coord.protocol.v1"}}},
         {"id":"usage","content":{"mod":"kit-usage"}},
+        {"id":"bar","content":{"mod":"herdr-kit-bar"}},
         {"id":"stock","content":{"mod":"spaces"}}]});
     let known = std::collections::BTreeSet::from_iter(
-        ["kit-coord", "kit-usage", "herdr-kit-bar"]
+        ["kit-coord", "kit-coord-ui", "kit-usage", "herdr-kit-bar"]
             .iter()
             .map(|s| s.to_string()),
     );
-    let bindings = BTreeMap::from([("kit-coord".into(), "kit-coord-pin".into())]);
+    let bindings = BTreeMap::from([
+        ("kit-coord".into(), "kit-coord-pin".into()),
+        ("kit-coord-ui".into(), "kit-coord-ui-pin".into()),
+        ("herdr-kit-bar".into(), "herdr-kit-bar-pin".into()),
+    ]);
     assert!(project_layout(
         &mut layout,
         &known,
@@ -162,8 +167,16 @@ fn structural_layout_projection_does_not_rewrite_protocol_keys() {
         layout["children"][0]["content"]["props"]["key"],
         "kit-coord.protocol.v1"
     );
-    assert_eq!(layout["children"][1]["id"], "stock");
-    assert_eq!(layout["children"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        layout["children"][1]["content"]["props"]["coord_mod"],
+        "kit-coord-pin"
+    );
+    assert_eq!(
+        layout["children"][1]["content"]["props"]["coord_ui_mod"],
+        "kit-coord-ui-pin"
+    );
+    assert_eq!(layout["children"][2]["id"], "stock");
+    assert_eq!(layout["children"].as_array().unwrap().len(), 3);
 }
 
 #[test]

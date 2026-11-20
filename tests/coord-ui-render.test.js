@@ -26,9 +26,9 @@ globalThis.railElement = element;
 const nativeUrl = 'data:text/javascript,'+encodeURIComponent(`
 export const div=()=>globalThis.railElement('div'),svg=()=>globalThis.railElement('svg');
 export class View {}
-export const ScrollHandle={new:()=>({})},TextareaState={new:()=>({})};
+export const ScrollHandle={new:()=>({})},TextareaState={new:()=>({})},InputState={new:()=>({})};
 export const h_flex=()=>globalThis.railElement('h_flex'),v_flex=()=>globalThis.railElement('v_flex');
-export const Button={new:id=>{const e=globalThis.railElement('button');e.id(id);return e;}},Textarea={new:()=>globalThis.railElement('textarea')},
+export const Button={new:id=>{const e=globalThis.railElement('button');e.id(id);return e;}},Checkbox={new:id=>{const e=globalThis.railElement('checkbox');e.id(id);return e;}},Textarea={new:()=>globalThis.railElement('textarea')},Input={new:()=>globalThis.railElement('input')},
 TextView={markdown:()=>globalThis.railElement('markdown')},Popover={new:()=>globalThis.railElement('popover')};
 `);
 const hostUrl = 'data:text/javascript,'+encodeURIComponent(`
@@ -43,36 +43,130 @@ registerHooks({resolve(specifier,context,next) {
   return url ? {url,shortCircuit:true} : next(specifier,context);
 }});
 const {renderRail} = await import('../mods/kit-coord-ui/render.js');
-const {default:MissionLog} = await import('../mods/kit-coord-ui/main.js');
 function all(node) {return typeof node === 'object' && node ? [node,...node.nodes.flatMap(all)] : [];}
-test('an off-screen question remains reachable without invalidating the native log',() => {
-  const question = {key:'question:1',kind:'question',label:'Question',ts_ms:1000,text:'Queue the install?',questionId:'q1',options:[],links:[]};
-  const vm = {rows:[question],questions:[question],available:true,canSend:true,working:false,head:'Coordinator idle · listening',step:'One question is waiting',elapsed:'now',status:'running',active:2,sync:'09:36'};
-  const view = {width:380,reducedMotion:true,store:{status:{coordinator:{}},notice:''},rowHeights:new Map(),windowStart:0,
-    rootFocus:{},logFocus:{},menuFocus:{},scroll:{},input:{},draft:'',question:null,model:()=>vm,key(){},questionOffscreen:()=>true};
-  const root = renderRail(view), nodes = all(root);
-  const pill = nodes.find(node => node.attributes.id === 'rail-question-jump');
-  assert.ok(pill,'the pending question is reachable while its row is off-screen');
-  assert.ok(pill.nodes.includes('↑ 1 question waiting'));
-  const wrapper = nodes.find(node => node.nodes.some(child => child?.attributes?.id === 'rail-log'));
-  const floating = wrapper.nodes.find(node => node.attributes.absolute);
-  assert.ok(floating,'the question affordance must not consume vertical log space');
-  assert.ok(all(floating).includes(pill));
+function fixture(overrides = {}) {
+  const vm = {rows:[],questions:[],needsYou:[],available:true,canSend:true,working:false,status:'running',elapsed:'0:00',...overrides};
+  const view = {width:680,reducedMotion:true,store:{status:{coordinator:{}},notice:''},rowHeights:new Map(),windowStart:0,
+    expandedDays:new Set(),expandedReceipts:new Set(),expandedQuestions:new Set(),clampedQuestions:new Set(),expandedJournal:new Set(),hoveredReceipt:null,
+    rootFocus:{},logFocus:{},menuFocus:{},scroll:{},input:{},draft:'',question:null,follow:true,model:()=>vm,key(){},
+    toggle(set,key,cx){if (set.has(key)) set.delete(key); else set.add(key); cx.notify();}};
+  return {vm,view};
+}
+const byId = (nodes,id) => nodes.find(node => node.attributes?.id === id);
+test('needs-you is pinned and limited to two, with overflow reachable',() => {
+  const question = n => ({kind:'question',questionId:`q${n}`,text:`Question ${n}`,title:'Work',ts_ms:1000,options:['Yes']});
+  const {view} = fixture({needsYou:[question(1),question(2),question(3)]});
+  const nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'needs-0')); assert.ok(byId(nodes,'needs-1'));
+  assert.equal(byId(nodes,'needs-2'),undefined); assert.ok(byId(nodes,'needs-all'));
+  assert.ok(byId(nodes,'needs-option-0-0')); assert.ok(byId(nodes,'needs-reply-0'));
 });
-
-test('jumping to a measured question hides its pill until it scrolls above the log again',() => {
-  const question = {key:'q1'}, reply = {key:'a1'};
-  const vm = {rows:[question,reply],questions:[question]};
-  const view = Object.assign(Object.create(MissionLog.prototype),{
-    rowHeights:new Map([['q1',100],['a1',500]]),logHeight:300,scrollTop:0,windowStart:0,follow:true,
-    model:()=>vm,scroll:{scroll_to_item(){}},logFocus:{focus(){}},
-  });
+test('receipt actions replace metadata on hover or selection; trace stays scoped',() => {
+  const row = {key:'receipt:w',kind:'receipt',title:'Build',text:'Working',state:'running',ts_ms:1000,space:'Repo',duration:'2m',
+    trace:[{ts_ms:1000,text:'Placed here'}],links:[{kind:'terminal',target:'t'},{kind:'space',target:'s'}]};
+  const {view} = fixture({rows:[row]}), cx = {notify(){},stop_propagation(){}};
+  let nodes = all(renderRail(view));
+  assert.ok(nodes.some(n => n.nodes?.includes('Repo  2m')));
+  assert.ok(nodes.some(n => n.nodes?.includes('Working') && n.attributes?.truncate),'receipt detail stays on one line');
+  assert.equal(byId(nodes,'trace-receipt:w'),undefined); assert.equal(byId(nodes,'terminal-receipt:w'),undefined);
+  byId(nodes,'receipt:w').attributes.on_hover(true,cx);
+  nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'trace-receipt:w')); assert.ok(byId(nodes,'terminal-receipt:w'));
+  assert.ok(!nodes.some(n => n.nodes?.includes('Repo  2m')));
+  byId(nodes,'receipt:w').attributes.on_hover(false,cx);
+  byId(nodes,'receipt-select-receipt:w').attributes.on_click({},cx);
+  nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'trace-receipt:w')); assert.ok(nodes.some(n => n.nodes?.includes('Placed here')));
+  assert.ok(byId(nodes,'receipt-link-receipt:w-1'));
+  assert.ok(!nodes.some(n => n.attributes?.spin),'reduced motion does not animate');
+});
+test('question clamp measures wrapped lines and expands without truncating text',() => {
+  const text = 'A question that wraps over three lines at this width';
+  const {view} = fixture({needsYou:[{kind:'question',questionId:'q1',text,title:'Work',ts_ms:1000,options:[]}]});
   const cx = {notify(){}};
-  assert.equal(view.questionOffscreen(vm),true);
-  view.jumpQuestion(cx);
-  assert.equal(view.questionOffscreen(vm),false);
-  view.scrolled(-110,cx);
-  assert.equal(view.questionOffscreen(vm),true);
-  view.scrolled(100,cx);
-  assert.equal(view.questionOffscreen(vm),false);
+  let nodes = all(renderRail(view));
+  const content = nodes.find(n => n.nodes?.includes(text));
+  assert.equal(content.attributes.line_height,'18px');
+  assert.ok(nodes.some(n => n.attributes?.max_h === 54 && n.attributes?.overflow_hidden));
+  content.attributes.on_size_change({height:18},cx);
+  nodes = all(renderRail(view));
+  assert.ok(nodes.some(n => n.nodes?.includes(text)));
+  assert.equal(byId(nodes,'needs-more-text-0'),undefined);
+  content.attributes.on_size_change({height:72},cx);
+  nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'needs-more-text-0'));
+  view.expandedQuestions.add('q1');
+  nodes = all(renderRail(view));
+  assert.ok(!nodes.some(n => n.attributes?.max_h === 54));
+  assert.ok(nodes.some(n => n.nodes?.includes(text)));
+});
+test('off state replaces the composer with Start',() => {
+  const {view} = fixture({available:false,canSend:false,status:'off'});
+  const nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'rail-start')); assert.equal(byId(nodes,'rail-send'),undefined);
+});
+test('stream renders at most one window of rows',() => {
+  const rows = Array.from({length:250},(_,i) => ({key:`p${i}`,kind:'person',text:`message ${i}`,ts_ms:i}));
+  const {view} = fixture({rows}); view.windowStart=100;
+  const nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'entry-p100')); assert.ok(byId(nodes,'entry-p199'));
+  assert.equal(byId(nodes,'entry-p200'),undefined);
+});
+test('journal filters events and exposes raw fields on expansion',() => {
+  const {view} = fixture(); view.page='journal'; view.showSystem=false;
+  view.filter={value:() => 'progress'};
+  view.store.board={workstreams:[]};
+  view.store.journal={entries:[
+    {seq:1,ts_ms:1000,kind:'task.progress',data:{summary:'Progress update '.repeat(30)}},
+    {seq:2,ts_ms:2000,kind:'watcher.started',data:{}},
+  ],has_more:true};
+  view.expandedJournal.add('journal:1');
+  const nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'journal-journal:1')); assert.equal(byId(nodes,'journal-journal:2'),undefined);
+  const row = byId(nodes,'journal-journal:1');
+  assert.equal(row.attributes.h_auto,true);
+  assert.equal(row.attributes.flex_shrink_0,true);
+  assert.ok(all(row).some(n => n.nodes?.some(x => typeof x === 'string' && x.includes('Progress update '.repeat(3)))));
+  assert.ok(nodes.some(n => n.nodes?.some(x => typeof x === 'string' && x.includes('"task.progress"'))));
+  assert.ok(byId(nodes,'journal-older'));
+});
+test('journal uses stream day labels and a controlled system-events checkbox',() => {
+  const {view} = fixture(); view.page='journal'; view.showSystem=false; view.journalStart=0;
+  view.filter={value:() => ''}; view.store.board={workstreams:[]};
+  const now = new Date(), today = new Date(now.getFullYear(),now.getMonth(),now.getDate(),12);
+  const yesterday = new Date(today.getFullYear(),today.getMonth(),today.getDate()-1,12);
+  const older = new Date(2020,0,2,12);
+  view.store.journal={entries:[today,yesterday,older].map((date,i) =>
+    ({seq:i+1,ts_ms:date.getTime(),kind:'task.progress',data:{summary:'Progress'}}))};
+  const nodes = all(renderRail(view)), checkbox = byId(nodes,'journal-system');
+  assert.equal(checkbox.kind,'checkbox'); assert.equal(checkbox.attributes.checked,false);
+  assert.equal(checkbox.attributes.accessibility_label,'Show system events');
+  assert.ok(nodes.some(n => n.nodes?.includes('Today')));
+  assert.ok(nodes.some(n => n.nodes?.includes('Yesterday')));
+  assert.ok(nodes.some(n => n.nodes?.includes('Thu Jan 2, 2020')));
+  const controls = nodes.find(n => n.nodes?.includes(checkbox));
+  assert.equal(controls.attributes.pt,12);
+  assert.ok(all(checkbox).some(n => n.nodes?.includes('Show system events') && n.attributes.justify_start));
+  let notifications=0; view.journalStart=12;
+  checkbox.attributes.on_change(true,{notify(){notifications++;}});
+  assert.equal(view.showSystem,true); assert.equal(view.journalStart,0); assert.equal(notifications,1);
+  const checked = byId(all(renderRail(view)),'journal-system');
+  assert.equal(checked.attributes.checked,true);
+  checked.attributes.on_change(false,{notify(){notifications++;}});
+  assert.equal(view.showSystem,false); assert.equal(notifications,2);
+});
+test('collapsed past-day summary and echo link are present',() => {
+  const rows = [
+    {key:'day:y',kind:'day',day:'2020-01-01',label:'Yesterday',collapsed:true,countLabel:'2 asks',summary:'all done'},
+    {key:'day:x',kind:'day',day:'2019-12-31',label:'Tue Dec 31, 2019',collapsed:true,countLabel:'1 workstream',summary:'all done'},
+    {key:'echo:1',kind:'echo',receiptKey:'receipt:w',title:'Build',text:'Finished',state:'done'},
+  ];
+  const {view} = fixture({rows}), nodes = all(renderRail(view));
+  assert.ok(nodes.some(n => n.nodes?.includes('▸ Yesterday — 2 asks, all done')));
+  assert.ok(nodes.some(n => n.nodes?.includes('▸ Tue Dec 31, 2019 — 1 workstream, all done')));
+  const day = byId(nodes,'day-day:y');
+  assert.equal(day.attributes.justify_start,true);
+  assert.equal(day.attributes.text_color,'#9a9ea5');
+  assert.ok(nodes.some(n => n.nodes?.includes('Build — Finished') && n.attributes?.truncate),'echo text stays on one line');
+  assert.ok(byId(nodes,'echo-echo:1'));
 });

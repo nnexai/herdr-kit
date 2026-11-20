@@ -2,9 +2,11 @@
 
 ## Unreleased
 
-- Align the Mission Log composer and make it wrap and grow up to six lines;
+- Replace the separate coordinator views with one dialog for needs-you items,
+  messages, workstream receipts and the journal; route the status item to it.
+- Align the Coordinator composer and make it wrap and grow up to six lines;
   Enter inserts a newline and the send icon delivers the draft.
-- Project all open questions from the coordinator fold for Mission Log, including
+- Project all open questions from the coordinator fold for the dialog, including
   questions sharing a blocked episode, and close their indicators on any resolution.
 - Collect unused generations containing Herdr-generated `jsconfig.json` inside
   nested mod roots, using the same exact-name exception as per-mod receipts.
@@ -62,11 +64,8 @@
   report steering/new-turn delivery in JSON, and retain startup/permission
   refusals. Update the coordinator prompt and add the CLI regression.
 
-- Add the standalone `kit-coord-ui` Rail / Mission Log: a native coordinator
-  conversation with truthful turn state, elapsed time, question draft pills,
-  existing lifecycle/focus actions and reduced motion. Keep Board/Timeline
-  and the raw terminal available; fix the narrow working placeholder and
-  preserve the motion preference across revision-named installs.
+- Add the standalone `kit-coord-ui` conversation view with truthful turn state,
+  elapsed time, question responses, lifecycle/focus actions and reduced motion.
 - Add person-only `coord say` and branch-aware `coord conversation` using
   the recorded OMP session, with exact-text delivery and explicit source states.
 
@@ -74,27 +73,17 @@
   UI/UX and visual design. Route design work there instead of `coord-deep`,
   and document custom role/model selection, resume, escalation and statistics.
 - Add coordinator workstreams, task delegation, a visible watcher and native
-  status, board and timeline views, with journal-based insights and statistics.
+  status, with journal-based insights and statistics.
 - Integrate usage into the existing 28px statusbar, replacing the bottom-right
   command-palette hint with a compact readout; remove the separate usage row.
 - Place compact Limits and coordinator controls together on the right, with
   machine and agent indicators on the left.
-- Refine coordinator board metadata, action visibility and timeline readability.
-- Redesign the Coordinator Board around grouped workstreams, title-led task rows
-  and a stable selected-item action dock. Move technical metadata into Details,
-  quiet healthy diagnostics, improve narrow layouts and show Start only once
-  when the coordinator is off. Keep closed task titles readable and centre
-  empty-state explanations with their title and action.
 - Report an unauthorized coordinator post-activation hook as skipped rather
   than as a failed activation hook, without changing coordinator permissions.
-- Add Clear context to the Coordinator dialog, with an idle handoff, confirmed
-  immediate restart, dialog shortcut and bindable mod command.
+- Add Clear context to the Coordinator dialog, with an idle handoff and
+  confirmed immediate restart.
 - Confirm coordinator terminal loss against Herdr before ending a session,
   so buffered events cannot mark a live replacement missing after a restart.
-- Give Coordinator Board and Timeline one shared popup frame at every width,
-  and replace the Board's bottom action dock with selected-row actions. Keep
-  actions keyboard-reachable without new shortcuts; quiet healthy diagnostics
-  on both tabs and keep coordinator controls in the same header.
 
 ## 0.1.0
 

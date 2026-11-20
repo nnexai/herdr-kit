@@ -9,7 +9,7 @@ A refinement of the research: installed `hc` already provides `run --on`, `exec 
 ```mermaid
 flowchart LR
   subgraph D["Desktop: authority"]
-    DA[herdr-app + Board/Mission Log]
+    DA[herdr-app + Coordinator dialog]
     DC[herdr-core serve]
     CO[kit-coord coordinator + watcher]
     DJ[(coord/ journal, briefs, results)]
@@ -131,7 +131,7 @@ The command is idempotent and can be re-run. `herdr-kit fleet sync` (§6) keeps 
 | M1 | **Remote delegate.** `--on` for rungs 3 and 4 on a manually added host, with remote brief, outbox report and result pull. Remote release is retained as `remote_release_manual`, and the person cleans up. | M, ~3–4 d | P1: `hc machine add box --install`, then `hc run --on box --bg --keep --name probe --label coord.task=probe --cwd ~/dev/herdr-kit -- omp --model @smol "reply hi"`. Check `hc get box/tN`, `hc events` working/idle words, `hc send` steering, `HC_TERMINAL_ID` inside, and whether `herdr-app ls` shows the remote space. | Whether labels, `--keep` and the app space/tab view work for remote terminals. |
 | M2 | **Host-aware reconcile and release.** Three-state presence, `host_unreachable` retention, remote Git checks, resume on host, epoch-tagged launches. | M, ~1 wk | P2: during P1, run `tailscale down` on the box, then record what `hc get box/tN`, `hc ls --label` and `hc events` return, compared with a truly killed terminal. | Whether "unreachable" and "absent" can be told apart at all. Until they can, [reconcile.rs#L353](../../crates/kit-coord/src/coord/reconcile.rs#L353) must skip remote resources. |
 | M3 | **`machine add --worker`.** Registers the host with the coordinator; a new worker machine in under 10 minutes. | S, ~1–2 d | P3: bootstrap a fresh VM by hand with a stopwatch, and test headless omp login. | omp login without a browser, and linger permissions. |
-| M4 (optional) | **Authority on the always-on box.** `kit authority move` with an epoch bump; desktop Board/Mission Log run through `hc exec --on box kit-coord …`. | L, ~1–2 wk | P4: run herdr-app, or only `herdr-core`, on the box, and run `kit-coord status`/`board` there through `hc exec --on` from the desktop mods. | kit-coord's dependency on herdr-app for spaces ([adapter.rs#L133](../../crates/kit-coord/src/coord/adapter.rs#L133)) on a headless host. |
+| M4 (optional) | **Authority on the always-on box.** `kit authority move` with an epoch bump; the desktop Coordinator dialog runs through `hc exec --on box kit-coord …`. | L, ~1–2 wk | P4: run herdr-app, or only `herdr-core`, on the box, and run `kit-coord status`/`board` there through `hc exec --on` from the desktop mods. | kit-coord's dependency on herdr-app for spaces ([adapter.rs#L133](../../crates/kit-coord/src/coord/adapter.rs#L133)) on a headless host. |
 
 Order: M0 can ship on its own. For the coordinator milestones, run P1 and P2 before writing any code. If P2 shows that unreachable and absent cannot be distinguished, M1 ships with remote resources excluded from automatic release.
 
@@ -201,6 +201,6 @@ The script is `herdr-kit machine add`: it installs `hc`, rustup, omp, the clone 
 
 **Reaching the UI from another device.**
 
-- **Board and Mission Log:** these mods execute a local `kit-coord` and watch the local journal ([mods/kit-coord/store.js](../../mods/kit-coord/store.js)). On a laptop they therefore show the laptop's empty data root. The fix is small: a configured authority machine makes the mods run `hc exec --on <authority> kit-coord …` and poll instead of `watchFolder`. This is the same change M4 needs. Until then, attach to the coordinator terminal with `hc attach <authority>/tN` over Tailscale SSH, from any device, phones included via an SSH app [INFERENCE: untested].
+- **Coordinator dialog:** the mods execute a local `kit-coord` and watch the local journal ([status store](../../mods/kit-coord/store.js), [dialog store](../../mods/kit-coord-ui/store.js)). On a laptop they therefore show the laptop's empty data root. A configured authority machine could make the mods run `hc exec --on <authority> kit-coord …` and poll instead of `watchFolder`. This is the same change M4 needs. Until then, attach to the coordinator terminal with `hc attach <authority>/tN` over Tailscale SSH [INFERENCE: untested].
 - **Telegram:** there is no code yet. Plan one bridge process on the authority, or on the always-on box once it is the authority. It long-polls outbound, so it needs no inbound port, accepts only the allowlisted user ID, sends `Needs you` questions once per episode, and turns replies into person input. It is useful for answering, not for reviewing work.
-- **Not used:** Tailscale Funnel and public ports. A later read-only web Board would be tailnet-only, via `tailscale serve`.
+- **Not used:** Tailscale Funnel and public ports. A later read-only web view would be tailnet-only, via `tailscale serve`.
