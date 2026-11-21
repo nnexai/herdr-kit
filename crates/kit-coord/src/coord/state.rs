@@ -9,7 +9,7 @@ use super::kinds::{
     TaskOutcome, Tier, WsOutcome,
 };
 
-pub const FOLD_VERSION: u32 = 7;
+pub const FOLD_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {

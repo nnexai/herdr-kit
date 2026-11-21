@@ -150,7 +150,8 @@ overrides the built-in one and is never written by updates; `kit-coord roles
 | `coord-deep` | `omp` | `@slow` | `dir` | Open technical design, unclear cause, high cost of error |
 | `coord-design` | `omp` | `@design` | `dir` | UI/UX, interaction, layout and visual design, including open-ended work |
 | `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | Antigravity CLI delegate on Gemini 4 Neon (High) |
-| `claude-default` | `claude` | `sonnet` | `preset` | Claude Code delegate for clear-goal tasks |
+| `claude-default` | `claude` | `haiku` | `preset` | Claude Code delegate (lightweight / default) |
+| `claude-sonnet` | `claude` | `sonnet` | `preset` | Claude Code delegate for clear-goal tasks |
 | `claude-opus` | `claude` | `opus` (`effort: high`) | `preset` | Claude Code delegate for open technical design or complex work |
 | `codex-default` | `codex` | `gpt-6-luna` | `codex-rollout` | Codex delegate (with per-launch trust override for trusted repos) |
 | `copilot-default` | `copilot` | `gpt-6-luna` | `preset` | Copilot CLI delegate |
@@ -218,8 +219,10 @@ For known harnesses, `kit-coord` injects the native flag into `start` (never
 `resume`, so resumed sessions keep their original model): `--model` for `omp`,
 `agy`, `claude` and `copilot`; `-m` for `codex`; `--effort` for `agy` and
 `claude`; `--thinking` for `omp`. Custom harnesses can reference `{model}` and
-`{effort}` placeholders directly in `start`. Specifying `model` or `effort` in
-both front matter and `start`, or passing an invalid effort level for a known
+`{effort}` placeholders directly in `start`; `{model}` and `{effort}` are
+rejected in `resume` so role edits cannot alter a resumed session's model.
+Specifying `model` or `effort` in both front matter and `start` (including
+`--flag=value` spellings), or passing an invalid effort level for a known
 harness, is rejected when parsing the role.
 
 The person must have any referenced OMP model role configured in OMP. Select a
@@ -603,9 +606,9 @@ Standing instructions for this role.
 
 - `start` and `resume` are split into arguments like a shell would, then placeholders are replaced inside single arguments; nothing is passed through a shell.
 - Placeholders: `{brief}` (the whole first message as one argument), `{session_dir}`, `{session_id}`, `{repo_root}`, `{cwd}`, `{model}`, `{effort}`.
-- `model` and `effort` are plain front-matter config choices injected into `start` (never `resume`) using each known harness's native flags (`--model`/`-m`, `--effort`/`--thinking`), or substituted into `{model}`/`{effort}` placeholders for custom harnesses.
-- `session` says how the session id is obtained: read from the session folder (`dir`, omp), generated up front and passed as `{session_id}` (`preset`, claude/copilot), found in codex's rollout files by folder (`codex-rollout`), discovered from Antigravity CLI's step-0 transcript under `~/.gemini/antigravity-cli/brain/<id>/` by unique task prompt markers (`agy-conversation`), or not resumable (`none`).
-- The five `coord-*` built-ins use `omp`. Five more built-ins—`agy-default` (Gemini 4 Neon High), `claude-default` (Sonnet), `claude-opus` (Opus with `effort: high`), `codex-default` (with codex's per-launch trust override for `{repo_root}`) and `copilot-default`—carry the start and resume commands for the other harnesses. The models named in built-ins are starting values the person is expected to override or duplicate in `roles/`.
+- `model` and `effort` are plain front-matter config choices injected into `start` (never `resume`) using each known harness's native flags (`--model`/`-m`, `--effort`/`--thinking`), or substituted into `{model}`/`{effort}` placeholders in `start` for custom harnesses (`{model}` and `{effort}` are rejected in `resume`).
+- `session` says how the session id is obtained: read from the session folder (`dir`, omp), generated up front and passed as `{session_id}` (`preset`, claude/copilot), found in codex's rollout files by folder (`codex-rollout`), discovered from Antigravity CLI's step-0 `USER_INPUT` transcript under `~/.gemini/antigravity-cli/brain/<id>/` by exact trailing reporting footer or oversized-brief prompt (excluding claimed IDs and failing closed on ambiguity) (`agy-conversation`), or not resumable (`none`).
+- The five `coord-*` built-ins use `omp`. Six more built-ins—`agy-default` (Gemini 4 Neon High), `claude-default` (Haiku), `claude-sonnet` (Sonnet), `claude-opus` (Opus with `effort: high`), `codex-default` (with codex's per-launch trust override for `{repo_root}`) and `copilot-default`—carry the start and resume commands for the other harnesses. The models named in built-ins are starting values the person is expected to override or duplicate in `roles/`.
 
 ### What a delegate is told
 

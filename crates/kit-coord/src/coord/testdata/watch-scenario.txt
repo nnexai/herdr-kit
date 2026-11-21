@@ -1886,7 +1886,7 @@ None
 ## Open questions
 
 state: {
-  "fold_version": 7,
+  "fold_version": 8,
   "last_seq": 156,
   "last_ts_ms": 1800039801000,
   "workstreams": {

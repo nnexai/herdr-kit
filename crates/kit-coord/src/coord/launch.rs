@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use super::adapter::{RunSpec, Term};
 use super::ids::{TaskId, WsId};
 use super::kinds::{SessionMode, SessionRef};
 use super::paths::CoordPaths;
+use super::state::State;
 use anyhow::Result;
 use serde_json::json;
 
@@ -15,6 +17,26 @@ use serde_json::json;
 const MAX_AGY_TRANSCRIPT_LINE: u64 = 512 * 1024;
 /// Tolerance for coarse filesystem mtime granularity when matching new sessions.
 const AGY_MTIME_SKEW_MS: u64 = 2_000;
+const DELEGATE_FOOTER_HEADER: &str = "\n---\nReporting (fixed by the coordinator system):\n";
+const DELEGATE_FOOTER_TAIL: &str =
+    "- After reporting, stop and wait: a follow-up may arrive in this session.";
+
+/// Structured provenance matcher for discovering an Antigravity CLI
+/// conversation from its step-0 `USER_INPUT` record without matching unrelated
+/// briefs that merely cite an earlier task's result path.
+#[derive(Clone, Debug, Default)]
+pub enum SessionMatcher {
+    #[default]
+    None,
+    Delegate {
+        result: PathBuf,
+        brief: PathBuf,
+    },
+    Coordinator {
+        cli: String,
+        brief: PathBuf,
+    },
+}
 
 pub struct LaunchPlan {
     pub name: String,
@@ -26,7 +48,8 @@ pub struct LaunchPlan {
     pub cwd: PathBuf,
     pub argv: Vec<String>,
     pub session: Option<SessionRef>,
-    pub session_markers: Vec<String>,
+    pub session_matcher: SessionMatcher,
+    pub claimed_sessions: BTreeSet<String>,
     pub tab_name: String,
     pub space_name: Option<String>,
 }
@@ -53,30 +76,46 @@ impl std::error::Error for PostLaunchError {
     }
 }
 
-/// Unique markers guaranteed to appear in a delegate's initial prompt (either the
-/// fixed reporting footer's result path or the oversized-brief fallback path).
-pub fn task_session_markers(
+/// Provenance matcher for a delegate's initial prompt (either its trailing
+/// fixed reporting footer or its oversized-brief fallback).
+pub fn task_session_matcher(
     paths: &CoordPaths,
     task: &TaskId,
     brief: Option<&Path>,
-) -> Vec<String> {
-    let mut markers = vec![paths.result(task).to_string_lossy().into_owned()];
-    let brief_path = brief
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| paths.brief(task.as_str()));
-    let brief_str = brief_path.to_string_lossy().into_owned();
-    if !markers.contains(&brief_str) {
-        markers.push(brief_str);
+) -> SessionMatcher {
+    SessionMatcher::Delegate {
+        result: paths.result(task),
+        brief: brief
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| paths.brief(task.as_str())),
     }
-    markers
 }
 
-/// Markers guaranteed to appear in a coordinator's initial prompt.
-pub fn coordinator_session_markers(cli: &str, brief: &Path) -> Vec<String> {
-    vec![
-        brief.to_string_lossy().into_owned(),
-        format!("`kit` is: {cli}"),
-    ]
+/// Provenance matcher for a coordinator's initial prompt.
+pub fn coordinator_session_matcher(cli: &str, brief: &Path) -> SessionMatcher {
+    SessionMatcher::Coordinator {
+        cli: cli.to_owned(),
+        brief: brief.to_path_buf(),
+    }
+}
+
+/// Session IDs already bound to any task or coordinator session in `state`.
+pub fn claimed_session_ids(state: &State) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    for task in state.tasks.values() {
+        if let Some(id) = task.session.as_ref().and_then(|s| s.id.as_ref()) {
+            ids.insert(id.clone());
+        }
+    }
+    if let Some(id) = state
+        .coordinator
+        .session
+        .as_ref()
+        .and_then(|s| s.id.as_ref())
+    {
+        ids.insert(id.clone());
+    }
+    ids
 }
 
 pub fn launch(ctx: &Ctx, plan: &LaunchPlan) -> Result<Launched> {
@@ -146,7 +185,8 @@ pub fn launch_with_started(
             s,
             &plan.cwd,
             term.created_ms,
-            &plan.session_markers,
+            &plan.session_matcher,
+            &plan.claimed_sessions,
             10_000,
         )
         .unwrap_or_else(|| s.clone())
@@ -159,7 +199,8 @@ pub fn discover_session(
     s: &SessionRef,
     cwd: &Path,
     since_ms: u64,
-    markers: &[String],
+    matcher: &SessionMatcher,
+    claimed: &BTreeSet<String>,
     wait_ms: u64,
 ) -> Option<SessionRef> {
     if s.id.is_some() || matches!(s.mode, SessionMode::None | SessionMode::Preset) {
@@ -192,7 +233,7 @@ pub fn discover_session(
                 .and_then(|root| newest_rollout(&root, cwd, since_ms)),
             SessionMode::AgyConversation => kit_core::paths::agy_data_dir()
                 .ok()
-                .and_then(|root| newest_agy_conversation(&root, since_ms, markers)),
+                .and_then(|root| unique_agy_conversation(&root, since_ms, matcher, claimed)),
             _ => None,
         };
         if let Some(id) = found {
@@ -229,18 +270,73 @@ fn no_relative_symlinks(base: &Path, parts: &[&str]) -> Option<PathBuf> {
     Some(cur)
 }
 
-/// Discovers the newest Antigravity CLI conversation whose step-0 `USER_INPUT`
-/// transcript entry contains one of `markers`. Fails closed when `markers` is
-/// empty so concurrent sessions (e.g. `agy -p /usage` or sibling delegates)
-/// cannot be misattributed.
-fn newest_agy_conversation(root: &Path, since_ms: u64, markers: &[String]) -> Option<String> {
-    if markers.iter().all(|m| m.is_empty()) {
+fn agy_user_request(content: &str) -> &str {
+    if let Some(rest) = content.strip_prefix("<USER_REQUEST>") {
+        if let Some(end) = rest.rfind("</USER_REQUEST>") {
+            return rest[..end].trim();
+        }
+    }
+    content.trim()
+}
+
+fn matches_agy_prompt(content: &str, matcher: &SessionMatcher) -> bool {
+    let req = agy_user_request(content);
+    match matcher {
+        SessionMatcher::None => false,
+        SessionMatcher::Delegate { result, brief } => {
+            let fallback = format!(
+                "Read your full brief in {} before doing anything else.",
+                brief.display()
+            );
+            if req == fallback {
+                return true;
+            }
+            let Some((_, footer)) = req.rsplit_once(DELEGATE_FOOTER_HEADER) else {
+                return false;
+            };
+            let result_str = result.to_string_lossy();
+            let exact_result_line = format!(
+                "Long results go into {result_str}; add --result {result_str} to the report."
+            );
+            footer.trim_end().ends_with(DELEGATE_FOOTER_TAIL) && footer.contains(&exact_result_line)
+        }
+        SessionMatcher::Coordinator { cli, brief } => {
+            let fallback = format!(
+                "Read your full brief in {} before doing anything else.",
+                brief.display()
+            );
+            if req == fallback {
+                return true;
+            }
+            if let Ok(saved) = fs::read_to_string(brief) {
+                if !saved.trim().is_empty() && req == saved.trim() {
+                    return true;
+                }
+            }
+            !cli.is_empty()
+                && req.contains("## Commands\n")
+                && req.contains(&format!("`kit` is: {cli}\n"))
+                && req.contains("\n## Startup read\n")
+        }
+    }
+}
+
+/// Discovers the unique Antigravity CLI conversation whose step-0 `USER_INPUT`
+/// transcript entry matches `matcher` and is not already in `claimed`. Fails
+/// closed when `matcher` is `None` or when multiple conversations match.
+fn unique_agy_conversation(
+    root: &Path,
+    since_ms: u64,
+    matcher: &SessionMatcher,
+    claimed: &BTreeSet<String>,
+) -> Option<String> {
+    if matches!(matcher, SessionMatcher::None) {
         return None;
     }
     let brain = no_relative_symlinks(root, &["brain"])?;
     let entries = fs::read_dir(&brain).ok()?;
     let min_ms = u128::from(since_ms.saturating_sub(AGY_MTIME_SKEW_MS));
-    let mut best: Option<(std::time::SystemTime, String)> = None;
+    let mut matched: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let Ok(ft) = entry.file_type() else {
             continue;
@@ -251,7 +347,7 @@ fn newest_agy_conversation(root: &Path, since_ms: u64, markers: &[String]) -> Op
         let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        if !valid_conversation_id(&id) {
+        if !valid_conversation_id(&id) || claimed.contains(&id) {
             continue;
         }
         let Some(logs) = no_relative_symlinks(&brain, &[&id, ".system_generated", "logs"]) else {
@@ -275,7 +371,6 @@ fn newest_agy_conversation(root: &Path, since_ms: u64, markers: &[String]) -> Op
             .unwrap_or_default()
             .as_millis()
             < min_ms
-            || best.as_ref().is_some_and(|(t, _)| *t >= mtime)
         {
             continue;
         }
@@ -293,20 +388,20 @@ fn newest_agy_conversation(root: &Path, since_ms: u64, markers: &[String]) -> Op
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        if value["type"].as_str() != Some("USER_INPUT") && value["step_index"].as_u64() != Some(0) {
+        if value["type"].as_str() != Some("USER_INPUT") || value["step_index"].as_u64() != Some(0) {
             continue;
         }
         let Some(content) = value["content"].as_str() else {
             continue;
         };
-        if markers
-            .iter()
-            .any(|m| !m.is_empty() && content.contains(m.as_str()))
-        {
-            best = Some((mtime, id));
+        if matches_agy_prompt(content, matcher) {
+            matched.push(id);
+            if matched.len() > 1 {
+                return None;
+            }
         }
     }
-    best.map(|(_, id)| id)
+    (matched.len() == 1).then(|| matched.pop().unwrap())
 }
 
 fn newest_rollout(root: &Path, cwd: &Path, since_ms: u64) -> Option<String> {
@@ -455,7 +550,8 @@ mod tests {
                 id: Some("sid".into()),
                 dir: None,
             }),
-            session_markers: vec![],
+            session_matcher: SessionMatcher::None,
+            claimed_sessions: BTreeSet::new(),
             tab_name: "task".into(),
             space_name: Some("space".into()),
         };
@@ -547,7 +643,8 @@ mod tests {
             cwd: tmp.path().into(),
             argv: vec!["omp".into()],
             session: None,
-            session_markers: vec![],
+            session_matcher: SessionMatcher::None,
+            claimed_sessions: BTreeSet::new(),
             tab_name: "task".into(),
             space_name: None,
         };
@@ -565,8 +662,9 @@ mod tests {
             id: None,
             dir: Some(tmp.path().into()),
         };
+        let empty = BTreeSet::new();
         assert_eq!(
-            discover_session(&ctx, &s, tmp.path(), 0, &[], 0)
+            discover_session(&ctx, &s, tmp.path(), 0, &SessionMatcher::None, &empty, 0)
                 .unwrap()
                 .id
                 .as_deref(),
@@ -578,50 +676,94 @@ mod tests {
             dir: None,
         };
         assert_eq!(
-            discover_session(&ctx, &none, tmp.path(), 0, &[], 0),
+            discover_session(&ctx, &none, tmp.path(), 0, &SessionMatcher::None, &empty, 0),
             Some(none)
         );
     }
     #[test]
-    fn discovers_agy_conversation_by_unique_marker_and_rejects_decoys_and_symlinks() {
+    fn discovers_agy_conversation_strictly_and_rejects_cross_references_bad_records_and_ambiguity()
+    {
         let tmp = tempfile::tempdir().unwrap();
         let agy_root = tmp.path();
-        let write_conv = |id: &str, file: &str, content: &str| {
+        let write_raw = |id: &str, file: &str, record: serde_json::Value| {
             let logs = agy_root
                 .join("brain")
                 .join(id)
                 .join(".system_generated/logs");
             fs::create_dir_all(&logs).unwrap();
-            let line = json!({
-                "step_index": 0,
-                "source": "USER_EXPLICIT",
-                "type": "USER_INPUT",
-                "status": "DONE",
-                "content": content,
-            });
-            fs::write(logs.join(file), format!("{line}\n")).unwrap();
+            fs::write(logs.join(file), format!("{record}\n")).unwrap();
         };
-        // Concurrent usage probe and sibling task in the same workspace.
+        let footer_prompt = |body: &str, result: &str| {
+            format!(
+                "<USER_REQUEST>\n{body}\n\n---\nReporting (fixed by the coordinator system):\n\n- When you are done, or cannot continue, report exactly once:\n  kit-coord report done --summary \"<one line>\"\n  Long results go into {result}; add --result {result} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>now</ADDITIONAL_METADATA>"
+            )
+        };
+        let write_conv = |id: &str, file: &str, content: String| {
+            write_raw(
+                id,
+                file,
+                json!({
+                    "step_index": 0,
+                    "source": "USER_EXPLICIT",
+                    "type": "USER_INPUT",
+                    "status": "DONE",
+                    "content": content,
+                }),
+            );
+        };
+        // Concurrent usage probe.
         write_conv(
             "00000000-0000-4000-8000-000000000001",
             "transcript_full.jsonl",
-            "/usage",
+            "/usage".into(),
         );
+        // Task B's brief references Task A's result path (and even quotes Task A's footer!).
+        // It must NEVER match Task A because its trailing reporting footer belongs to Task B.
         write_conv(
             "00000000-0000-4000-8000-000000000002",
             "transcript_full.jsonl",
-            "Long results go into /data/coord/results/ws-aaaaaa-t2.md",
+            footer_prompt(
+                "Context: previous task result: /data/coord/results/ws-aaaaaa-t1.md\nLong results go into /data/coord/results/ws-aaaaaa-t1.md; add --result /data/coord/results/ws-aaaaaa-t1.md to the report.",
+                "/data/coord/results/ws-aaaaaa-t2.md",
+            ),
         );
-        // Target task: truncated compact transcript misses the footer, full has it.
+        // Non-step-0 USER_INPUT, missing step_index, and non-USER_INPUT step 0 must all be rejected.
+        write_raw(
+            "00000000-0000-4000-8000-000000000003",
+            "transcript_full.jsonl",
+            json!({"step_index": 1, "type": "USER_INPUT", "content": footer_prompt("late", "/data/coord/results/ws-aaaaaa-t1.md")}),
+        );
+        write_raw(
+            "00000000-0000-4000-8000-000000000004",
+            "transcript_full.jsonl",
+            json!({"type": "USER_INPUT", "content": footer_prompt("missing step", "/data/coord/results/ws-aaaaaa-t1.md")}),
+        );
+        write_raw(
+            "00000000-0000-4000-8000-000000000005",
+            "transcript_full.jsonl",
+            json!({"step_index": 0, "type": "ASSISTANT", "content": footer_prompt("wrong type", "/data/coord/results/ws-aaaaaa-t1.md")}),
+        );
+        let t1_matcher = SessionMatcher::Delegate {
+            result: PathBuf::from("/data/coord/results/ws-aaaaaa-t1.md"),
+            brief: PathBuf::from("/data/coord/briefs/ws-aaaaaa-t1.md"),
+        };
+        let empty = BTreeSet::new();
+        // Before Task A's own conversation exists, Task B's cross-reference and invalid records must not match.
+        assert_eq!(
+            unique_agy_conversation(agy_root, 0, &t1_matcher, &empty),
+            None
+        );
+
+        // Target task A: truncated compact transcript misses the footer, full has it.
         write_conv(
             "720d8fe2-d9d4-40b4-af0d-fb7a29307ff0",
             "transcript.jsonl",
-            "truncated start without footer",
+            "truncated start without footer".into(),
         );
         write_conv(
             "720d8fe2-d9d4-40b4-af0d-fb7a29307ff0",
             "transcript_full.jsonl",
-            "<USER_REQUEST>\nBrief\nLong results go into /data/coord/results/ws-aaaaaa-t1.md\n</USER_REQUEST>",
+            footer_prompt("Brief for A", "/data/coord/results/ws-aaaaaa-t1.md"),
         );
         // Symlink decoy inside brain/ must be ignored.
         let outside = tmp.path().join("outside");
@@ -630,7 +772,7 @@ mod tests {
             outside.join(".system_generated/logs/transcript_full.jsonl"),
             format!(
                 "{}\n",
-                json!({"step_index":0,"type":"USER_INPUT","content":"/data/coord/results/ws-aaaaaa-t9.md"})
+                json!({"step_index":0,"type":"USER_INPUT","content":footer_prompt("symlink", "/data/coord/results/ws-aaaaaa-t9.md")})
             ),
         )
         .unwrap();
@@ -640,30 +782,58 @@ mod tests {
         )
         .unwrap();
 
-        let markers = vec!["/data/coord/results/ws-aaaaaa-t1.md".into()];
         assert_eq!(
-            newest_agy_conversation(agy_root, 0, &markers).as_deref(),
+            unique_agy_conversation(agy_root, 0, &t1_matcher, &empty).as_deref(),
             Some("720d8fe2-d9d4-40b4-af0d-fb7a29307ff0")
         );
-        assert_eq!(newest_agy_conversation(agy_root, 0, &[]), None);
+        // Claimed session IDs are never bound again.
+        let mut claimed = BTreeSet::new();
+        claimed.insert("720d8fe2-d9d4-40b4-af0d-fb7a29307ff0".into());
         assert_eq!(
-            newest_agy_conversation(agy_root, 0, &["/data/coord/results/ws-aaaaaa-t9.md".into()]),
+            unique_agy_conversation(agy_root, 0, &t1_matcher, &claimed),
             None
         );
-        // Fallback to transcript.jsonl when transcript_full.jsonl is absent.
+        // Two matching conversations fail closed (ambiguous).
+        write_conv(
+            "720d8fe2-d9d4-40b4-af0d-fb7a29307ff1",
+            "transcript_full.jsonl",
+            footer_prompt("Duplicate A", "/data/coord/results/ws-aaaaaa-t1.md"),
+        );
+        assert_eq!(
+            unique_agy_conversation(agy_root, 0, &t1_matcher, &empty),
+            None
+        );
+        assert_eq!(
+            unique_agy_conversation(agy_root, 0, &SessionMatcher::None, &empty),
+            None
+        );
+        assert_eq!(
+            unique_agy_conversation(
+                agy_root,
+                0,
+                &SessionMatcher::Delegate {
+                    result: PathBuf::from("/data/coord/results/ws-aaaaaa-t9.md"),
+                    brief: PathBuf::from("/data/coord/briefs/ws-aaaaaa-t9.md"),
+                },
+                &empty,
+            ),
+            None
+        );
+        // Fallback to transcript.jsonl + oversized-brief exact prompt match.
         write_conv(
             "11111111-1111-4111-8111-111111111111",
             "transcript.jsonl",
-            "Read your full brief in /data/coord/briefs/ws-aaaaaa-t3.md",
+            "<USER_REQUEST>\nRead your full brief in /data/coord/briefs/ws-aaaaaa-t3.md before doing anything else.\n</USER_REQUEST>".into(),
         );
         assert_eq!(
-            newest_agy_conversation(
+            unique_agy_conversation(
                 agy_root,
                 0,
-                &[
-                    "/data/coord/results/ws-aaaaaa-t3.md".into(),
-                    "/data/coord/briefs/ws-aaaaaa-t3.md".into(),
-                ]
+                &SessionMatcher::Delegate {
+                    result: PathBuf::from("/data/coord/results/ws-aaaaaa-t3.md"),
+                    brief: PathBuf::from("/data/coord/briefs/ws-aaaaaa-t3.md"),
+                },
+                &empty,
             )
             .as_deref(),
             Some("11111111-1111-4111-8111-111111111111")

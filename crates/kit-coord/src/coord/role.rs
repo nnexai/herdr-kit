@@ -38,7 +38,7 @@ pub struct Vars<'a> {
     pub effort: Option<&'a str>,
 }
 
-pub const BUILTIN: [(&str, &str); 10] = [
+pub const BUILTIN: [(&str, &str); 11] = [
     ("coord-main", include_str!("roles/coord-main.md")),
     ("coord-light", include_str!("roles/coord-light.md")),
     ("coord-default", include_str!("roles/coord-default.md")),
@@ -46,6 +46,7 @@ pub const BUILTIN: [(&str, &str); 10] = [
     ("coord-design", include_str!("roles/coord-design.md")),
     ("agy-default", include_str!("roles/agy-default.md")),
     ("claude-default", include_str!("roles/claude-default.md")),
+    ("claude-sonnet", include_str!("roles/claude-sonnet.md")),
     ("claude-opus", include_str!("roles/claude-opus.md")),
     ("codex-default", include_str!("roles/codex-default.md")),
     ("copilot-default", include_str!("roles/copilot-default.md")),
@@ -158,9 +159,15 @@ impl Role {
             .resume
             .as_deref()
             .context("role has no resume command")?;
+        ensure!(
+            !template
+                .iter()
+                .any(|arg| arg.contains("{model}") || arg.contains("{effort}")),
+            "role resume command must not reference {{model}} or {{effort}}"
+        );
         let effective = Vars {
-            model: vars.model.or(self.model.as_deref()),
-            effort: vars.effort.or(self.effort.as_deref()),
+            model: None,
+            effort: None,
             ..*vars
         };
         expand(
@@ -288,6 +295,12 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
             !argv.is_empty() && !argv[0].is_empty(),
             "empty resume command"
         );
+        ensure!(
+            !argv
+                .iter()
+                .any(|arg| arg.contains("{model}") || arg.contains("{effort}")),
+            "role resume command must not reference {{model}} or {{effort}}; resumed sessions keep their original model"
+        );
     }
     let trust = fields
         .get("trust")
@@ -306,7 +319,7 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
     let has_effort_placeholder = start.iter().any(|arg| arg.contains("{effort}"));
     if model.is_some() && !has_model_placeholder {
         ensure!(
-            model_of(&start).is_none(),
+            !has_flag(&start, MODEL_FLAGS),
             "role specifies model in both front matter and start command"
         );
         ensure!(
@@ -321,7 +334,7 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         );
         if !has_effort_placeholder {
             ensure!(
-                effort_of(&start).is_none(),
+                !has_flag(&start, EFFORT_FLAGS),
                 "role specifies effort in both front matter and start command"
             );
             ensure!(
@@ -441,16 +454,52 @@ pub fn expand(
     Ok(result)
 }
 
+const MODEL_FLAGS: &[&str] = &["--model", "-m"];
+const EFFORT_FLAGS: &[&str] = &["--effort", "--thinking"];
+
+fn has_flag(argv: &[String], flags: &[&str]) -> bool {
+    for arg in argv {
+        if arg == "--" {
+            break;
+        }
+        if flags.contains(&arg.as_str())
+            || flags.iter().any(|flag| {
+                arg.strip_prefix(flag)
+                    .is_some_and(|rest| rest.starts_with('='))
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn flag_value(argv: &[String], flags: &[&str]) -> Option<String> {
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            break;
+        }
+        if flags.contains(&arg.as_str()) {
+            return iter.next().filter(|v| !v.is_empty()).cloned();
+        }
+        for flag in flags {
+            if let Some(rest) = arg.strip_prefix(flag).and_then(|s| s.strip_prefix('=')) {
+                if !rest.is_empty() {
+                    return Some(rest.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn model_of(argv: &[String]) -> Option<String> {
-    argv.windows(2)
-        .find(|pair| pair[0] == "--model" || pair[0] == "-m")
-        .map(|pair| pair[1].clone())
+    flag_value(argv, MODEL_FLAGS)
 }
 
 pub fn effort_of(argv: &[String]) -> Option<String> {
-    argv.windows(2)
-        .find(|pair| pair[0] == "--effort" || pair[0] == "--thinking")
-        .map(|pair| pair[1].clone())
+    flag_value(argv, EFFORT_FLAGS)
 }
 
 #[cfg(test)]
@@ -605,9 +654,27 @@ mod tests {
             ]
         );
 
-        let sonnet = parse(
+        let haiku = parse(
             "claude-default",
             builtin("claude-default").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(
+            haiku.expand_start(&vars, false).unwrap(),
+            [
+                "claude",
+                "--model",
+                "haiku",
+                "--session-id",
+                "11111111-2222-4333-8444-555555555555",
+                "do the work"
+            ]
+        );
+
+        let sonnet = parse(
+            "claude-sonnet",
+            builtin("claude-sonnet").unwrap(),
             RoleSource::Builtin,
         )
         .unwrap();
@@ -662,6 +729,62 @@ mod tests {
                 RoleSource::Builtin,
             )
             .is_err()
+        );
+        assert!(
+            parse(
+                "dup-model-equals",
+                "---\nharness: claude\nmodel: opus\nstart: claude --model=haiku --session-id {session_id} {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "dup-effort-equals",
+                "---\nharness: claude\nmodel: opus\neffort: high\nstart: claude --effort=low --session-id {session_id} {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "dup-thinking-equals",
+                "---\nharness: omp\nmodel: @task\neffort: high\nstart: omp --thinking=low {brief}\nsession: none\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "resume-model-placeholder",
+                "---\nharness: custom\nmodel: m1\nstart: custom --llm {model} {brief}\nresume: custom --llm {model} --resume {session_id} {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "resume-effort-placeholder",
+                "---\nharness: custom\neffort: deep\nstart: custom --lvl {effort} {brief}\nresume: custom --lvl {effort} --resume {session_id} {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert_eq!(
+            model_of(&["claude".into(), "--model=haiku".into()]).as_deref(),
+            Some("haiku")
+        );
+        assert_eq!(
+            model_of(&["codex".into(), "-m=gpt-6-luna".into()]).as_deref(),
+            Some("gpt-6-luna")
+        );
+        assert_eq!(
+            effort_of(&["claude".into(), "--effort=high".into()]).as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            effort_of(&["omp".into(), "--thinking=medium".into()]).as_deref(),
+            Some("medium")
         );
         assert!(
             parse(

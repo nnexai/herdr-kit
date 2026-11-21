@@ -1048,8 +1048,9 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
     let brief = h.root().join("brief");
     fs::write(&brief, "Implement harness support").unwrap();
 
-    // Pre-populate agy brain dir inside isolated HOME with a /usage decoy and
-    // this task's conversation transcript (matching the fixed reporting footer).
+    // Pre-populate agy brain dir inside isolated HOME with a /usage decoy,
+    // a sibling task whose brief cites this task's result path, and this task's
+    // own conversation transcript (matching the trailing fixed reporting footer).
     let agy_brain = h.root().join(".gemini/antigravity-cli/brain");
     let decoy_logs = agy_brain.join("00000000-0000-4000-8000-000000000001/.system_generated/logs");
     fs::create_dir_all(&decoy_logs).unwrap();
@@ -1061,8 +1062,30 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
         ),
     )
     .unwrap();
-    let conv_id = "720d8fe2-d9d4-40b4-af0d-fb7a29307ff0";
     let result_file = h.root().join(format!("data/coord/results/{task}.md"));
+    let other_result = h.root().join(format!("data/coord/results/{ws}-t2.md"));
+    let xref_logs = agy_brain.join("00000000-0000-4000-8000-000000000002/.system_generated/logs");
+    fs::create_dir_all(&xref_logs).unwrap();
+    fs::write(
+        xref_logs.join("transcript_full.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "content": format!(
+                    "<USER_REQUEST>\nContext: previous task result: {}\n\n---\nReporting (fixed by the coordinator system):\n\n- Long results go into {}; add --result {} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>",
+                    result_file.display(),
+                    other_result.display(),
+                    other_result.display()
+                )
+            })
+        ),
+    )
+    .unwrap();
+    let conv_id = "720d8fe2-d9d4-40b4-af0d-fb7a29307ff0";
     let target_logs = agy_brain.join(conv_id).join(".system_generated/logs");
     fs::create_dir_all(&target_logs).unwrap();
     fs::write(
@@ -1074,7 +1097,11 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
                 "source": "USER_EXPLICIT",
                 "type": "USER_INPUT",
                 "status": "DONE",
-                "content": format!("<USER_REQUEST>\nImplement harness support\nLong results go into {}; add --result {} to the report.\n</USER_REQUEST>", result_file.display(), result_file.display())
+                "content": format!(
+                    "<USER_REQUEST>\nImplement harness support\n\n---\nReporting (fixed by the coordinator system):\n\n- Long results go into {}; add --result {} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>",
+                    result_file.display(),
+                    result_file.display()
+                )
             })
         ),
     )
@@ -1233,6 +1260,13 @@ fn claude_roles_expand_model_effort_and_resume_cleanly() {
     assert_eq!(opus["session"], "preset");
     assert_eq!(opus["resumable"], true);
     assert_eq!(opus["steering"], false);
+    let claude_default = roles
+        .iter()
+        .find(|r| r["name"] == "claude-default")
+        .unwrap();
+    assert_eq!(claude_default["model"], "haiku");
+    let claude_sonnet = roles.iter().find(|r| r["name"] == "claude-sonnet").unwrap();
+    assert_eq!(claude_sonnet["model"], "sonnet");
     let haiku = roles
         .iter()
         .find(|r| r["name"] == "claude-haiku-low")

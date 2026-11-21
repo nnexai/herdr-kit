@@ -340,14 +340,22 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
         } => {
             if let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) {
                 if t.terminal.as_deref() == Some(&terminal) {
-                    t.tab = tab.clone();
-                    t.session = session;
-                    if let Some(r) = s
-                        .resources
-                        .iter_mut()
-                        .find(|r| r.r.r#type == ResType::Tab && r.r.name == terminal && !r.released)
-                    {
-                        r.r.tab = tab;
+                    if tab.is_some() {
+                        t.tab = tab.clone();
+                    }
+                    if let Some(next) = session {
+                        if next.id.is_some()
+                            || !t.session.as_ref().is_some_and(|cur| cur.id.is_some())
+                        {
+                            t.session = Some(next);
+                        }
+                    }
+                    if tab.is_some() {
+                        if let Some(r) = s.resources.iter_mut().find(|r| {
+                            r.r.r#type == ResType::Tab && r.r.name == terminal && !r.released
+                        }) {
+                            r.r.tab = tab;
+                        }
                     }
                 }
             }
@@ -1191,6 +1199,49 @@ mod tests {
             ),
         );
         assert_eq!(s.last_coordinator_nudge_upto, 2);
+    }
+
+    #[test]
+    fn launch_details_never_erases_discovered_session_id() {
+        let ws = super::super::ids::WsId::parse("ws-abcdef").unwrap();
+        let task = super::super::ids::TaskId::new(&ws, 1);
+        let mut s = State::default();
+        for (seq, kind, data) in [
+            (1, "ws.opened", json!({"title":"x"})),
+            (
+                2,
+                "task.placed",
+                json!({"rung":2,"reason":"x","rejected":[],"role":"agy-default","harness":"agy","title":"x","brief":"/b","session":{"mode":"agy-conversation","id":null}}),
+            ),
+            (
+                3,
+                "task.started",
+                json!({"terminal":"t1","tab":null,"tab_name":"x","space":"sp","cwd":"/tmp","pid":1,"created_ms":1,"session":{"mode":"agy-conversation","id":null},"resumed":false}),
+            ),
+            (
+                4,
+                "task.session",
+                json!({"session":{"mode":"agy-conversation","id":"720d8fe2-d9d4-40b4-af0d-fb7a29307ff0"}}),
+            ),
+            (
+                5,
+                "task.launch_details",
+                json!({"terminal":"t1","tab":"tb1","session":{"mode":"agy-conversation","id":null}}),
+            ),
+            (
+                6,
+                "task.launch_details",
+                json!({"terminal":"t1","tab":null,"session":null}),
+            ),
+        ] {
+            apply(&mut s, &entry(seq, Some(&ws), Some(&task), kind, data));
+        }
+        let rec = &s.tasks[&task];
+        assert_eq!(rec.tab.as_deref(), Some("tb1"));
+        assert_eq!(
+            rec.session.as_ref().and_then(|s| s.id.as_deref()),
+            Some("720d8fe2-d9d4-40b4-af0d-fb7a29307ff0")
+        );
     }
 }
 

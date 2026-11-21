@@ -189,9 +189,11 @@ fn settle_intent(
         return Ok(());
     };
     let cwd = Path::new(&term.cwd);
-    let markers = launch::task_session_markers(&ctx.paths, id, None);
+    let matcher = launch::task_session_matcher(&ctx.paths, id, None);
+    let claimed = launch::claimed_session_ids(lock.state());
     let session = session.map(|base| {
-        launch::discover_session(ctx, &base, cwd, term.created_ms, &markers, 0).unwrap_or(base)
+        launch::discover_session(ctx, &base, cwd, term.created_ms, &matcher, &claimed, 0)
+            .unwrap_or(base)
     });
     note(
         ctx,
@@ -274,6 +276,7 @@ fn abandon_intent(ctx: &Ctx, lock: &mut Locked<'_>, intent: &Intent) -> Result<(
 
 /// Picks up session files that appeared after their task was started.
 fn discover_sessions(ctx: &Ctx, lock: &mut Locked<'_>, state: &State) -> Result<()> {
+    let mut claimed = launch::claimed_session_ids(lock.state());
     for task in state.tasks.values() {
         let (Some(session), Some(cwd)) = (&task.session, &task.cwd) else {
             continue;
@@ -281,11 +284,21 @@ fn discover_sessions(ctx: &Ctx, lock: &mut Locked<'_>, state: &State) -> Result<
         if session.id.is_some() || task.state == TaskState::Closed {
             continue;
         }
-        let markers = launch::task_session_markers(&ctx.paths, &task.id, Some(&task.brief));
-        if let Some(found) =
-            launch::discover_session(ctx, session, cwd, task.created_ms.unwrap_or(0), &markers, 0)
-                .filter(|s| s.id.is_some())
+        let matcher = launch::task_session_matcher(&ctx.paths, &task.id, Some(&task.brief));
+        if let Some(found) = launch::discover_session(
+            ctx,
+            session,
+            cwd,
+            task.created_ms.unwrap_or(0),
+            &matcher,
+            &claimed,
+            0,
+        )
+        .filter(|s| s.id.is_some())
         {
+            if let Some(id) = &found.id {
+                claimed.insert(id.clone());
+            }
             lock.append(
                 &Actor::Watcher,
                 ctx.now(),
@@ -1080,6 +1093,7 @@ mod tests {
             .join(conv_id)
             .join(".system_generated/logs");
         std::fs::create_dir_all(&logs).unwrap();
+        let res = paths.result(&task);
         std::fs::write(
             logs.join("transcript_full.jsonl"),
             format!(
@@ -1087,7 +1101,11 @@ mod tests {
                 json!({
                     "step_index": 0,
                     "type": "USER_INPUT",
-                    "content": format!("Long results go into {}", paths.result(&task).display())
+                    "content": format!(
+                        "<USER_REQUEST>\nBrief\n\n---\nReporting (fixed by the coordinator system):\n\n- Long results go into {}; add --result {} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>",
+                        res.display(),
+                        res.display()
+                    )
                 })
             ),
         )

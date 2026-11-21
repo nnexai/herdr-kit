@@ -313,7 +313,8 @@ session modes, resumability and steering support; `kit-coord roles
 coord-design` shows a role file without launching anything. Built-in roles
 include OMP (`coord-*`), Antigravity CLI (`agy-default` on
 `gemini-4-neon-high` with resumable `agy-conversation` discovery), Claude Code
-(`claude-default` on `sonnet`, `claude-opus` on `opus` with `effort: high`),
+(`claude-default` on `haiku`, `claude-sonnet` on `sonnet`, `claude-opus` on
+`opus` with `effort: high`),
 Codex (`codex-default`) and Copilot (`copilot-default`). Override any built-in
 or add named roles in `coord/roles/` with plain `model:` and optional `effort:`
 front-matter fields. See [roles and models](docs/coordinator-spec.md#roles-and-models)

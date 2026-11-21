@@ -677,6 +677,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         .as_ref()
         .map(|term| ctx.terminal_lock(&term.address))
         .transpose()?;
+    let claimed_sessions = launch::claimed_session_ids(l.state());
     l.append(&c.actor(), ctx.now(), items)?;
 
     if let (Some(term), Some(p)) = (live_previous, &previous) {
@@ -771,7 +772,8 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         cwd: cwd.clone(),
         argv,
         session,
-        session_markers: launch::task_session_markers(&ctx.paths, &id, Some(&brief_path)),
+        session_matcher: launch::task_session_matcher(&ctx.paths, &id, Some(&brief_path)),
+        claimed_sessions,
         tab_name: title.clone(),
         space_name: new_space.then(|| space_label.clone().unwrap_or_default()),
     };
@@ -812,7 +814,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     let details = Kind::TaskLaunchDetails {
         terminal: launched.term.address.clone(),
         tab: launched.tab.clone(),
-        session: launched.session.clone(),
+        session: launched.session.clone().filter(|s| s.id.is_some()),
     };
     j.lock()?
         .append(&c.actor(), ctx.now(), vec![entry(details)])?;
@@ -1001,7 +1003,8 @@ fn resume_with_message(
         cwd: cwd.clone(),
         argv,
         session: Some(session),
-        session_markers: launch::task_session_markers(&ctx.paths, &t.id, Some(&path)),
+        session_matcher: launch::task_session_matcher(&ctx.paths, &t.id, Some(&path)),
+        claimed_sessions: launch::claimed_session_ids(state),
         tab_name: t.title.clone(),
         space_name: None,
     };
@@ -1055,7 +1058,7 @@ fn resume_with_message(
     let details = Kind::TaskLaunchDetails {
         terminal: launched.term.address.clone(),
         tab: launched.tab.clone(),
-        session: launched.session.clone(),
+        session: launched.session.clone().filter(|s| s.id.is_some()),
     };
     j.lock()?
         .append(&c.actor(), ctx.now(), vec![entry(details)])?;

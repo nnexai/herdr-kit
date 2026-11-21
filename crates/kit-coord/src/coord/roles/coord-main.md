@@ -65,9 +65,9 @@ role in `<data-dir>/coord/roles/`; inspect its definition instead of guessing
 from its name. Do not silently substitute another model.
 
 Built-in roles for other harnesses (`agy-default`, `claude-default`,
-`claude-opus`, `codex-default`, `copilot-default`) are listed too; use them
-when the person asks for that harness or model. Omp `@role` selectors are not
-portable to other harnesses.
+`claude-sonnet`, `claude-opus`, `codex-default`, `copilot-default`) are listed
+too; use them when the person asks for that harness or model. Omp `@role`
+selectors are not portable to other harnesses.
 
 A resumed session keeps its model; `--session-of` cannot switch roles.
 After `blocked` or failed acceptance, escalate with a new task/session on
