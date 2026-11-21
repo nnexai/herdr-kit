@@ -200,26 +200,27 @@ fn svg_radial_gauge(
     selected: bool,
 ) -> String {
     let cx = 72.0;
-    let cy = 56.0;
-    let r = 42.0;
-    let track = arc_path(cx, cy, r, 150.0, 390.0);
+    let cy = 58.0;
+    let r = 46.0;
+    let track = arc_path(cx, cy, r, 145.0, 395.0);
     let fill_arc = match fraction {
         Some(f) if f > 0.005 => {
-            let sweep = 240.0 * f.clamp(0.0, 1.0);
-            let end = 150.0 + sweep;
-            let path = arc_path(cx, cy, r, 150.0, end);
+            let sweep = 250.0 * f.clamp(0.0, 1.0);
+            let end = 145.0 + sweep;
+            let path = arc_path(cx, cy, r, 145.0, end);
             let (dx, dy) = arc_point(cx, cy, r, end);
             format!(
-                r#"<path d="{path}" fill="none" stroke="{accent}" stroke-width="14" stroke-linecap="round"/>
-  <circle cx="{dx:.1}" cy="{dy:.1}" r="6" fill="{ICE}"/>"#
+                r#"<path d="{path}" fill="none" stroke="{accent}" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="{dx:.1}" cy="{dy:.1}" r="5.5" fill="{ICE}"/>"#
             )
         }
         _ => String::new(),
     };
     let center_size = match center_text.chars().count() {
-        0..=3 => 34,
-        4 => 28,
-        _ => 22,
+        0..=2 => 30,
+        3 => 27,
+        4 => 22,
+        _ => 19,
     };
     let stale_badge = if stale {
         format!(
@@ -229,12 +230,12 @@ fn svg_radial_gauge(
         String::new()
     };
     let body = format!(
-        r#"<path d="{track}" fill="none" stroke="{TRACK}" stroke-width="14" stroke-linecap="round"/>
+        r#"<path d="{track}" fill="none" stroke="{TRACK}" stroke-width="12" stroke-linecap="round"/>
   {fill_arc}
   {stale_badge}
   <text x="72" y="67" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="{center_size}" font-weight="900">{}</text>
-  <text x="72" y="108" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
-  <text x="72" y="134" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
+  <text x="72" y="109" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
+  <text x="72" y="133" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(center_text),
         xml_escape(&clip_chars(label, 11)),
         xml_escape(&clip_chars(sublabel, 12)),
