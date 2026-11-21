@@ -13,8 +13,9 @@ const MINT: &str = "#00ff9d";
 const AMBER: &str = "#ffc21a";
 const CORAL: &str = "#ff4d5e";
 const VIOLET: &str = "#c4b5fd";
-const FONT_SANS: &str = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
-const FONT_MONO: &str = "DejaVu Sans Mono, Liberation Mono, monospace";
+const FONT_SANS: &str =
+    "DejaVu Sans Condensed, Nimbus Sans Narrow, Arial Narrow, Liberation Sans, sans-serif";
+const FONT_MONO: &str = "DejaVu Sans Condensed, Nimbus Sans Narrow, Liberation Mono, monospace";
 
 pub fn xml_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -75,16 +76,41 @@ fn clip_chars(input: &str, max: usize) -> String {
     out
 }
 
+fn tokenize_for_wrap(input: &str) -> Vec<(String, char)> {
+    let mut tokens = Vec::new();
+    let mut buf = String::new();
+    let mut sep_before = ' ';
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            if !buf.is_empty() {
+                tokens.push((std::mem::take(&mut buf), sep_before));
+            }
+            sep_before = ' ';
+        } else if matches!(ch, '-' | '_' | '/') {
+            if !buf.is_empty() {
+                tokens.push((std::mem::take(&mut buf), sep_before));
+            }
+            sep_before = ch;
+        } else {
+            buf.push(ch);
+        }
+    }
+    if !buf.is_empty() {
+        tokens.push((buf, sep_before));
+    }
+    tokens
+}
+
 fn wrap_lines(input: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
-    let words: Vec<&str> = input.split_whitespace().collect();
-    if words.is_empty() || max_lines == 0 {
+    let tokens = tokenize_for_wrap(input);
+    if tokens.is_empty() || max_lines == 0 {
         return Vec::new();
     }
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut idx = 0;
-    while idx < words.len() {
-        let word = words[idx];
+    while idx < tokens.len() {
+        let (word, sep) = &tokens[idx];
         let next_len = if current.is_empty() {
             word.chars().count()
         } else {
@@ -92,7 +118,7 @@ fn wrap_lines(input: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
         };
         if next_len <= max_chars {
             if !current.is_empty() {
-                current.push(' ');
+                current.push(*sep);
             }
             current.push_str(word);
             idx += 1;
@@ -108,7 +134,7 @@ fn wrap_lines(input: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
     }
     if lines.len() < max_lines && !current.is_empty() {
         lines.push(current);
-    } else if idx < words.len() && !lines.is_empty() {
+    } else if idx < tokens.len() && !lines.is_empty() {
         if let Some(last) = lines.last_mut() {
             *last = clip_chars(last, max_chars);
             if !last.ends_with('…') {
@@ -207,11 +233,11 @@ fn svg_radial_gauge(
   {fill_arc}
   {stale_badge}
   <text x="72" y="67" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="{center_size}" font-weight="900">{}</text>
-  <text x="72" y="108" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
+  <text x="72" y="108" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
   <text x="72" y="134" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(center_text),
-        xml_escape(&clip_chars(label, 8)),
-        xml_escape(&clip_chars(sublabel, 9)),
+        xml_escape(&clip_chars(label, 11)),
+        xml_escape(&clip_chars(sublabel, 12)),
     );
     svg_card(accent, selected, &body)
 }
@@ -278,13 +304,14 @@ pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
         );
         return svg_card(MINT, false, &body);
     };
-    let accent = match item.kind {
-        InboxKind::Question => AMBER,
-        InboxKind::Blocked | InboxKind::Error => CORAL,
-        InboxKind::Done => MINT,
+    let (accent, kind_tag) = match item.kind {
+        InboxKind::Question => (AMBER, "ASK"),
+        InboxKind::Blocked => (CORAL, "WAIT"),
+        InboxKind::Error => (CORAL, "ERR"),
+        InboxKind::Done => (MINT, "DONE"),
     };
     let count_badge = format!("{}/{}", idx + 1, snap.inbox.len());
-    let lines = wrap_lines(&item.text, 10, 2);
+    let lines = wrap_lines(&item.text, 13, 2);
     let line1 = lines.first().map(String::as_str).unwrap_or("");
     let line2 = lines.get(1).map(String::as_str).unwrap_or("");
     let mid = if line2.is_empty() {
@@ -301,13 +328,13 @@ pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
         )
     };
     let body = format!(
-        r#"<text x="12" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
-  <text x="132" y="32" text-anchor="end" fill="{ICE}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
+        r#"<text x="10" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
+  <text x="134" y="32" text-anchor="end" fill="{ICE}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
   {mid}
   <text x="72" y="132" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
-        xml_escape(item.kind.short_label()),
+        xml_escape(kind_tag),
         xml_escape(&count_badge),
-        xml_escape(&clip_chars(&item.source, 10)),
+        xml_escape(&clip_chars(&item.source, 13)),
     );
     svg_card(accent, item.kind != InboxKind::Done, &body)
 }
@@ -418,25 +445,26 @@ pub fn render_agent_slot(
     } else {
         agent.status.short_label()
     };
-    let space_lines = wrap_lines(&agent.space, 9, 2);
+    let space_lines = wrap_lines(&agent.space, 12, 2);
     let line1 = space_lines.first().map(String::as_str).unwrap_or("agent");
     let line2 = space_lines.get(1).map(String::as_str).unwrap_or("");
     let mid = if line2.is_empty() {
+        let size = if line1.chars().count() <= 9 { 24 } else { 21 };
         format!(
-            r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>"#,
+            r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="{size}" font-weight="900">{}</text>"#,
             xml_escape(line1)
         )
     } else {
         format!(
-            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>
-  <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>"#,
+            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
+  <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
             xml_escape(line1),
             xml_escape(line2)
         )
     };
     let body = format!(
-        r#"<text x="12" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
-  <text x="132" y="32" text-anchor="end" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
+        r#"<text x="10" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
+  <text x="134" y="32" text-anchor="end" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
   {mid}
   <text x="72" y="132" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{} · T{}</text>"#,
         xml_escape(badge),

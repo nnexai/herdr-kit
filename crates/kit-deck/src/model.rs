@@ -29,12 +29,12 @@ impl AgentStateKind {
 
     pub fn short_label(self) -> &'static str {
         match self {
-            Self::Blocked => "BLOCKED",
-            Self::Error => "ERROR",
-            Self::Working => "WORKING",
+            Self::Blocked => "WAIT",
+            Self::Error => "ERR",
+            Self::Working => "WORK",
             Self::Done => "DONE",
             Self::Idle => "IDLE",
-            Self::Unknown => "READY",
+            Self::Unknown => "LIVE",
         }
     }
 }
