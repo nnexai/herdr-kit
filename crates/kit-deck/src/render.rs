@@ -36,6 +36,12 @@ const ASCII_WIDTH_MILLE: [u16; 95] = [
     580, 586, 523, 641, 329, 641, 754, // 0x78..=0x7E: x-z { | } ~
 ];
 
+/// Upper-bound advance width in thousandths of an em for any glyph not in the
+/// measured table, derived from DejaVu Sans Condensed Bold's `hhea.advanceWidthMax`
+/// (`3716 / 2048` em = `1814.453...` mille, rounded up to `1815`). This also
+/// exceeds the `hhea.advanceWidthMax` of the configured fallback faces.
+const UNLISTED_GLYPH_MAX_WIDTH_MILLE: u16 = 1815;
+
 fn char_width_mille(ch: char) -> u16 {
     let code = ch as u32;
     if (0x20..=0x7E).contains(&code) {
@@ -45,23 +51,7 @@ fn char_width_mille(ch: char) -> u16 {
         '…' | '—' => 900,
         '·' => 342,
         c if c.is_control() => 313,
-        // Wide East Asian / emoji code points: budget conservatively.
-        c if matches!(
-            c as u32,
-            0x1100..=0x115F
-                | 0x2E80..=0xA4CF
-                | 0xAC00..=0xD7A3
-                | 0xF900..=0xFAFF
-                | 0xFE10..=0xFE6F
-                | 0xFF00..=0xFF60
-                | 0x1F300..=0x1FAFF
-        ) =>
-        {
-            1250
-        }
-        // Conservative fallback for unlisted non-ASCII glyphs (e.g., wide Cyrillic/Greek
-        // letters like 'Ж' at ~1102 mille and 'Щ' at ~1193 mille in DejaVu Sans Condensed Bold).
-        _ => 1200,
+        _ => UNLISTED_GLYPH_MAX_WIDTH_MILLE,
     }
 }
 

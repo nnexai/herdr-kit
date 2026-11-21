@@ -686,17 +686,27 @@ fn width_measured_wrapping_prevents_wide_label_clipping() {
         "expected wrapped line 2 in {svg}"
     );
 
-    // Multi-word and single-word wide Unicode names must wrap/clip inside the 144-unit viewport.
+    // Multi-word and single-word wide Unicode names must wrap/clip inside the 144-unit viewport,
+    // using the font's maximum advance width as an upper bound for unlisted glyphs.
     let cyrillic = wrap_lines_by_width("ЖЖЖЖ ЖЖЖЖ", 21.0, max_width, 2);
-    assert_eq!(cyrillic, vec!["ЖЖЖЖ", "ЖЖЖЖ"]);
-    for line in &cyrillic {
+    assert_eq!(cyrillic, vec!["ЖЖ…", "ЖЖ…"]);
+    let syllabics = wrap_lines_by_width("ᙶᙶ ᙶᙶ", 21.0, max_width, 2);
+    assert_eq!(syllabics, vec!["ᙶᙶ", "ᙶᙶ"]);
+    for line in cyrillic.iter().chain(syllabics.iter()) {
         assert!(
             measure_text(line, 21.0) <= max_width,
             "Unicode line {line:?} exceeded {max_width}: {}",
             measure_text(line, 21.0)
         );
     }
-    for sample in ["ЖЖЖЖЖЖЖЖ", "ЩЩЩЩЩЩ", "ЖЖЖЖ ЖЖЖЖ ЖЖЖЖ"] {
+    for sample in [
+        "ЖЖЖЖЖЖЖЖ",
+        "ЩЩЩЩЩЩ",
+        "ЖЖЖЖ ЖЖЖЖ ЖЖЖЖ",
+        "ᙶᙶ ᙶᙶ",
+        "ᙶᙶᙶᙶ",
+        "ᙶᙶ ᙶᙶ ᙶᙶ",
+    ] {
         let lines = wrap_lines_by_width(sample, 21.0, max_width, 2);
         assert!(!lines.is_empty() && lines.len() <= 2);
         for line in &lines {
@@ -707,32 +717,37 @@ fn width_measured_wrapping_prevents_wide_label_clipping() {
             );
         }
     }
-    let mut hc_unicode = HcState::default();
-    hc_unicode.apply_event_line(
-        &json!({
-            "terminals": [{
-                "address": "t10",
-                "state": "live",
-                "status": { "app": "omp", "state": "working" },
-                "status_ms": 100,
-                "turn": 1,
-                "cwd": "/prj/unicode",
-                "labels": { "where": "ЖЖЖЖ ЖЖЖЖ / 1" }
-            }]
-        })
-        .to_string(),
-    );
-    let snap_unicode = build_snapshot(1000, &hc_unicode, None, None, None);
-    let svg_unicode = render_agent_slot(&snap_unicode, 1, "all", None);
-    assert!(
-        !svg_unicode.contains(">ЖЖЖЖ ЖЖЖЖ</text>"),
-        "expected wide Unicode name to wrap instead of staying on one line in {svg_unicode}"
-    );
-    assert_eq!(
-        svg_unicode.matches(">ЖЖЖЖ</text>").count(),
-        2,
-        "expected two wrapped lines for 'ЖЖЖЖ ЖЖЖЖ' in {svg_unicode}"
-    );
+    for (address, space_name, expected_line) in [
+        ("t10", "ЖЖЖЖ ЖЖЖЖ", "ЖЖ…"),
+        ("t11", "ᙶᙶ ᙶᙶ", "ᙶᙶ"),
+    ] {
+        let mut hc_unicode = HcState::default();
+        hc_unicode.apply_event_line(
+            &json!({
+                "terminals": [{
+                    "address": address,
+                    "state": "live",
+                    "status": { "app": "omp", "state": "working" },
+                    "status_ms": 100,
+                    "turn": 1,
+                    "cwd": "/prj/unicode",
+                    "labels": { "where": format!("{space_name} / 1") }
+                }]
+            })
+            .to_string(),
+        );
+        let snap_unicode = build_snapshot(1000, &hc_unicode, None, None, None);
+        let svg_unicode = render_agent_slot(&snap_unicode, 1, "all", None);
+        assert!(
+            !svg_unicode.contains(&format!(">{space_name}</text>")),
+            "expected wide Unicode name {space_name:?} to wrap instead of staying on one line in {svg_unicode}"
+        );
+        assert_eq!(
+            svg_unicode.matches(&format!(">{expected_line}</text>")).count(),
+            2,
+            "expected two wrapped lines for {space_name:?} in {svg_unicode}"
+        );
+    }
 }
 
 #[test]
