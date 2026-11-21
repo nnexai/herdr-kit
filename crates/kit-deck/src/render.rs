@@ -57,9 +57,11 @@ fn char_width_mille(ch: char) -> u16 {
                 | 0x1F300..=0x1FAFF
         ) =>
         {
-            1050
+            1250
         }
-        _ => 680,
+        // Conservative fallback for unlisted non-ASCII glyphs (e.g., wide Cyrillic/Greek
+        // letters like 'Ж' at ~1102 mille and 'Щ' at ~1193 mille in DejaVu Sans Condensed Bold).
+        _ => 1200,
     }
 }
 

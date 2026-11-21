@@ -441,9 +441,11 @@ pub fn start_background(cfg: SourceConfig) -> (watch::Receiver<Arc<DeckSnapshot>
                 } else {
                     collecting_since = None;
                 }
-                let mut guard = shared.lock().await;
-                if guard.apply_usage_poll(fetched) {
-                    let _ = tx.send(Arc::new(guard.snapshot()));
+                {
+                    let mut guard = shared.lock().await;
+                    if guard.apply_usage_poll(fetched) {
+                        let _ = tx.send(Arc::new(guard.snapshot()));
+                    }
                 }
                 let followup =
                     collecting_since.is_some_and(|t| t.elapsed() < Duration::from_secs(45));

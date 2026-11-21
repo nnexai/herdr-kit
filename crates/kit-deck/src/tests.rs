@@ -14,12 +14,19 @@ use crate::render::{
     render_inbox, render_inbox_action, render_limit_bucket, render_limit_provider, render_overview,
     svg_to_data_uri, wrap_lines_by_width, xml_escape,
 };
-use crate::sources::{SharedRawState, SourceConfig, run_bounded};
+use crate::sources::{SharedRawState, SourceConfig, run_bounded, start_background};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
+
+// Serialize tests that write executable scripts and/or spawn subprocesses within the
+// shared test process. On Linux, a sibling test thread calling fork() while another
+// thread holds a writable FD (even O_CLOEXEC) to a newly created script temporarily
+// inherits that writable FD until execve(), causing execve() of the script to fail
+// with ETXTBSY (os error 26).
+static SUBPROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
 fn hc_events_fold_filters_shells_and_sorts_by_urgency() {
@@ -264,6 +271,7 @@ fn bundle_install_and_uninstall_stage_complete_sdplugin() {
 
 #[tokio::test]
 async fn coordinator_commands_preserve_hc_terminal_id_caller_identity() {
+    let _guard = SUBPROCESS_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let fake_coord = temp.path().join("fake-kit-coord");
     std::fs::write(
@@ -304,6 +312,7 @@ async fn coordinator_commands_preserve_hc_terminal_id_caller_identity() {
 
 #[tokio::test]
 async fn oversized_command_output_fails_fast_instead_of_timing_out() {
+    let _guard = SUBPROCESS_TEST_LOCK.lock().await;
     let mut cmd = Command::new("sh");
     cmd.args(["-c", "yes x"]);
     let started = Instant::now();
@@ -510,6 +519,7 @@ fn hold_reply_and_interrupt_bind_to_key_down_identity() {
 
 #[tokio::test]
 async fn data_dir_resolution_honors_env_and_wrapper_config_json() {
+    let _guard = SUBPROCESS_TEST_LOCK.lock().await;
     let temp = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(temp.path()).unwrap();
     let plugins_dir = root.join("plugins");
@@ -675,6 +685,54 @@ fn width_measured_wrapping_prevents_wide_label_clipping() {
         svg.contains(">Workspace</text>"),
         "expected wrapped line 2 in {svg}"
     );
+
+    // Multi-word and single-word wide Unicode names must wrap/clip inside the 144-unit viewport.
+    let cyrillic = wrap_lines_by_width("ЖЖЖЖ ЖЖЖЖ", 21.0, max_width, 2);
+    assert_eq!(cyrillic, vec!["ЖЖЖЖ", "ЖЖЖЖ"]);
+    for line in &cyrillic {
+        assert!(
+            measure_text(line, 21.0) <= max_width,
+            "Unicode line {line:?} exceeded {max_width}: {}",
+            measure_text(line, 21.0)
+        );
+    }
+    for sample in ["ЖЖЖЖЖЖЖЖ", "ЩЩЩЩЩЩ", "ЖЖЖЖ ЖЖЖЖ ЖЖЖЖ"] {
+        let lines = wrap_lines_by_width(sample, 21.0, max_width, 2);
+        assert!(!lines.is_empty() && lines.len() <= 2);
+        for line in &lines {
+            assert!(
+                measure_text(line, 21.0) <= max_width,
+                "wrapped Unicode line {line:?} from {sample:?} exceeded {max_width}: {}",
+                measure_text(line, 21.0)
+            );
+        }
+    }
+    let mut hc_unicode = HcState::default();
+    hc_unicode.apply_event_line(
+        &json!({
+            "terminals": [{
+                "address": "t10",
+                "state": "live",
+                "status": { "app": "omp", "state": "working" },
+                "status_ms": 100,
+                "turn": 1,
+                "cwd": "/prj/unicode",
+                "labels": { "where": "ЖЖЖЖ ЖЖЖЖ / 1" }
+            }]
+        })
+        .to_string(),
+    );
+    let snap_unicode = build_snapshot(1000, &hc_unicode, None, None, None);
+    let svg_unicode = render_agent_slot(&snap_unicode, 1, "all", None);
+    assert!(
+        !svg_unicode.contains(">ЖЖЖЖ ЖЖЖЖ</text>"),
+        "expected wide Unicode name to wrap instead of staying on one line in {svg_unicode}"
+    );
+    assert_eq!(
+        svg_unicode.matches(">ЖЖЖЖ</text>").count(),
+        2,
+        "expected two wrapped lines for 'ЖЖЖЖ ЖЖЖЖ' in {svg_unicode}"
+    );
 }
 
 #[test]
@@ -687,4 +745,93 @@ fn preview_fixture_uses_neutral_placeholder_project_names() {
     assert!(serialized.contains("web-app"));
     assert!(serialized.contains("sample-app"));
     assert!(!serialized.contains("/prj/"));
+}
+
+#[test]
+fn usage_poller_releases_shared_mutex_during_wait() {
+    let _guard = SUBPROCESS_TEST_LOCK.blocking_lock();
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("usage-polled");
+    let fake_usage = temp.path().join("fake-kit-usage");
+    let fake_coord = temp.path().join("fake-kit-coord");
+    let fake_hc = temp.path().join("fake-hc");
+
+    std::fs::write(
+        &fake_usage,
+        format!(
+            "#!/bin/sh\nprintf '{{\"collecting\":false,\"generated_at_ms\":1000,\"providers\":[]}}\\n'\ntouch '{}'\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_usage, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    std::fs::write(&fake_coord, "#!/bin/sh\nprintf '{{}}\\n'\n").unwrap();
+    std::fs::set_permissions(&fake_coord, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // Emit an initial idle agent, wait until the usage poller has completed its non-collecting
+    // poll and entered its 60s wait, then emit a status update transitioning the agent to working.
+    // If the usage poller kept the shared mutex across its wait, this update would stall for 60s.
+    let initial_line = json!({
+        "seq": 1,
+        "terminals": [{
+            "address": "t1",
+            "state": "live",
+            "status": { "app": "omp", "state": "idle" },
+            "status_ms": 100,
+            "turn": 1,
+            "cwd": "/home/user/projects/api-service",
+            "labels": { "where": "api-service / 1" }
+        }]
+    })
+    .to_string();
+    let working_line = json!({
+        "jsonrpc": "2.0",
+        "method": "event",
+        "params": {
+            "terminal": "t1",
+            "type": "status",
+            "data": { "status": { "app": "omp", "state": "working" }, "status_ms": 200 }
+        }
+    })
+    .to_string();
+    std::fs::write(
+        &fake_hc,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{}'\nwhile [ ! -f '{}' ]; do sleep 0.02; done\nsleep 0.08\nprintf '%s\\n' '{}'\nexec sleep 10\n",
+            initial_line,
+            marker.display(),
+            working_line
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake_hc, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let cfg = SourceConfig {
+        data_dir: temp.path().join("data"),
+        hc: fake_hc,
+        herdr_app: PathBuf::from("herdr-app"),
+        kit_coord: fake_coord,
+        kit_usage: fake_usage,
+    };
+
+    // Use a dedicated runtime so all background poller tasks are shut down before
+    // SUBPROCESS_TEST_LOCK is released.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let (mut rx, _refresh) = start_background(cfg);
+        let updated = tokio::time::timeout(
+            Duration::from_secs(3),
+            rx.wait_for(|snap| snap.limits.available && snap.counts.working == 1),
+        )
+        .await
+        .expect("HC event update stalled while usage poller was waiting")
+        .expect("snapshot channel closed unexpectedly");
+        assert!(updated.limits.available);
+        assert_eq!(updated.counts.working, 1);
+    });
+    drop(rt);
 }
