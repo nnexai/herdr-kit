@@ -249,6 +249,14 @@ pub enum TaskCommand {
         #[arg(long)]
         file: Option<PathBuf>,
     },
+    /// Confirm a delegate's detected start-up folder/workspace trust prompt.
+    Trust {
+        /// Task identifier.
+        task: String,
+        /// Named keys to press (defaults to `enter`; allowed: enter, up, down, left, right, tab, space, y, 1, 2).
+        #[arg(long = "key")]
+        keys: Vec<String>,
+    },
     /// Close a task with a reason and optional outcome.
     Close {
         /// Task identifier.
@@ -652,6 +660,10 @@ mod tests {
         assert!(!parses(&["task", "send", "task-id"]));
         assert!(!parses(&[
             "task", "send", "task-id", "--text", "hello", "--file", "x"
+        ]));
+        assert!(parses(&["task", "trust", "task-id"]));
+        assert!(parses(&[
+            "task", "trust", "task-id", "--key", "down", "--key", "enter"
         ]));
     }
 

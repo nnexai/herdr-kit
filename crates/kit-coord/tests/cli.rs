@@ -1345,3 +1345,171 @@ fn claude_roles_expand_model_effort_and_resume_cleanly() {
     assert!(!rargv[rsep + 1..rsep + 4].contains(&"--model"));
     assert!(!rargv[rsep + 1..rsep + 4].contains(&"--effort"));
 }
+
+#[test]
+fn task_trust_confirms_detected_startup_trust_dialog_and_refuses_mid_task_prompts() {
+    let h = Harness::new();
+    let ws = h.open();
+    let task = format!("{ws}-t1");
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Work in new worktree").unwrap();
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["turn"] = json!(0);
+    term["reported"] = json!(false);
+    term["status"] = Value::Null;
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+
+    h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws,
+        "--rung",
+        "3",
+        "--reason",
+        "work",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--space",
+        "existing",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+
+    // Before watcher records task.start_blocked: refused with exit 4 (not_startup_dialog).
+    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 4);
+    assert!(!h.calls("hc").contains("\tkeys\t"));
+
+    // Delegate callers are forbidden from confirming trust prompts.
+    rail_error(
+        h.command(&["task", "trust", &task])
+            .env("HC_TERMINAL_ID", "t7")
+            .output()
+            .unwrap(),
+        "forbidden_caller",
+        3,
+    );
+
+    // Append watcher-detected task.start_blocked to the journal and invalidate state cache.
+    let journal_dir = h.root().join("data/coord/journal");
+    let journal_file = fs::read_dir(&journal_dir)
+        .unwrap()
+        .flatten()
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .unwrap()
+        .path();
+    let entries = h.journal();
+    let sb_seq = entries.last().unwrap()["seq"].as_u64().unwrap() + 1;
+    let sb_entry = json!({
+        "v": 1,
+        "seq": sb_seq,
+        "ts_ms": 999999,
+        "actor": "watcher",
+        "kind": "task.start_blocked",
+        "ws": ws,
+        "task": task,
+        "data": {"terminal": "t7", "after_secs": 30}
+    });
+    let mut existing = fs::read_to_string(&journal_file).unwrap();
+    existing.push_str(&format!("{sb_entry}\n"));
+    fs::write(&journal_file, existing).unwrap();
+    let _ = fs::remove_file(h.root().join("data/coord/state.json"));
+
+    // Non-trust startup dialog (codex update offer) is refused.
+    h.queue(
+        "hc",
+        "read",
+        &json!({"text":"Update available! 0.168 -> 0.169. Press enter to update.","complete":true,"how":"screen","why":null}),
+    );
+    rail_error(h.run(&["task", "trust", &task]), "not_trust_prompt", 3);
+    assert!(!h.calls("hc").contains("\tkeys\t"));
+
+    // Invalid key name is refused before touching hc.
+    rail_error(
+        h.run(&["task", "trust", &task, "--key", "ctrl+c"]),
+        "invalid_keys",
+        3,
+    );
+
+    // Real agy folder trust prompt is confirmed with default `enter` and recorded in journal.
+    h.queue(
+        "hc",
+        "read",
+        &json!({"text":"Trust this folder?\n> Yes, trust this folder\n  No, exit","complete":true,"how":"screen","why":null}),
+    );
+    h.queue("hc", "keys", &json!({"turn":0,"status":null}));
+    let confirmed = h.ok(&["task", "trust", &task]);
+    assert_eq!(confirmed["task"], task);
+    assert_eq!(confirmed["confirmed"], true);
+    assert_eq!(confirmed["terminal"], "t7");
+    assert_eq!(confirmed["keys"], json!(["enter"]));
+    assert_eq!(confirmed["start_blocked_seq"], sb_seq);
+
+    let calls = h.calls("hc");
+    assert!(
+        calls.contains("\tread\t--json\t--lines\t0\tt7\n"),
+        "expected visible-screen read: {calls}"
+    );
+    assert!(
+        calls.contains("\tkeys\t--json\tt7\tenter\n"),
+        "expected enter keystroke: {calls}"
+    );
+    let journal = h.journal();
+    let last = journal.last().unwrap();
+    assert_eq!(last["kind"], "task.trust_confirmed");
+    assert_eq!(last["task"], task);
+    assert_eq!(last["data"]["terminal"], "t7");
+    assert_eq!(last["data"]["keys"], json!(["enter"]));
+    assert_eq!(last["data"]["start_blocked_seq"], sb_seq);
+
+    // Custom allowlisted keys (e.g. `down enter`) also work on claude/copilot folder trust.
+    h.queue(
+        "hc",
+        "read",
+        &json!({"text":"Do you trust the files in this folder?\n1. Yes, I trust this folder","complete":true,"how":"screen","why":null}),
+    );
+    let multi = h.ok(&["task", "trust", &task, "--key", "down", "--key", "enter"]);
+    assert_eq!(multi["keys"], json!(["down", "enter"]));
+    assert!(h.calls("hc").contains("\tkeys\t--json\tt7\tdown\tenter\n"));
+
+    // Mid-task permission prompt (status: blocked) is strictly refused even if start_blocked was set.
+    let keys_count_before = h
+        .calls("hc")
+        .lines()
+        .filter(|l| l.contains("\tkeys\t"))
+        .count();
+    term["status"] = json!({"app":"antigravity","state":"blocked","msg":"Run rm -rf?"});
+    h.queue("hc", "get", &term);
+    rail_error(h.run(&["task", "trust", &task]), "agent_blocked", 3);
+
+    // Already-turned delegate (turn >= 1) is strictly refused.
+    term["status"] = json!({"app":"antigravity","state":"idle"});
+    term["turn"] = json!(1);
+    term["reported"] = json!(true);
+    h.queue("hc", "get", &term);
+    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 3);
+
+    // Working delegate (turn 0, status working) is refused.
+    term["turn"] = json!(0);
+    term["status"] = json!({"app":"antigravity","state":"working"});
+    h.queue("hc", "get", &term);
+    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 3);
+
+    assert_eq!(
+        h.calls("hc")
+            .lines()
+            .filter(|l| l.contains("\tkeys\t"))
+            .count(),
+        keys_count_before
+    );
+}

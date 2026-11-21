@@ -1070,6 +1070,176 @@ fn resume_with_message(
         "session": launched.session.and_then(|s| s.id),
     }))
 }
+
+const TRUST_KEY_ALLOWLIST: &[&str] = &[
+    "enter", "up", "down", "left", "right", "tab", "space", "y", "1", "2",
+];
+const MAX_TRUST_KEYS: usize = 4;
+
+fn validate_trust_keys(raw: &[String]) -> Result<Vec<String>> {
+    if raw.is_empty() {
+        return Ok(vec!["enter".into()]);
+    }
+    if raw.len() > MAX_TRUST_KEYS {
+        return Err(refuse(
+            "invalid_keys",
+            format!("at most {MAX_TRUST_KEYS} keys may be sent to confirm a start-up trust prompt"),
+        ));
+    }
+    let mut keys = Vec::with_capacity(raw.len());
+    for key in raw {
+        let normalized = key.trim().to_ascii_lowercase();
+        if !TRUST_KEY_ALLOWLIST.contains(&normalized.as_str()) {
+            return Err(refuse(
+                "invalid_keys",
+                format!("unsupported start-up trust key: {key}"),
+            ));
+        }
+        keys.push(normalized);
+    }
+    Ok(keys)
+}
+
+/// Returns true only when the visible terminal screen shows a folder/workspace
+/// start-up trust prompt (such as agy "Trust this folder?", claude/copilot
+/// folder trust, or codex directory trust), rejecting update offers, login
+/// screens, shell prompts, and unrelated dialogs.
+fn is_startup_trust_prompt(screen: &str) -> bool {
+    let lower = screen.to_ascii_lowercase();
+    let mentions_trust = lower.contains("trust");
+    let mentions_scope = [
+        "folder",
+        "directory",
+        "workspace",
+        "project",
+        "repository",
+        "repo",
+    ]
+    .iter()
+    .any(|word| lower.contains(word));
+    mentions_trust && mentions_scope
+}
+
+pub fn task_trust(ctx: &Ctx, c: &Caller, task: &TaskId, raw_keys: &[String]) -> Result<Value> {
+    let keys = validate_trust_keys(raw_keys)?;
+    let j = ctx.journal()?;
+    let state = j.read_state()?;
+    let t = state
+        .tasks
+        .get(task)
+        .ok_or_else(|| refuse("unknown_task", "unknown task"))?;
+    if t.state == TaskState::Closed {
+        return Err(refuse("task_closed", "task is closed"));
+    }
+    if t.state != TaskState::Running {
+        return Err(refuse("task_not_running", "task is not running"));
+    }
+    if t.attention.is_some() || t.blocked.is_some() {
+        return Err(refuse(
+            "agent_blocked",
+            "mid-task permission or error prompts require the person",
+        ));
+    }
+    let start_blocked_seq = t.start_blocked.ok_or_else(|| {
+        error::not_ready(
+            "not_startup_dialog",
+            "task has no detected start-up dialog (task.start_blocked)",
+        )
+    })?;
+    let address = t
+        .terminal
+        .as_deref()
+        .ok_or_else(|| error::not_ready("agent_not_ready", "task has no live terminal"))?;
+    let _terminal_guard = ctx.terminal_lock(address)?;
+    let term = ctx
+        .hc
+        .get(address)?
+        .filter(|term| term.live() && term.pid == t.pid)
+        .ok_or_else(|| error::not_ready("agent_not_ready", "task terminal is not live"))?;
+    if matches!(term.word(), Some("blocked" | "error")) {
+        return Err(refuse(
+            "agent_blocked",
+            "mid-task permission or error prompts require the person",
+        ));
+    }
+    if term.turn >= 1 {
+        return Err(refuse(
+            "not_startup_dialog",
+            "delegate has already completed a turn; only start-up trust prompts may be confirmed",
+        ));
+    }
+    if term.word() == Some("working") {
+        return Err(refuse("not_startup_dialog", "delegate is already working"));
+    }
+    if !owns_terminal(&state, &term, &t.id) {
+        return Err(refuse("terminal_not_owned", "task terminal is not owned"));
+    }
+    let screen = ctx.hc.read(&term.address, 0)?;
+    if let Some(why) = screen.why.as_deref() {
+        if matches!(why, "blocked" | "error") {
+            return Err(refuse(
+                "agent_blocked",
+                "mid-task permission or error prompts require the person",
+            ));
+        }
+        return Err(refuse(
+            "not_startup_dialog",
+            format!("delegate is not waiting at a start-up trust prompt ({why})"),
+        ));
+    }
+    if !is_startup_trust_prompt(&screen.text) {
+        return Err(refuse(
+            "not_trust_prompt",
+            "visible screen does not show a workspace or folder trust prompt",
+        ));
+    }
+    // Re-check task state and ownership under the journal lock before typing,
+    // then drop the lock before calling `hc keys`.
+    {
+        let l = j.lock()?;
+        let current = l
+            .state()
+            .tasks
+            .get(&t.id)
+            .ok_or_else(|| refuse("unknown_task", "task disappeared"))?;
+        if current.last_activity_seq != t.last_activity_seq
+            || current.terminal != t.terminal
+            || current.state != TaskState::Running
+            || current.start_blocked != Some(start_blocked_seq)
+            || current.attention.is_some()
+            || current.blocked.is_some()
+        {
+            return Err(error::not_ready(
+                "agent_not_ready",
+                "task changed before confirming trust prompt",
+            ));
+        }
+        if !owns_terminal(l.state(), &term, &t.id) {
+            return Err(refuse("terminal_not_owned", "task terminal is not owned"));
+        }
+    }
+    let outcome = ctx.hc.keys(&term.address, &keys)?;
+    let entry = (
+        Some(t.ws.clone()),
+        Some(t.id.clone()),
+        Kind::TaskTrustConfirmed {
+            terminal: term.address.clone(),
+            keys: keys.clone(),
+            start_blocked_seq,
+        },
+    );
+    let entries = j.lock()?.append(&c.actor(), ctx.now(), vec![entry])?;
+    Ok(json!({
+        "task": t.id,
+        "confirmed": true,
+        "terminal": term.address,
+        "keys": keys,
+        "start_blocked_seq": start_blocked_seq,
+        "turn": outcome.turn,
+        "status": outcome.status,
+        "seq": entries[0].seq,
+    }))
+}
 pub fn task_close(
     ctx: &Ctx,
     c: &Caller,
@@ -1424,6 +1594,51 @@ mod tests {
         assert!(send_guard(&t).is_ok());
     }
     #[test]
+    fn startup_trust_prompt_matcher_and_key_allowlist() {
+        assert!(is_startup_trust_prompt(
+            "Trust this folder?\n> Yes, trust this folder\n  No, exit"
+        ));
+        assert!(is_startup_trust_prompt(
+            "Quick safety check: Is this a project you created or one you trust?\n1. Yes, proceed"
+        ));
+        assert!(is_startup_trust_prompt(
+            "Do you trust the contents of this directory?"
+        ));
+        assert!(is_startup_trust_prompt(
+            "Confirm folder trust for /repo/worktree"
+        ));
+        assert!(!is_startup_trust_prompt(
+            "Update available: 0.168 -> 0.169. Press enter to update."
+        ));
+        assert!(!is_startup_trust_prompt(
+            "Allow running shell command `rm -rf build`? [y/N]"
+        ));
+        assert!(!is_startup_trust_prompt("user@host:~/project$ "));
+
+        assert_eq!(validate_trust_keys(&[]).unwrap(), vec!["enter"]);
+        assert_eq!(
+            validate_trust_keys(&["Down".into(), "ENTER".into()]).unwrap(),
+            vec!["down", "enter"]
+        );
+        assert_eq!(
+            error::exit_of(&validate_trust_keys(&["ctrl+c".into()]).unwrap_err()),
+            ("invalid_keys", 3)
+        );
+        assert_eq!(
+            error::exit_of(
+                &validate_trust_keys(&[
+                    "down".into(),
+                    "down".into(),
+                    "down".into(),
+                    "down".into(),
+                    "enter".into()
+                ])
+                .unwrap_err()
+            ),
+            ("invalid_keys", 3)
+        );
+    }
+    #[test]
     fn ladder_and_non_delegate_refuse_without_effects() {
         let tmp = tempfile::tempdir().unwrap();
         let ctx = setup(tmp.path());
@@ -1700,6 +1915,20 @@ mod placement_acceptance_tests {
         }
         fn list(&self, _: bool, _: Option<(&str, &str)>) -> Result<Vec<String>> {
             Ok(vec![])
+        }
+        fn read(&self, _: &str, _: u32) -> Result<super::super::adapter::ReadResult> {
+            Ok(super::super::adapter::ReadResult {
+                text: String::new(),
+                complete: true,
+                how: "screen".into(),
+                why: None,
+            })
+        }
+        fn keys(&self, _: &str, _: &[String]) -> Result<super::super::adapter::KeysResult> {
+            Ok(super::super::adapter::KeysResult {
+                turn: 0,
+                status: None,
+            })
         }
         fn send(&self, _: &str, text: &str) -> Result<SendOutcome> {
             self.shared.borrow_mut().sends.push(text.into());

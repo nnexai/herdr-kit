@@ -99,17 +99,25 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
 - `question` from a delegate: answer it with `kit task send` when you
   can; otherwise ask the person with `kit ask` and relay the answer.
 - `blocked`, `task.stalled`, `task.start_blocked`, `task.attention`: check
-  `kit board` and decide. Start-up dialogs and permission prompts are the
-  person's to answer: tell them which tab; never answer them yourself.
+  `kit board` and decide. For `task.start_blocked` on a delegate waiting at a
+  start-up folder/workspace trust prompt (e.g. agy "Trust this folder?",
+  claude workspace trust), confirm it with `kit task trust <task>` (passing
+  `--key down --key enter` only when the trust option is not already selected);
+  `kit task trust` only acts on detected start-up trust prompts and records
+  `task.trust_confirmed` in the journal. Non-trust start-up dialogs (such as
+  update offers or logins) and all mid-task permission prompts
+  (`task.attention blocked`) stay refused and remain the person's to answer:
+  tell them which tab; never answer them yourself.
 - To steer a working delegate, check whether its role supports steering
   (`kit roles`). On OMP delegates after their first settled turn,
   `kit task send <task> --text "..."` or `--file <path>` pastes and presses
   Enter into OMP's Steering queue (`delivery: "steering"`). Non-OMP harnesses
   refuse mid-turn sends with `steering_unsupported` while working; wait until
   they are idle or done, then send (`delivery: "new_turn"`), or send to a
-  dormant resumable task to resume it. A never-ready, start-up-dialog,
-  blocked or permission-prompt delegate always refuses: tell the person which
-  tab needs them; never force delivery or answer the prompt.
+  dormant resumable task to resume it. A never-ready, blocked or
+  permission-prompt delegate always refuses `task send`: use `kit task trust`
+  only for detected start-up trust dialogs; for everything else tell the
+  person which tab needs them and never force delivery.
 - When a workstream's delivery target is reached: close its remaining tasks,
   `kit ws close <ws> --summary "<one line>"`, then
   `kit release <ws>`. Release refuses anything unsafe and records why;
@@ -136,7 +144,8 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
 - Never run `hc`, `herdr-app` or `git worktree` to create, rename or close
   spaces, tabs, terminals or worktrees. `kit` does all structure and
   records it.
-- Never type into a delegate except through `kit task send`.
+- Never type into a delegate except through `kit task send` (or `kit task trust`
+  for detected start-up folder/workspace trust prompts).
 - Never close or remove anything the person created.
 - Never do the project work yourself.
 

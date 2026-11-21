@@ -1043,6 +1043,12 @@ mod tests {
         fn send(&self, _: &str, _: &str) -> Result<super::super::adapter::SendOutcome> {
             anyhow::bail!("unexpected send")
         }
+        fn read(&self, _: &str, _: u32) -> Result<super::super::adapter::ReadResult> {
+            anyhow::bail!("unexpected read")
+        }
+        fn keys(&self, _: &str, _: &[String]) -> Result<super::super::adapter::KeysResult> {
+            anyhow::bail!("unexpected keys")
+        }
         fn send_command(&self, _: &str, _: &str) -> std::process::Command {
             unreachable!("unexpected send command")
         }

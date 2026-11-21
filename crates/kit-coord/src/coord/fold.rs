@@ -516,6 +516,17 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                 t.stalled_ms = Some(e.ts_ms);
             }
         }
+        Kind::TaskTrustConfirmed { .. } => {
+            let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
+                anomaly(s, e, "unknown task");
+                return;
+            };
+            if t.state != TaskState::Running {
+                anomaly(s, e, "invalid task trust confirmation");
+                return;
+            }
+            t.last_activity_seq = e.seq;
+        }
         Kind::TaskAttention { state, msg } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
                 anomaly(s, e, "unknown task");

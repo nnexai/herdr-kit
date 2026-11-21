@@ -90,10 +90,26 @@ pub struct SendOutcome {
     pub started: Option<bool>,
     pub status: Option<String>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadResult {
+    pub text: String,
+    pub complete: bool,
+    pub how: String,
+    #[serde(default)]
+    pub why: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct KeysResult {
+    pub turn: u64,
+    #[serde(default)]
+    pub status: Option<String>,
+}
 pub trait Hc {
     fn run(&self, spec: &RunSpec) -> Result<Term>;
     fn get(&self, terminal: &str) -> Result<Option<Term>>;
     fn list(&self, all: bool, label: Option<(&str, &str)>) -> Result<Vec<String>>;
+    fn read(&self, terminal: &str, lines: u32) -> Result<ReadResult>;
+    fn keys(&self, terminal: &str, keys: &[String]) -> Result<KeysResult>;
     fn send(&self, terminal: &str, text: &str) -> Result<SendOutcome>;
     fn steer(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
         let mut command = self.send_command(terminal, text);
@@ -246,6 +262,17 @@ impl Hc for ProcHc {
         let list: List = json_reply(cmd, 15)?;
         Ok(list.terminals.into_iter().map(|t| t.address).collect())
     }
+    fn read(&self, terminal: &str, lines: u32) -> Result<ReadResult> {
+        let mut cmd = self.cmd("read");
+        cmd.args(["--json", "--lines", &lines.to_string(), terminal]);
+        json_reply(cmd, 15)
+    }
+    fn keys(&self, terminal: &str, keys: &[String]) -> Result<KeysResult> {
+        ensure!(!keys.is_empty(), "empty keys");
+        let mut cmd = self.cmd("keys");
+        cmd.args(["--json", terminal]).args(keys);
+        json_reply(cmd, 15)
+    }
     fn send(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
         json_reply(self.send_command(terminal, text), 90)
     }
@@ -318,6 +345,8 @@ pub mod fake {
         pub runs: RefCell<VecDeque<Result<Term>>>,
         pub gets: RefCell<VecDeque<Result<Option<Term>>>>,
         pub lists: RefCell<VecDeque<Result<Vec<String>>>>,
+        pub reads: RefCell<VecDeque<Result<ReadResult>>>,
+        pub keys_replies: RefCell<VecDeque<Result<KeysResult>>>,
         pub sends: RefCell<VecDeque<Result<SendOutcome>>>,
         pub mutations: RefCell<VecDeque<Result<()>>>,
     }
@@ -350,6 +379,24 @@ pub mod fake {
                 .borrow_mut()
                 .pop_front()
                 .unwrap_or_else(|| Err(anyhow::anyhow!("unscripted list")))
+        }
+        fn read(&self, terminal: &str, lines: u32) -> Result<ReadResult> {
+            self.calls
+                .borrow_mut()
+                .push(format!("read {terminal} {lines}"));
+            self.reads
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| Err(anyhow::anyhow!("unscripted read")))
+        }
+        fn keys(&self, terminal: &str, keys: &[String]) -> Result<KeysResult> {
+            self.calls
+                .borrow_mut()
+                .push(format!("keys {terminal} {}", keys.join(" ")));
+            self.keys_replies
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or_else(|| Err(anyhow::anyhow!("unscripted keys")))
         }
         fn send(&self, terminal: &str, text: &str) -> Result<SendOutcome> {
             self.calls
@@ -440,6 +487,24 @@ mod tests {
         let reply = ProcHc { exe }.send("t1", "hello world").unwrap();
         assert_eq!(reply.turn, 3);
         assert_eq!(reply.started, Some(true));
+    }
+    #[test]
+    fn read_and_keys_invoke_hc_json_without_caller_identity() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("hc");
+        std::fs::write(
+            &exe,
+            "#!/bin/sh\nif [ \"$1\" = read ]; then\n  [ \"$#\" = 5 ] && [ \"$2\" = --json ] && [ \"$3\" = --lines ] && [ \"$4\" = 0 ] && [ \"$5\" = t1 ] || exit 1\n  printf '%s' '{\"text\":\"Trust this folder?\",\"complete\":true,\"how\":\"screen\",\"why\":null}'\nelif [ \"$1\" = keys ]; then\n  [ \"$#\" = 5 ] && [ \"$2\" = --json ] && [ \"$3\" = t1 ] && [ \"$4\" = down ] && [ \"$5\" = enter ] || exit 1\n  printf '%s' '{\"turn\":0,\"status\":null}'\nelse\n  exit 1\nfi\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let hc = ProcHc { exe };
+        let screen = hc.read("t1", 0).unwrap();
+        assert_eq!(screen.text, "Trust this folder?");
+        assert!(screen.why.is_none());
+        let keys = hc.keys("t1", &["down".into(), "enter".into()]).unwrap();
+        assert_eq!(keys.turn, 0);
     }
     #[test]
     fn terminal_readiness_and_labels() {

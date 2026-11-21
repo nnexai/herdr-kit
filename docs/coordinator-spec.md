@@ -64,7 +64,7 @@ Every entry has `seq`, `ts`, `actor` (`coordinator`, `task:<id>`, `watcher`,
 | Group | Kinds |
 |---|---|
 | Workstream | `ws.opened` (title, repo, delivery target), `ws.closed`, `ws.cleaned`, `ws.retained` |
-| Task | `task.placed` (rung, rejected rungs with reasons, role, model, brief path), `task.started` (terminal, tab, session ref), `task.reported`, `task.progress`, `task.closed`, `task.dormant` |
+| Task | `task.placed` (rung, rejected rungs with reasons, role, model, brief path), `task.started` (terminal, tab, session ref), `task.trust_confirmed` (terminal, keys, start-blocked seq), `task.reported`, `task.progress`, `task.closed`, `task.dormant` |
 | Resource | `res.intent`, `res.created`, `res.adopted`, `res.release_checked` (each check and its result), `res.released` |
 | Watcher | `nudge.sent`, `task.stalled`, `reconcile.finding`, `watcher.started`, `watcher.stopped` |
 | Coordinator | `coord.session_started`, `coord.session_ended` (reason), `inbox.drained` (cursor), `decision` (what, why, tier), `question.asked`, `question.answered`, `scout.result` |
@@ -85,7 +85,7 @@ decide, and the CLI executes and records in one step.
 | Caller | Verbs |
 |---|---|
 | Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>` |
-| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff` |
+| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task trust`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff` |
 | Delegate | `report done\|blocked\|question\|progress [--result <file>]`, `note` |
 | Watcher | `watch` |
 
@@ -315,7 +315,8 @@ Rules that follow:
   `delivery: "new_turn"`, or resumes when dormant. Blocked/permission prompts
   remain person-owned and refuse delivery with `agent_blocked` (exit 3); no
   force flag is used.
-- A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person. The system does not answer dialogs.
+- A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person.
+- The coordinator may explicitly confirm a delegate's detected start-up folder/workspace trust prompt with `kit-coord task trust <task> [--key <key>...]`, which sends only allowlisted confirmation keys (`enter` by default; optional navigation keys such as `--key down --key enter`) via `hc keys` and records `task.trust_confirmed` in the journal. `task trust` requires all of: an owned running delegate terminal (`coord.managed=1`, `coord.task=<task>`), an active `task.start_blocked` record, `turn == 0`, status neither `working` nor `blocked`/`error`, no open attention/blocked episode, and visible screen text (`hc read --lines 0`) matching a workspace/folder trust prompt. Mid-task permission prompts, errors, already-started turns (`turn >= 1`), and non-trust dialogs (update offers, logins) are always refused.
 - Role files may carry harness flags that avoid dialogs where the harness offers them.
 
 ### Folder trust for owned worktrees *(verified)*
@@ -326,7 +327,7 @@ worktrees are laid out.
 | Harness | New worktree asks? | What removes the question |
 |---|---|---|
 | omp | No | Nothing needed |
-| agy | May ask for untrusted workspaces (`settings.json` `trustedWorkspaces`) | Workspace trust inheritance for child worktrees is unverified; untrusted launches surface as `task.start_blocked` until accepted by the person |
+| agy | May ask for untrusted workspaces (`settings.json` `trustedWorkspaces`) | Workspace trust inheritance for child worktrees is unverified; untrusted launches surface as `task.start_blocked` and can be confirmed explicitly by the coordinator with `kit-coord task trust <task>` (recorded as `task.trust_confirmed`) |
 | codex | Yes, in any git repo not yet trusted. Trust of a parent folder is not inherited. | Trust belongs to the repository root, so a worktree of a trusted repo does not ask. Per launch, without saving anything: `-c 'projects={ "<repo root>" = { trust_level = "trusted" } }'` |
 | claude | Yes. Being a worktree of a trusted repo does not help. | Trust of a parent folder is inherited: trusting the worktree root once covers every worktree below it |
 | copilot | Yes | A remembered folder covers its subfolders, and also a worktree elsewhere whose main repo is inside a remembered folder. `COPILOT_ALLOW_ALL=true` also skips the question, but approves all tools as well |

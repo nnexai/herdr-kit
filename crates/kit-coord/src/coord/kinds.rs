@@ -312,6 +312,12 @@ pub enum Kind {
     TaskNote { text: String },
     #[serde(rename = "task.start_blocked")]
     TaskStartBlocked { terminal: String, after_secs: u64 },
+    #[serde(rename = "task.trust_confirmed")]
+    TaskTrustConfirmed {
+        terminal: String,
+        keys: Vec<String>,
+        start_blocked_seq: u64,
+    },
     #[serde(rename = "task.attention")]
     TaskAttention {
         state: AttentionState,
@@ -498,6 +504,7 @@ impl Kind {
             Self::TaskProgress { .. } => "task.progress",
             Self::TaskNote { .. } => "task.note",
             Self::TaskStartBlocked { .. } => "task.start_blocked",
+            Self::TaskTrustConfirmed { .. } => "task.trust_confirmed",
             Self::TaskAttention { .. } => "task.attention",
             Self::TaskBlockedReminder { .. } => "task.blocked_reminder",
             Self::TaskStalled { .. } => "task.stalled",
@@ -656,6 +663,10 @@ mod tests {
             (
                 "task.start_blocked",
                 json!({"terminal":"t1","after_secs":10}),
+            ),
+            (
+                "task.trust_confirmed",
+                json!({"terminal":"t1","keys":["enter"],"start_blocked_seq":9}),
             ),
             ("task.attention", json!({"state":"blocked"})),
             ("task.stalled", json!({"silent_secs":20,"nudge_seq":4})),
