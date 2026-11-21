@@ -3,17 +3,18 @@ use crate::model::{
     format_reset_short,
 };
 
-const BG_TOP: &str = "#0b1020";
-const BG_BOT: &str = "#111829";
-const PILL_BG: &str = "#172033";
-const TRACK: &str = "#1e293b";
-const ICE: &str = "#e5eefc";
-const MUTED: &str = "#8b9bb4";
+const BG: &str = "#000000";
+const PILL_BG: &str = "#131c2e";
+const TRACK: &str = "#273449";
+const ICE: &str = "#ffffff";
+const MUTED: &str = "#cbd5e1";
 const CYAN: &str = "#22d3ee";
-const MINT: &str = "#00f5a0";
-const AMBER: &str = "#ffb300";
-const CORAL: &str = "#ff4b5c";
-const VIOLET: &str = "#a78bfa";
+const MINT: &str = "#00ff9d";
+const AMBER: &str = "#ffc21a";
+const CORAL: &str = "#ff4d5e";
+const VIOLET: &str = "#c4b5fd";
+const FONT_SANS: &str = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+const FONT_MONO: &str = "DejaVu Sans Mono, Liberation Mono, monospace";
 
 pub fn xml_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -135,23 +136,17 @@ fn usage_color(fraction: Option<f64>, stale: bool, available: bool) -> &'static 
 }
 
 fn svg_card(accent: &str, highlight: bool, body: &str) -> String {
-    let border_w = if highlight { "3.5" } else { "2.2" };
-    let border_op = if highlight { "0.95" } else { "0.45" };
+    let frame = if highlight {
+        format!(
+            r#"<rect x="3" y="3" width="138" height="138" rx="14" fill="none" stroke="{accent}" stroke-width="6"/>"#
+        )
+    } else {
+        format!(r#"<rect x="0" y="0" width="144" height="8" fill="{accent}"/>"#)
+    };
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 144" width="144" height="144">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="{BG_TOP}"/>
-      <stop offset="100%" stop-color="{BG_BOT}"/>
-    </linearGradient>
-    <radialGradient id="glow" cx="50%" cy="10%" r="70%">
-      <stop offset="0%" stop-color="{accent}" stop-opacity="0.22"/>
-      <stop offset="100%" stop-color="{accent}" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
-  <rect width="144" height="144" rx="20" fill="url(#bg)"/>
-  <rect width="144" height="144" rx="20" fill="url(#glow)"/>
-  <rect x="3" y="3" width="138" height="138" rx="18" fill="none" stroke="{accent}" stroke-width="{border_w}" stroke-opacity="{border_op}"/>
+  <rect width="144" height="144" fill="{BG}"/>
+  {frame}
   {body}
 </svg>"#
     )
@@ -175,11 +170,11 @@ fn svg_radial_gauge(
     center_text: &str,
     label: &str,
     sublabel: &str,
-    badge: Option<&str>,
+    stale: bool,
     selected: bool,
 ) -> String {
     let cx = 72.0;
-    let cy = 58.0;
+    let cy = 56.0;
     let r = 42.0;
     let track = arc_path(cx, cy, r, 150.0, 390.0);
     let fill_arc = match fraction {
@@ -189,35 +184,34 @@ fn svg_radial_gauge(
             let path = arc_path(cx, cy, r, 150.0, end);
             let (dx, dy) = arc_point(cx, cy, r, end);
             format!(
-                r#"<path d="{path}" fill="none" stroke="{accent}" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="{dx:.1}" cy="{dy:.1}" r="5.5" fill="{ICE}"/>"#
+                r#"<path d="{path}" fill="none" stroke="{accent}" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="{dx:.1}" cy="{dy:.1}" r="6" fill="{ICE}"/>"#
             )
         }
         _ => String::new(),
     };
-    let center_size = if center_text.chars().count() <= 4 {
-        29
-    } else {
-        22
+    let center_size = match center_text.chars().count() {
+        0..=3 => 34,
+        4 => 28,
+        _ => 22,
     };
-    let badge_svg = match badge {
-        Some(text) if !text.is_empty() => format!(
-            r#"<rect x="92" y="10" width="40" height="18" rx="6" fill="{accent}" fill-opacity="0.22" stroke="{accent}" stroke-width="1.2"/>
-  <text x="112" y="23" text-anchor="middle" fill="{ICE}" font-family="monospace" font-size="11" font-weight="700">{}</text>"#,
-            xml_escape(text)
-        ),
-        _ => String::new(),
+    let stale_badge = if stale {
+        format!(
+            r#"<text x="128" y="28" text-anchor="end" fill="{AMBER}" font-family="{FONT_MONO}" font-size="20" font-weight="900">~</text>"#
+        )
+    } else {
+        String::new()
     };
     let body = format!(
-        r#"<path d="{track}" fill="none" stroke="{TRACK}" stroke-width="10" stroke-linecap="round"/>
+        r#"<path d="{track}" fill="none" stroke="{TRACK}" stroke-width="14" stroke-linecap="round"/>
   {fill_arc}
-  {badge_svg}
-  <text x="72" y="67" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="{center_size}" font-weight="800">{}</text>
-  <text x="72" y="106" text-anchor="middle" fill="{accent}" font-family="sans-serif" font-size="16" font-weight="800">{}</text>
-  <text x="72" y="128" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="14" font-weight="700">{}</text>"#,
+  {stale_badge}
+  <text x="72" y="67" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="{center_size}" font-weight="900">{}</text>
+  <text x="72" y="108" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
+  <text x="72" y="134" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(center_text),
-        xml_escape(&clip_chars(label, 10)),
-        xml_escape(&clip_chars(sublabel, 12)),
+        xml_escape(&clip_chars(label, 8)),
+        xml_escape(&clip_chars(sublabel, 9)),
     );
     svg_card(accent, selected, &body)
 }
@@ -233,23 +227,14 @@ pub fn render_overview(snap: &DeckSnapshot) -> String {
         MINT
     };
     let dot_col = if snap.core_connected { MINT } else { CORAL };
-    let (hero, sub) = if !snap.core_connected {
-        ("OFFLINE".into(), "NO HC CORE".into())
+    let hero = if !snap.core_connected {
+        "OFFLINE".into()
     } else if snap.counts.needs_you > 0 {
-        (
-            format!("{} NEEDS", snap.counts.needs_you),
-            format!(
-                "{} RUN · {} DONE",
-                snap.counts.working, snap.counts.unseen_done
-            ),
-        )
+        format!("{} NEED", snap.counts.needs_you)
     } else if snap.counts.working > 0 {
-        (
-            format!("{} WORK", snap.counts.working),
-            format!("{} AGENTS LIVE", snap.counts.total),
-        )
+        format!("{} WORK", snap.counts.working)
     } else {
-        ("CLEAR".into(), format!("{} AGENTS IDLE", snap.counts.total))
+        "CLEAR".into()
     };
     let footer = if let Some(worst_id) = snap.limits.worst_provider.as_deref() {
         if let Some(p) = snap.provider(worst_id) {
@@ -263,24 +248,22 @@ pub fn render_overview(snap: &DeckSnapshot) -> String {
             };
             format!("{tag} {pct}")
         } else {
-            "LIMITS —".into()
+            format!("{} LIVE", snap.counts.total)
         }
     } else {
-        "LIMITS —".into()
+        format!("{} LIVE", snap.counts.total)
     };
-    let hero_size = if hero.len() <= 6 { 28 } else { 24 };
+    let hero_size = if hero.len() <= 6 { 34 } else { 26 };
     let body = format!(
-        r#"<circle cx="24" cy="23" r="5" fill="{dot_col}"/>
-  <text x="36" y="28" fill="{ICE}" font-family="sans-serif" font-size="14" font-weight="800">HERDR</text>
-  <text x="126" y="28" text-anchor="end" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">{}</text>
-  <text x="72" y="72" text-anchor="middle" fill="{accent}" font-family="sans-serif" font-size="{hero_size}" font-weight="800">{}</text>
-  <text x="72" y="96" text-anchor="middle" fill="{ICE}" font-family="monospace" font-size="13" font-weight="600">{}</text>
-  <rect x="16" y="108" width="112" height="24" rx="7" fill="{PILL_BG}" stroke="{accent}" stroke-opacity="0.45" stroke-width="1.2"/>
-  <text x="72" y="125" text-anchor="middle" fill="{ICE}" font-family="monospace" font-size="14" font-weight="700">{}</text>"#,
+        r#"<circle cx="22" cy="26" r="6" fill="{dot_col}"/>
+  <text x="36" y="33" fill="{ICE}" font-family="{FONT_SANS}" font-size="20" font-weight="900">HERDR</text>
+  <text x="134" y="33" text-anchor="end" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
+  <text x="72" y="82" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="{hero_size}" font-weight="900">{}</text>
+  <rect x="10" y="98" width="124" height="36" rx="8" fill="{PILL_BG}"/>
+  <text x="72" y="124" text-anchor="middle" fill="{ICE}" font-family="{FONT_MONO}" font-size="22" font-weight="900">{}</text>"#,
         snap.counts.total,
         xml_escape(&hero),
-        xml_escape(&sub),
-        xml_escape(&footer),
+        xml_escape(&clip_chars(&footer, 9)),
     );
     svg_card(accent, snap.counts.needs_you > 0, &body)
 }
@@ -288,10 +271,10 @@ pub fn render_overview(snap: &DeckSnapshot) -> String {
 pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
     let Some((item, idx)) = snap.inbox_item(selected_index) else {
         let body = format!(
-            r#"<text x="72" y="28" text-anchor="middle" fill="{MUTED}" font-family="sans-serif" font-size="14" font-weight="700">INBOX</text>
-  <circle cx="72" cy="68" r="22" fill="none" stroke="{MINT}" stroke-width="4"/>
-  <path d="M62 68 L69 75 L84 60" fill="none" stroke="{ICE}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="72" y="116" text-anchor="middle" fill="{MINT}" font-family="monospace" font-size="15" font-weight="700">0 PENDING</text>"#
+            r#"<text x="72" y="32" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="20" font-weight="900">INBOX</text>
+  <circle cx="72" cy="74" r="24" fill="none" stroke="{MINT}" stroke-width="6"/>
+  <path d="M60 74 L68 82 L86 64" fill="none" stroke="{ICE}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="72" y="130" text-anchor="middle" fill="{MINT}" font-family="{FONT_SANS}" font-size="24" font-weight="900">CLEAR</text>"#
         );
         return svg_card(MINT, false, &body);
     };
@@ -301,22 +284,30 @@ pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
         InboxKind::Done => MINT,
     };
     let count_badge = format!("{}/{}", idx + 1, snap.inbox.len());
-    let lines = wrap_lines(&item.text, 13, 2);
+    let lines = wrap_lines(&item.text, 10, 2);
     let line1 = lines.first().map(String::as_str).unwrap_or("");
     let line2 = lines.get(1).map(String::as_str).unwrap_or("");
+    let mid = if line2.is_empty() {
+        format!(
+            r#"<text x="72" y="84" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>"#,
+            xml_escape(line1)
+        )
+    } else {
+        format!(
+            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
+  <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
+            xml_escape(line1),
+            xml_escape(line2)
+        )
+    };
     let body = format!(
-        r#"<text x="16" y="27" fill="{accent}" font-family="sans-serif" font-size="13" font-weight="800">{}</text>
-  <text x="128" y="27" text-anchor="end" fill="{ICE}" font-family="monospace" font-size="13" font-weight="700">{}</text>
-  <text x="72" y="54" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="16" font-weight="800">{}</text>
-  <text x="72" y="76" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="15" font-weight="600">{}</text>
-  <text x="72" y="96" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="15" font-weight="600">{}</text>
-  <text x="72" y="124" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">{}</text>"#,
+        r#"<text x="12" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
+  <text x="132" y="32" text-anchor="end" fill="{ICE}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
+  {mid}
+  <text x="72" y="132" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(item.kind.short_label()),
         xml_escape(&count_badge),
-        xml_escape(&clip_chars(&item.title, 12)),
-        xml_escape(line1),
-        xml_escape(line2),
-        xml_escape(&clip_chars(&item.source, 14)),
+        xml_escape(&clip_chars(&item.source, 10)),
     );
     svg_card(accent, item.kind != InboxKind::Done, &body)
 }
@@ -332,8 +323,8 @@ pub fn render_inbox_action(
         "prev" => (
             CYAN,
             "PREV",
-            format!("{} ITEMS", snap.inbox.len()),
-            format!(r#"<polygon points="84,42 54,60 84,78" fill="{ICE}"/>"#),
+            format!("{} ITEM", snap.inbox.len()),
+            format!(r#"<polygon points="88,30 50,54 88,78" fill="{ICE}"/>"#),
         ),
         "focus" => (
             if active.is_some() { MINT } else { MUTED },
@@ -343,7 +334,7 @@ pub fn render_inbox_action(
                 .unwrap_or("NONE")
                 .to_owned(),
             format!(
-                r#"<circle cx="72" cy="60" r="18" fill="none" stroke="{MINT}" stroke-width="4"/><circle cx="72" cy="60" r="5" fill="{ICE}"/>"#
+                r#"<circle cx="72" cy="54" r="22" fill="none" stroke="{MINT}" stroke-width="6"/><circle cx="72" cy="54" r="7" fill="{ICE}"/>"#
             ),
         ),
         "reply_1" | "reply_2" => {
@@ -353,28 +344,28 @@ pub fn render_inbox_action(
                 (
                     AMBER,
                     "HOLD!",
-                    "0.65s TO SEND".into(),
+                    "SEND".into(),
                     format!(
-                        r#"<circle cx="72" cy="58" r="18" fill="none" stroke="{AMBER}" stroke-width="4"/>"#
+                        r#"<circle cx="72" cy="52" r="22" fill="none" stroke="{AMBER}" stroke-width="6"/>"#
                     ),
                 )
             } else if let Some(label) = opt {
                 (
                     AMBER,
                     "REPLY",
-                    clip_chars(label, 12),
+                    format!("OPT {}", opt_idx + 1),
                     format!(
-                        r#"<text x="72" y="66" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="18" font-weight="800">{}</text>"#,
-                        xml_escape(&clip_chars(label, 9))
+                        r#"<text x="72" y="66" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>"#,
+                        xml_escape(&clip_chars(label, 8))
                     ),
                 )
             } else {
                 (
                     MUTED,
-                    "OPTION",
-                    "—".into(),
+                    if opt_idx == 0 { "OPT 1" } else { "OPT 2" },
+                    "NONE".into(),
                     format!(
-                        r#"<text x="72" y="66" text-anchor="middle" fill="{MUTED}" font-family="sans-serif" font-size="22" font-weight="800">—</text>"#
+                        r#"<text x="72" y="66" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="32" font-weight="900">—</text>"#
                     ),
                 )
             }
@@ -382,16 +373,16 @@ pub fn render_inbox_action(
         _ => (
             CYAN,
             "NEXT",
-            format!("{} ITEMS", snap.inbox.len()),
-            format!(r#"<polygon points="60,42 90,60 60,78" fill="{ICE}"/>"#),
+            format!("{} ITEM", snap.inbox.len()),
+            format!(r#"<polygon points="56,30 94,54 56,78" fill="{ICE}"/>"#),
         ),
     };
     let body = format!(
         r#"{icon}
-  <text x="72" y="106" text-anchor="middle" fill="{accent}" font-family="sans-serif" font-size="17" font-weight="800">{}</text>
-  <text x="72" y="128" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">{}</text>"#,
+  <text x="72" y="106" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>
+  <text x="72" y="134" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(title),
-        xml_escape(&clip_chars(&sub, 13)),
+        xml_escape(&clip_chars(&sub, 9)),
     );
     svg_card(accent, false, &body)
 }
@@ -408,10 +399,10 @@ pub fn render_agent_slot(
             .filter(|s| !s.is_empty())
             .unwrap_or("SLOT");
         let body = format!(
-            r#"<text x="72" y="54" text-anchor="middle" fill="{MUTED}" font-family="sans-serif" font-size="15" font-weight="700">{}</text>
-  <text x="72" y="84" text-anchor="middle" fill="{TRACK}" font-family="monospace" font-size="24" font-weight="800">—</text>
-  <text x="72" y="122" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">#{slot}</text>"#,
-            xml_escape(&clip_chars(label, 11)),
+            r#"<text x="72" y="42" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
+  <text x="72" y="88" text-anchor="middle" fill="{TRACK}" font-family="{FONT_MONO}" font-size="34" font-weight="900">—</text>
+  <text x="72" y="130" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="20" font-weight="800">#{slot}</text>"#,
+            xml_escape(&clip_chars(label, 9)),
         );
         return svg_card(MUTED, false, &body);
     };
@@ -427,22 +418,31 @@ pub fn render_agent_slot(
     } else {
         agent.status.short_label()
     };
-    let space_lines = wrap_lines(&agent.space, 11, 2);
+    let space_lines = wrap_lines(&agent.space, 9, 2);
     let line1 = space_lines.first().map(String::as_str).unwrap_or("agent");
     let line2 = space_lines.get(1).map(String::as_str).unwrap_or("");
+    let mid = if line2.is_empty() {
+        format!(
+            r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>"#,
+            xml_escape(line1)
+        )
+    } else {
+        format!(
+            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>
+  <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>"#,
+            xml_escape(line1),
+            xml_escape(line2)
+        )
+    };
     let body = format!(
-        r#"<circle cx="20" cy="24" r="5" fill="{accent}"/>
-  <text x="31" y="29" fill="{accent}" font-family="sans-serif" font-size="13" font-weight="800">{}</text>
-  <text x="128" y="29" text-anchor="end" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">T{}</text>
-  <text x="72" y="68" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="19" font-weight="800">{}</text>
-  <text x="72" y="90" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="17" font-weight="700">{}</text>
-  <text x="72" y="124" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="14" font-weight="700">{} · {}</text>"#,
+        r#"<text x="12" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
+  <text x="132" y="32" text-anchor="end" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>
+  {mid}
+  <text x="72" y="132" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{} · T{}</text>"#,
         xml_escape(badge),
-        agent.turn,
-        xml_escape(line1),
-        xml_escape(line2),
         xml_escape(&agent.agent_short),
         xml_escape(&agent.address),
+        agent.turn,
     );
     svg_card(
         accent,
@@ -457,9 +457,9 @@ pub fn render_agent_slot(
 pub fn render_coordinator(snap: &DeckSnapshot) -> String {
     let Some(coord) = &snap.coordinator else {
         let body = format!(
-            r#"<text x="72" y="28" text-anchor="middle" fill="{MUTED}" font-family="sans-serif" font-size="14" font-weight="700">COORD</text>
-  <text x="72" y="76" text-anchor="middle" fill="{MUTED}" font-family="sans-serif" font-size="22" font-weight="800">N/A</text>
-  <text x="72" y="122" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="13">UNAVAILABLE</text>"#
+            r#"<text x="72" y="32" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="20" font-weight="900">COORD</text>
+  <text x="72" y="84" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="30" font-weight="900">N/A</text>
+  <text x="72" y="130" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">OFFLINE</text>"#
         );
         return svg_card(MUTED, false, &body);
     };
@@ -472,28 +472,28 @@ pub fn render_coordinator(snap: &DeckSnapshot) -> String {
             _ => MUTED,
         }
     };
-    let state_word = match coord.state.as_str() {
-        "running" => "RUNNING",
-        "degraded" => "DEGRADED",
-        "not_running" => "OFF",
-        _ => "UNKNOWN",
-    };
     let mid = if coord.needs_you > 0 {
-        format!("{} NEEDS", coord.needs_you)
+        format!("{} NEED", coord.needs_you)
     } else if coord.state == "running" {
         format!("{} RUN", coord.running_tasks)
+    } else if coord.state == "degraded" {
+        "WARN".into()
+    } else {
+        "OFF".into()
+    };
+    let bot = if coord.state == "running" {
+        format!("WS:{} R:{}", coord.open_workstreams, coord.retained)
     } else {
         "HOLD: UP".into()
     };
-    let bot = format!("WS:{} RET:{}", coord.open_workstreams, coord.retained);
+    let mid_size = if mid.len() <= 6 { 34 } else { 26 };
     let body = format!(
-        r#"<circle cx="24" cy="24" r="5.5" fill="{accent}"/>
-  <text x="36" y="29" fill="{ICE}" font-family="sans-serif" font-size="14" font-weight="800">COORD</text>
-  <text x="72" y="54" text-anchor="middle" fill="{accent}" font-family="monospace" font-size="14" font-weight="800">{state_word}</text>
-  <text x="72" y="88" text-anchor="middle" fill="{ICE}" font-family="sans-serif" font-size="25" font-weight="800">{}</text>
-  <text x="72" y="124" text-anchor="middle" fill="{MUTED}" font-family="monospace" font-size="13" font-weight="700">{}</text>"#,
+        r#"<circle cx="22" cy="26" r="6" fill="{accent}"/>
+  <text x="36" y="33" fill="{ICE}" font-family="{FONT_SANS}" font-size="20" font-weight="900">COORD</text>
+  <text x="72" y="84" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="{mid_size}" font-weight="900">{}</text>
+  <text x="72" y="130" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="20" font-weight="800">{}</text>"#,
         xml_escape(&mid),
-        xml_escape(&bot),
+        xml_escape(&clip_chars(&bot, 9)),
     );
     svg_card(accent, coord.needs_you > 0, &body)
 }
@@ -504,14 +504,14 @@ pub fn render_limit_provider(
     selected_provider: &str,
 ) -> String {
     let Some(p) = snap.resolve_provider(provider_setting, selected_provider) else {
-        let (_, short) = match provider_setting {
-            "codex" => ("Codex", "CODEX"),
-            "claude" => ("Claude", "CLAUDE"),
-            "copilot" => ("Copilot", "COPILOT"),
-            "antigravity" => ("Antigravity", "ANTIGRAV"),
-            _ => ("Limits", "LIMITS"),
+        let short = match provider_setting {
+            "codex" => "CODEX",
+            "claude" => "CLAUDE",
+            "copilot" => "COPILOT",
+            "antigravity" => "AGY",
+            _ => "LIMITS",
         };
-        return svg_radial_gauge(MUTED, None, "—", short, "LOADING", None, false);
+        return svg_radial_gauge(MUTED, None, "—", short, "WAIT", false, false);
     };
     render_provider_gauge(p, snap.generated_at_ms, p.id == selected_provider)
 }
@@ -525,6 +525,11 @@ fn render_provider_gauge(p: &ProviderSummary, now_ms: u64, selected: bool) -> St
         "pending" => "…".into(),
         _ => format_percent(p.worst_fraction, p.unlimited),
     };
+    let label = if p.id == "antigravity" {
+        "AGY"
+    } else {
+        p.short_name.as_str()
+    };
     let sub = if let Some(credits) = &p.credits_text {
         credits.clone()
     } else if !available {
@@ -533,20 +538,13 @@ fn render_provider_gauge(p: &ProviderSummary, now_ms: u64, selected: bool) -> St
         let reset = format_reset_short(p.worst_reset_ms, now_ms);
         if reset.is_empty() { "OK".into() } else { reset }
     };
-    let badge = if p.stale {
-        Some("STALE")
-    } else if selected {
-        Some("SEL")
-    } else {
-        None
-    };
     svg_radial_gauge(
         accent,
         p.worst_fraction,
         &center,
-        &p.short_name,
+        label,
         &sub,
-        badge,
+        p.stale,
         selected,
     )
 }
@@ -558,7 +556,7 @@ pub fn render_limit_bucket(
     bucket_index: usize,
 ) -> String {
     let Some(p) = snap.resolve_provider(provider_setting, selected_provider) else {
-        return svg_radial_gauge(MUTED, None, "—", "BUCKET", "—", None, false);
+        return svg_radial_gauge(MUTED, None, "—", "BUCKET", "—", false, false);
     };
     let Some(bucket) = p.buckets.get(bucket_index) else {
         return svg_radial_gauge(
@@ -567,7 +565,7 @@ pub fn render_limit_bucket(
             "—",
             &p.short_name,
             &format!("SLOT {}", bucket_index + 1),
-            None,
+            false,
             false,
         );
     };
@@ -587,14 +585,13 @@ fn render_bucket_gauge(p: &ProviderSummary, b: &BucketSummary, now_ms: u64) -> S
             reset
         }
     };
-    let badge = if b.stale { Some("~") } else { None };
     svg_radial_gauge(
         accent,
         b.used_fraction,
         &center,
         &b.label,
         &sub,
-        badge,
+        b.stale,
         false,
     )
 }
