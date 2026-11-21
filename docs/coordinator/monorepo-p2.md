@@ -116,6 +116,8 @@ manager. A capability-only install never requests updates.
 `task send` steers an already-ready working OMP delegate using the native
 paste-plus-Enter send, guarded by `--if working`. Its JSON includes
 `delivery: "steering", steered: true`; idle/resumed delivery says
-`delivery: "new_turn", steered: false`. Never-ready agents, startup dialogs,
+`delivery: "new_turn", steered: false`. Working non-OMP delegates (`agy`,
+`claude`, `codex`, `copilot`) refuse mid-turn sends with exit 4 and error code
+`steering_unsupported` until settled. Never-ready agents, startup dialogs,
 blocked states and permission prompts still refuse; no force flag is used.
 

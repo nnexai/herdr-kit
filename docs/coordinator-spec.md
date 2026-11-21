@@ -142,13 +142,18 @@ Defaults are built into herdr-kit. A file of the same name in `roles/`
 overrides the built-in one and is never written by updates; `kit-coord roles
 --defaults` prints the current built-ins for comparison.
 
-| Role | OMP model selector | Used for |
-|---|---|---|
-| `coord-main` | `@plan` | The coordinator |
-| `coord-light` | `@smol` | Mechanical, fully specified tasks |
-| `coord-default` | `@task` | Clear goal, known approach |
-| `coord-deep` | `@slow` | Open technical design, unclear cause, high cost of error |
-| `coord-design` | `@design` | UI/UX, interaction, layout and visual design, including open-ended work |
+| Role | Harness | Model / effort | Session | Used for |
+|---|---|---|---|---|
+| `coord-main` | `omp` | `@plan` | `dir` | The coordinator |
+| `coord-light` | `omp` | `@smol` | `dir` | Mechanical, fully specified tasks |
+| `coord-default` | `omp` | `@task` | `dir` | Clear goal, known approach |
+| `coord-deep` | `omp` | `@slow` | `dir` | Open technical design, unclear cause, high cost of error |
+| `coord-design` | `omp` | `@design` | `dir` | UI/UX, interaction, layout and visual design, including open-ended work |
+| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | Antigravity CLI delegate on Gemini 4 Neon (High) |
+| `claude-default` | `claude` | `sonnet` | `preset` | Claude Code delegate for clear-goal tasks |
+| `claude-opus` | `claude` | `opus` (`effort: high`) | `preset` | Claude Code delegate for open technical design or complex work |
+| `codex-default` | `codex` | `gpt-6-luna` | `codex-rollout` | Codex delegate (with per-launch trust override for trusted repos) |
+| `copilot-default` | `copilot` | `gpt-6-luna` | `preset` | Copilot CLI delegate |
 
 For design work, pass `--role coord-design` to `kit-coord task start` with the
 usual workstream, brief and placement arguments. OMP resolves `@design` from
@@ -157,20 +162,24 @@ nor changes that configuration and does not pin a provider model. Changing
 the person's OMP design model therefore applies to future design sessions.
 This selects the model role, not an OMP bundled subagent.
 
-`kit-coord roles` lists effective harnesses, model selectors, sources and whether
-a file overrides a built-in. `kit-coord roles coord-design` prints the effective
-role, including its start and resume commands, without launching a delegate.
+`kit-coord roles` lists effective harnesses, model selectors, effort levels,
+session modes, resumability, steering support, sources and whether a file
+overrides a built-in. `kit-coord roles coord-design` prints the effective
+role, including its front matter and commands, without launching a delegate.
 `kit-coord roles --defaults coord-design` prints the shipped version instead.
 
-#### Custom OMP roles and explicit models
+#### Custom roles, models and effort
 
-For another OMP model role, create a new named Markdown file, for example
+Model and effort are plain front-matter config fields in a role file
+(`<data-dir>/coord/roles/<name>.md`), so changing a model or effort level does
+not require editing the `start` or `resume` command template. For example,
 `<data-dir>/coord/roles/coord-research.md`:
 
 ```md
 ---
 harness: omp
-start: omp --model @research --session-dir {session_dir} {brief}
+model: @research
+start: omp --session-dir {session_dir} {brief}
 resume: omp --session-dir {session_dir} --resume {session_id} {brief}
 session: dir
 ---
@@ -178,26 +187,57 @@ Research the brief's question. Separate observed evidence from inference,
 compare alternatives and put findings and sources in the named results file.
 ```
 
-The person must have that model role configured in OMP. Select it with
-`--role coord-research`. For a specific model, use a descriptive new role
-name and replace `@research` in `start` with an OMP model selector such as
-`anthropic/claude-sonnet-5-5:medium`. Keep `resume` free of `--model` so OMP
-restores the session's model. Copy the relevant delegate instructions as the
-body, adapting them to the work; the reporting contract is added by the CLI.
-Alternatively, a same-name `coord-design.md` overrides that built-in while
-remaining untouched by updates. These are trusted command templates, not
-shell scripts: arguments are split and placeholders expanded without shell
-evaluation. Model selectors must use separate `--model VALUE` arguments for
-the roles list and journal to recognize them.
+Or for Antigravity CLI (`agy`) or Claude Code (`claude`) with a specific model
+and optional `effort` (`low`, `medium`, `high`, `xhigh`, `max`):
+
+```md
+---
+harness: agy
+model: gemini-4-neon-high
+effort: high
+start: agy -i {brief}
+resume: agy --conversation {session_id} -i {brief}
+session: agy-conversation
+---
+Standing instructions for this role.
+```
+
+```md
+---
+harness: claude
+model: sonnet
+effort: medium
+start: claude --session-id {session_id} {brief}
+resume: claude --resume {session_id} {brief}
+session: preset
+---
+Standing instructions for this role.
+```
+
+For known harnesses, `kit-coord` injects the native flag into `start` (never
+`resume`, so resumed sessions keep their original model): `--model` for `omp`,
+`agy`, `claude` and `copilot`; `-m` for `codex`; `--effort` for `agy` and
+`claude`; `--thinking` for `omp`. Custom harnesses can reference `{model}` and
+`{effort}` placeholders directly in `start`. Specifying `model` or `effort` in
+both front matter and `start`, or passing an invalid effort level for a known
+harness, is rejected when parsing the role.
+
+The person must have any referenced OMP model role configured in OMP. Select a
+role with `--role <name>`. Copy the relevant delegate instructions as the body,
+adapting them to the work; the reporting contract is added by the CLI.
+Alternatively, a same-name file in `roles/` overrides a built-in while
+remaining untouched by updates. These are trusted command templates, not shell
+scripts: arguments are split and placeholders expanded without shell evaluation.
 
 There is no separate `task start --model` override: role files are the single
-source of the launch command, standing instructions and role hash. This
-keeps a model preference reusable rather than requiring it on every task.
+source of the launch command, model/effort config, standing instructions and
+role hash. This keeps a model preference reusable rather than requiring it on
+every task.
 
-OMP `@role` references are OMP-specific; they are not passed to codex,
-Claude Code or Copilot. Existing non-OMP roles are unchanged. If the person
-requests another harness, a custom role must use that harness's native
-model argument, session mode and resume syntax (see the harness table below).
+OMP `@role` references are OMP-specific; they are not passed to `agy`, `codex`,
+Claude Code or Copilot. When selecting another harness, use that harness's
+native model name, effort level (if supported), session mode and resume syntax
+(see the harness table below).
 
 #### Resume, escalation and measurements
 
@@ -237,27 +277,29 @@ omp *(verified with `gpt-6-luna`)*:
 - The session folder then holds one `<timestamp>_<id>.jsonl`; the id is read from that file name and journaled in `task.started`.
 - Resume: `omp --session-dir <same> --resume <id> "<message>"`. The earlier conversation is available and the model is unchanged without passing `--model`.
 
-Other harnesses *(verified 2026-11-13; codex 0.166/0.168, Claude Code 2.1.322, Copilot CLI 1.0.103)*:
+Other harnesses *(codex 0.166/0.168, Claude Code 2.1.322, Copilot CLI 1.0.103 verified 2026-11-13; Antigravity CLI `agy` 1.5.14 launch, `hc` status, `HC_TERMINAL_ID`, and transcript storage observed live 2026-11-21)*:
 
-| | omp | codex | claude | copilot |
-|---|---|---|---|---|
-| Start with first message | positional | positional | positional | `-i "<msg>"` |
-| Model | `--model` | `-m` | `--model` | `--model` |
-| Status reported to hc | yes | yes | yes | yes in 2 of 3 runs; one run reported nothing at all |
-| Session id | read from the file in `--session-dir` | read from `session_meta` in the newest `~/.codex/sessions/**/rollout-*.jsonl` whose `cwd` matches | chosen up front with `--session-id <uuid>` | chosen up front with `--session-id <uuid>` |
-| Resume | `--resume <id> "<msg>"` | `codex resume <id> "<msg>"` | `--resume <id> "<msg>"` | `--resume <id> -i "<msg>"` |
-| History and model kept on resume | yes | yes | yes | yes |
-| `HC_TERMINAL_ID` in the agent's shell | yes | yes | yes | not shown: the shell call was denied by a local pre-tool hook |
-| Start-up dialogs seen | none | update offer | folder trust | folder trust, on every start |
+| | omp | agy | claude | codex | copilot |
+|---|---|---|---|---|---|
+| Start with first message | positional | `-i "<msg>"` | positional | positional | `-i "<msg>"` |
+| Model | `--model` | `--model` | `--model` | `-m` | `--model` |
+| Effort | `--thinking` | `--effort` (`low\|medium\|high\|xhigh\|max`) | `--effort` (`low\|medium\|high\|xhigh\|max`) | n/a | n/a |
+| Status reported to hc | yes (`app: "omp"`) | yes (`app: "antigravity"`) | yes | yes | yes in 2 of 3 runs; one run reported nothing at all |
+| Session id | read from the file in `--session-dir` | discovered from step-0 `USER_INPUT` in `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl` (fallback `transcript.jsonl`) matching the task's unique result/brief path | chosen up front with `--session-id <uuid>` | read from `session_meta` in the newest `~/.codex/sessions/**/rollout-*.jsonl` whose `cwd` matches | chosen up front with `--session-id <uuid>` |
+| Resume | `--resume <id> "<msg>"` | `--conversation <id> -i "<msg>"` | `--resume <id> "<msg>"` | `codex resume <id> "<msg>"` | `--resume <id> -i "<msg>"` |
+| History and model kept on resume | yes | designed (unverified live) | yes | yes | yes |
+| Mid-turn steering (`task send` while `working`) | yes (`delivery: "steering"`) | refused (`steering_unsupported`) | refused (`steering_unsupported`) | refused (`steering_unsupported`) | refused (`steering_unsupported`) |
+| `HC_TERMINAL_ID` in the agent's shell | yes | yes | yes | yes | not shown: the shell call was denied by a local pre-tool hook |
+| Start-up dialogs seen | none | workspace trust (`trustedWorkspaces` in `settings.json`) | folder trust | update offer | folder trust, on every start |
 
 ### Start-up dialogs
 
 A harness can stop at a dialog before its first turn: folder trust (claude,
-copilot) or an update offer (codex). Owned worktrees are new folders, so this
-is the normal case there, not an exception. During such a dialog hc showed no
-status at all (claude, codex) or `idle` (copilot), never `blocked`, and
-`hc send` typed into it: in the probe a sent line accepted codex's update
-offer and codex updated itself.
+copilot, agy for untrusted workspaces) or an update offer (codex). Owned
+worktrees are new folders, so this is the normal case there, not an exception.
+During such a dialog hc showed no status at all (claude, codex) or `idle`
+(copilot), never `blocked`, and `hc send` typed into it: in the probe a sent
+line accepted codex's update offer and codex updated itself.
 
 Rules that follow:
 
@@ -266,8 +308,13 @@ Rules that follow:
 - Once ready, a working OMP delegate accepts `task send` immediately as a
   paste-plus-Enter steering message, guarded by `hc send --if working`.
   JSON distinguishes `delivery: "steering"` / `steered: true` from
-  `delivery: "new_turn"` / `steered: false`. Blocked/permission prompts remain
-  person-owned and refuse delivery; no force flag is used.
+  `delivery: "new_turn"` / `steered: false`. Non-OMP harnesses (`agy`, `claude`,
+  `codex`, `copilot`) refuse mid-turn `task send` while `working` with exit 4
+  and error code `steering_unsupported` so the coordinator waits until the
+  delegate is settled (`idle` or `done`), where `task send` delivers
+  `delivery: "new_turn"`, or resumes when dormant. Blocked/permission prompts
+  remain person-owned and refuse delivery with `agent_blocked` (exit 3); no
+  force flag is used.
 - A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person. The system does not answer dialogs.
 - Role files may carry harness flags that avoid dialogs where the harness offers them.
 
@@ -279,6 +326,7 @@ worktrees are laid out.
 | Harness | New worktree asks? | What removes the question |
 |---|---|---|
 | omp | No | Nothing needed |
+| agy | May ask for untrusted workspaces (`settings.json` `trustedWorkspaces`) | Workspace trust inheritance for child worktrees is unverified; untrusted launches surface as `task.start_blocked` until accepted by the person |
 | codex | Yes, in any git repo not yet trusted. Trust of a parent folder is not inherited. | Trust belongs to the repository root, so a worktree of a trusted repo does not ask. Per launch, without saving anything: `-c 'projects={ "<repo root>" = { trust_level = "trusted" } }'` |
 | claude | Yes. Being a worktree of a trusted repo does not help. | Trust of a parent folder is inherited: trusting the worktree root once covers every worktree below it |
 | copilot | Yes | A remembered folder covers its subfolders, and also a worktree elsewhere whose main repo is inside a remembered folder. `COPILOT_ALLOW_ALL=true` also skips the question, but approves all tools as well |
@@ -542,18 +590,21 @@ and watch the journal, which is the cheapest way to find design errors.
 
 ```
 ---
-harness: omp
-start: omp --model gpt-6-luna --session-dir {session_dir} {brief}
-resume: omp --session-dir {session_dir} --resume {session_id} {brief}
-session: dir            # dir | preset | codex-rollout | none
+harness: agy
+model: gemini-4-neon-high   # optional; injected into start natively or via {model}
+effort: high                # optional; injected into start natively or via {effort}
+start: agy -i {brief}
+resume: agy --conversation {session_id} -i {brief}
+session: agy-conversation   # dir | preset | codex-rollout | agy-conversation | none
 ---
 Standing instructions for this role.
 ```
 
 - `start` and `resume` are split into arguments like a shell would, then placeholders are replaced inside single arguments; nothing is passed through a shell.
-- Placeholders: `{brief}` (the whole first message as one argument), `{session_dir}`, `{session_id}`, `{repo_root}`, `{cwd}`.
-- `session` says how the session id is obtained: read from the session folder (omp), generated up front and passed as `{session_id}` (claude, copilot), found in codex's rollout files by folder, or not resumable.
-- The four `coord-*` built-ins use omp. Three more built-ins, `codex-default`, `claude-default` and `copilot-default`, carry the verified start and resume commands for the other harnesses, including codex's per-launch trust override for `{repo_root}`. The models named in built-ins are starting values the person is expected to override.
+- Placeholders: `{brief}` (the whole first message as one argument), `{session_dir}`, `{session_id}`, `{repo_root}`, `{cwd}`, `{model}`, `{effort}`.
+- `model` and `effort` are plain front-matter config choices injected into `start` (never `resume`) using each known harness's native flags (`--model`/`-m`, `--effort`/`--thinking`), or substituted into `{model}`/`{effort}` placeholders for custom harnesses.
+- `session` says how the session id is obtained: read from the session folder (`dir`, omp), generated up front and passed as `{session_id}` (`preset`, claude/copilot), found in codex's rollout files by folder (`codex-rollout`), discovered from Antigravity CLI's step-0 transcript under `~/.gemini/antigravity-cli/brain/<id>/` by unique task prompt markers (`agy-conversation`), or not resumable (`none`).
+- The five `coord-*` built-ins use `omp`. Five more built-ins—`agy-default` (Gemini 4 Neon High), `claude-default` (Sonnet), `claude-opus` (Opus with `effort: high`), `codex-default` (with codex's per-launch trust override for `{repo_root}`) and `copilot-default`—carry the start and resume commands for the other harnesses. The models named in built-ins are starting values the person is expected to override or duplicate in `roles/`.
 
 ### What a delegate is told
 
@@ -604,4 +655,4 @@ by a real machine reboot.
 
 - Copilot's status reporting was missing in one of several runs; the person regards this as a known Copilot bug. A copilot task can then look permanently unstarted.
 - Private core restart was verified; real machine reboot remains unobserved.
-- The codex, claude and copilot roles are built from the probes in section 5 and are not exercised by automated tests.
+- Automated tests cover `agy`, `claude`, `codex` and `copilot` role parsing, flag expansion, session discovery, readiness/steering refusals and resume command generation against fake `hc`/`herdr-app` fixtures. Live end-to-end probes of `agy --conversation <id> -i <msg>` cold resume, `agy` workspace-trust inheritance in new worktrees, and mid-turn steering on `agy`/`claude` remain unverified (hence mid-turn steering is disabled for non-OMP harnesses and fails explicitly with `steering_unsupported`).
