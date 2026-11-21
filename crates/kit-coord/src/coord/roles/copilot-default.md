@@ -1,6 +1,7 @@
 ---
 harness: copilot
-start: copilot --model gpt-6-luna --session-id {session_id} -i {brief}
+model: gpt-6-luna
+start: copilot --session-id {session_id} -i {brief}
 resume: copilot --resume {session_id} -i {brief}
 session: preset
 ---

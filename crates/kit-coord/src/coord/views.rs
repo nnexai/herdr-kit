@@ -154,7 +154,7 @@ pub fn counts(state: &State, attention_len: usize) -> Counts {
 }
 
 fn task_json(t: &Task) -> Value {
-    json!({
+    let mut obj = json!({
         "id":t.id, "number":t.n, "title":t.title, "state":t.state,
         "report": if t.state == TaskState::Reported { t.report } else { None },
         "needs_you": t.blocked.is_some(),
@@ -166,7 +166,11 @@ fn task_json(t: &Task) -> Value {
         "summary":t.summary,
         "terminal": if matches!(t.state, TaskState::Dormant | TaskState::Closed) { None } else { t.terminal.as_ref() },
         "space_id":t.space, "tab_id":t.tab, "brief_path":t.brief, "result_path":t.result, "nudges":t.nudges
-    })
+    });
+    if let Some(effort) = &t.effort {
+        obj["effort"] = json!(effort);
+    }
+    obj
 }
 
 fn ws_json(state: &State, w: &Ws) -> Value {

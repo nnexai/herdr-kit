@@ -1,6 +1,7 @@
 ---
 harness: codex
-start: codex -m gpt-6-luna {brief}
+model: gpt-6-luna
+start: codex {brief}
 resume: codex resume {session_id} {brief}
 session: codex-rollout
 trust: -c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'

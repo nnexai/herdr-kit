@@ -476,6 +476,7 @@ mod tests {
                     role: "coord-default".into(),
                     harness: "omp".into(),
                     model: None,
+                    effort: None,
                     title: "task".into(),
                     brief: "/tmp/brief".into(),
                     session_of: None,

@@ -62,7 +62,8 @@ pub fn no_links(path: &Path, message: SymlinkMessage) -> Result<()> {
     Ok(())
 }
 
-fn home() -> Result<PathBuf> {
+/// Return the validated absolute user home directory from `HOME`.
+pub fn home() -> Result<PathBuf> {
     let path = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
     if !path.is_absolute() {
         bail!("HOME must be absolute");
@@ -70,9 +71,21 @@ fn home() -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Return the default Antigravity CLI data directory (`$HOME/.gemini/antigravity-cli`).
+pub fn agy_data_dir() -> Result<PathBuf> {
+    Ok(home()?.join(".gemini/antigravity-cli"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agy_data_dir_joins_validated_home() {
+        let dir = agy_data_dir().unwrap();
+        assert!(dir.is_absolute());
+        assert!(dir.ends_with(".gemini/antigravity-cli"));
+    }
 
     #[test]
     fn symlink_ancestors_keep_each_cli_diagnostic() {

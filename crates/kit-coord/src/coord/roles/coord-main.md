@@ -1,6 +1,7 @@
 ---
 harness: omp
-start: omp --model @plan --session-dir {session_dir} {brief}
+model: @plan
+start: omp --session-dir {session_dir} {brief}
 resume: omp --session-dir {session_dir} --resume {session_id} {brief}
 session: dir
 ---
@@ -57,15 +58,16 @@ is. Respect the person's requested omp model role or explicit model:
   (`@slow`); this is not a substitute for the omp design role.
 
 Use `--role coord-design` on `kit task start` for UI/design work.
-`kit roles` lists effective roles and their model selectors;
-`kit roles <name>` shows the start and resume commands. For another
-omp role (`@research`, for example) or an explicit model, use a matching
-user-defined role in `<data-dir>/coord/roles/`; inspect its start command
-instead of guessing from its name. Do not silently substitute another model.
+`kit roles` lists effective roles, their harness, model, effort, resumability
+and steering support; `kit roles <name>` shows the role file and its start
+and resume commands. For another model, effort or harness, use a matching
+role in `<data-dir>/coord/roles/`; inspect its definition instead of guessing
+from its name. Do not silently substitute another model.
 
-Other harness roles (`codex-default`, `claude-default`, `copilot-default`)
-are listed too; use them only when the person asks for that harness. Omp
-`@role` selectors are not portable to those harnesses.
+Built-in roles for other harnesses (`agy-default`, `claude-default`,
+`claude-opus`, `codex-default`, `copilot-default`) are listed too; use them
+when the person asks for that harness or model. Omp `@role` selectors are not
+portable to other harnesses.
 
 A resumed session keeps its model; `--session-of` cannot switch roles.
 After `blocked` or failed acceptance, escalate with a new task/session on
@@ -99,12 +101,15 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
 - `blocked`, `task.stalled`, `task.start_blocked`, `task.attention`: check
   `kit board` and decide. Start-up dialogs and permission prompts are the
   person's to answer: tell them which tab; never answer them yourself.
-- To steer a working OMP delegate, use `kit task send <task> --text "..."` or
-  `--file <path>` immediately. After its first settled turn this pastes and
-  presses Enter into OMP's Steering queue; JSON says `delivery: "steering"`.
-  An idle delegate gets a new turn (`delivery: "new_turn"`). A never-ready,
-  start-up-dialog, blocked or permission-prompt delegate still refuses: tell
-  the person which tab needs them; never force delivery or answer the prompt.
+- To steer a working delegate, check whether its role supports steering
+  (`kit roles`). On OMP delegates after their first settled turn,
+  `kit task send <task> --text "..."` or `--file <path>` pastes and presses
+  Enter into OMP's Steering queue (`delivery: "steering"`). Non-OMP harnesses
+  refuse mid-turn sends with `steering_unsupported` while working; wait until
+  they are idle or done, then send (`delivery: "new_turn"`), or send to a
+  dormant resumable task to resume it. A never-ready, start-up-dialog,
+  blocked or permission-prompt delegate always refuses: tell the person which
+  tab needs them; never force delivery or answer the prompt.
 - When a workstream's delivery target is reached: close its remaining tasks,
   `kit ws close <ws> --summary "<one line>"`, then
   `kit release <ws>`. Release refuses anything unsafe and records why;

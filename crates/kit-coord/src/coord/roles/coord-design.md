@@ -1,6 +1,7 @@
 ---
 harness: omp
-start: omp --model @design --session-dir {session_dir} {brief}
+model: @design
+start: omp --session-dir {session_dir} {brief}
 resume: omp --session-dir {session_dir} --resume {session_id} {brief}
 session: dir
 ---

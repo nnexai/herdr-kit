@@ -1,6 +1,7 @@
 ---
 harness: omp
-start: omp --model @task --session-dir {session_dir} {brief}
+model: @task
+start: omp --session-dir {session_dir} {brief}
 resume: omp --session-dir {session_dir} --resume {session_id} {brief}
 session: dir
 ---

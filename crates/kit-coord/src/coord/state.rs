@@ -9,7 +9,7 @@ use super::kinds::{
     TaskOutcome, Tier, WsOutcome,
 };
 
-pub const FOLD_VERSION: u32 = 6;
+pub const FOLD_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -139,6 +139,8 @@ pub struct Task {
     pub role: String,
     pub harness: String,
     pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
     pub summary: Option<String>,
     pub terminal: Option<String>,
     pub space: Option<String>,
@@ -217,6 +219,8 @@ pub struct CoordRec {
     pub created_ms: Option<u64>,
     pub role: Option<String>,
     pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
     pub release: Option<String>,
     pub started_ms: Option<u64>,
     pub sessions_started: u64,

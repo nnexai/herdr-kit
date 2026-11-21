@@ -1030,3 +1030,318 @@ fn rail_send_obeys_terminal_lock_and_size_bound() {
     );
     assert!(!h.calls("hc").contains("\tsend\t"));
 }
+
+#[test]
+fn agy_delegate_discovers_conversation_reports_and_resumes() {
+    let h = Harness::new();
+    let roles = h.ok(&["roles"])["roles"].as_array().unwrap().clone();
+    let agy_role = roles.iter().find(|r| r["name"] == "agy-default").unwrap();
+    assert_eq!(agy_role["harness"], "agy");
+    assert_eq!(agy_role["model"], "gemini-4-neon-high");
+    assert!(agy_role["effort"].is_null());
+    assert_eq!(agy_role["session"], "agy-conversation");
+    assert_eq!(agy_role["resumable"], true);
+    assert_eq!(agy_role["steering"], false);
+
+    let ws = h.open();
+    let task = format!("{ws}-t1");
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Implement harness support").unwrap();
+
+    // Pre-populate agy brain dir inside isolated HOME with a /usage decoy and
+    // this task's conversation transcript (matching the fixed reporting footer).
+    let agy_brain = h.root().join(".gemini/antigravity-cli/brain");
+    let decoy_logs = agy_brain.join("00000000-0000-4000-8000-000000000001/.system_generated/logs");
+    fs::create_dir_all(&decoy_logs).unwrap();
+    fs::write(
+        decoy_logs.join("transcript_full.jsonl"),
+        format!(
+            "{}\n",
+            json!({"step_index":0,"type":"USER_INPUT","content":"/usage"})
+        ),
+    )
+    .unwrap();
+    let conv_id = "720d8fe2-d9d4-40b4-af0d-fb7a29307ff0";
+    let result_file = h.root().join(format!("data/coord/results/{task}.md"));
+    let target_logs = agy_brain.join(conv_id).join(".system_generated/logs");
+    fs::create_dir_all(&target_logs).unwrap();
+    fs::write(
+        target_logs.join("transcript_full.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "step_index": 0,
+                "source": "USER_EXPLICIT",
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "content": format!("<USER_REQUEST>\nImplement harness support\nLong results go into {}; add --result {} to the report.\n</USER_REQUEST>", result_file.display(), result_file.display())
+            })
+        ),
+    )
+    .unwrap();
+
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["created_ms"] = json!(0);
+    term["turn"] = json!(0);
+    term["reported"] = json!(true);
+    term["status"] = json!({"app":"antigravity","state":"working"});
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws,
+        "--rung",
+        "3",
+        "--reason",
+        "work",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--space",
+        "existing",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    assert_eq!(started["session"], conv_id);
+    let calls = h.calls("hc");
+    let run_line = calls.lines().find(|l| l.contains("\trun\t")).unwrap();
+    let argv: Vec<_> = run_line.split('\t').collect();
+    let sep = argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &argv[sep + 1..sep + 5],
+        &["agy", "--model", "gemini-4-neon-high", "-i"]
+    );
+    assert!(argv[sep + 5].starts_with("You are a delegate working on one task"));
+    assert!(calls.contains("Implement harness support"));
+
+    // Startup (turn 0): refused as agent_not_ready.
+    rail_error(
+        h.run(&["task", "send", &task, "--text", "too early"]),
+        "agent_not_ready",
+        4,
+    );
+    // Working after turn 1 on antigravity: refused explicitly as steering_unsupported.
+    term["turn"] = json!(1);
+    h.queue("hc", "get", &term);
+    rail_error(
+        h.run(&["task", "send", &task, "--text", "mid-turn steer"]),
+        "steering_unsupported",
+        4,
+    );
+    // Blocked (permission prompt): refused as agent_blocked.
+    term["status"]["state"] = json!("blocked");
+    h.queue("hc", "get", &term);
+    rail_error(
+        h.run(&["task", "send", &task, "--text", "answer prompt"]),
+        "agent_blocked",
+        3,
+    );
+    // Idle after turn 1: delivers a new turn.
+    term["status"]["state"] = json!("idle");
+    h.queue("hc", "get", &term);
+    h.queue(
+        "hc",
+        "send",
+        &json!({"turn":2,"started":true,"status":"working"}),
+    );
+    let sent = h.ok(&["task", "send", &task, "--text", "check edge cases"]);
+    assert_eq!(sent["delivery"], "new_turn");
+    assert_eq!(sent["steered"], false);
+
+    // Delegate reporting contract with --result works for agy delegates.
+    fs::write(&result_file, "# Findings\nAll good.\n").unwrap();
+    let rep = h
+        .command(&[
+            "report",
+            "done",
+            "--summary",
+            "implemented",
+            "--result",
+            result_file.to_str().unwrap(),
+        ])
+        .env("HC_TERMINAL_ID", "t7")
+        .output()
+        .unwrap();
+    assert!(
+        rep.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rep.stderr)
+    );
+    let reported = h.journal().pop().unwrap();
+    assert_eq!(reported["kind"], "task.reported");
+    assert_eq!(reported["data"]["outcome"], "done");
+    assert!(
+        reported["data"]["result"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("{task}.md"))
+    );
+
+    // Cold resume when terminal is gone uses `agy --conversation <id> -i <msg>` without `--model`.
+    let mut resumed_term = term.clone();
+    resumed_term["address"] = json!("t8");
+    resumed_term["turn"] = json!(0);
+    h.queued("hc", "get", 1, &json!({"error":{"kind":"not_found"}}), 3);
+    h.queued("hc", "run", 1, &json!({"address":"t8"}), 0);
+    h.queued("hc", "get", 2, &resumed_term, 0);
+    let resumed = h.ok(&["task", "send", &task, "--text", "one more tweak"]);
+    assert_eq!(resumed["delivery"], "new_turn");
+    assert_eq!(resumed["steered"], false);
+    assert_eq!(resumed["session"], conv_id);
+    let runs: Vec<_> = h
+        .calls("hc")
+        .lines()
+        .filter(|l| l.contains("\trun\t"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(runs.len(), 2);
+    let resume_argv: Vec<_> = runs[1].split('\t').collect();
+    let rsep = resume_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &resume_argv[rsep + 1..rsep + 5],
+        &["agy", "--conversation", conv_id, "-i"]
+    );
+    assert!(!resume_argv[rsep + 1..rsep + 5].contains(&"--model"));
+}
+
+#[test]
+fn claude_roles_expand_model_effort_and_resume_cleanly() {
+    let h = Harness::new();
+    let roles_dir = h.root().join("data/coord/roles");
+    fs::create_dir_all(&roles_dir).unwrap();
+    fs::write(
+        roles_dir.join("claude-haiku-low.md"),
+        "---\nharness: claude\nmodel: haiku\neffort: low\nstart: claude --session-id {session_id} {brief}\nresume: claude --resume {session_id} {brief}\nsession: preset\n---\nFast delegate\n",
+    )
+    .unwrap();
+    let roles = h.ok(&["roles"])["roles"].as_array().unwrap().clone();
+    let opus = roles.iter().find(|r| r["name"] == "claude-opus").unwrap();
+    assert_eq!(opus["harness"], "claude");
+    assert_eq!(opus["model"], "opus");
+    assert_eq!(opus["effort"], "high");
+    assert_eq!(opus["session"], "preset");
+    assert_eq!(opus["resumable"], true);
+    assert_eq!(opus["steering"], false);
+    let haiku = roles
+        .iter()
+        .find(|r| r["name"] == "claude-haiku-low")
+        .unwrap();
+    assert_eq!(haiku["source"], "file");
+    assert_eq!(haiku["model"], "haiku");
+    assert_eq!(haiku["effort"], "low");
+
+    let ws = h.open();
+    let task = format!("{ws}-t1");
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Investigate race condition").unwrap();
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["turn"] = json!(1);
+    term["reported"] = json!(true);
+    term["status"] = json!({"app":"claude","state":"working"});
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws,
+        "--rung",
+        "3",
+        "--reason",
+        "deep work",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "claude-opus",
+        "--space",
+        "existing",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    let session_id = started["session"].as_str().unwrap().to_owned();
+    let run_line = h
+        .calls("hc")
+        .lines()
+        .find(|l| l.contains("\trun\t"))
+        .unwrap()
+        .to_owned();
+    let argv: Vec<_> = run_line.split('\t').collect();
+    let sep = argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &argv[sep + 1..sep + 8],
+        &[
+            "claude",
+            "--model",
+            "opus",
+            "--effort",
+            "high",
+            "--session-id",
+            session_id.as_str()
+        ]
+    );
+    let board = h.ok(&["board", "--json"]);
+    let task_view = &board["workstreams"][0]["tasks"][0];
+    assert_eq!(task_view["harness"], "claude");
+    assert_eq!(task_view["model"], "opus");
+    assert_eq!(task_view["effort"], "high");
+
+    // Working claude refuses mid-turn steering explicitly.
+    rail_error(
+        h.run(&["task", "send", &task, "--text", "steer"]),
+        "steering_unsupported",
+        4,
+    );
+    // Done claude accepts new_turn.
+    term["status"]["state"] = json!("done");
+    h.queue("hc", "get", &term);
+    h.queue(
+        "hc",
+        "send",
+        &json!({"turn":2,"started":true,"status":"working"}),
+    );
+    let sent = h.ok(&["task", "send", &task, "--text", "follow up"]);
+    assert_eq!(sent["delivery"], "new_turn");
+    assert_eq!(sent["steered"], false);
+
+    // Cold resume keeps the session model without re-passing --model or --effort.
+    let mut resumed_term = term.clone();
+    resumed_term["address"] = json!("t8");
+    h.queued("hc", "get", 1, &json!({"error":{"kind":"not_found"}}), 3);
+    h.queued("hc", "run", 1, &json!({"address":"t8"}), 0);
+    h.queued("hc", "get", 2, &resumed_term, 0);
+    let resumed = h.ok(&["task", "send", &task, "--text", "after restart"]);
+    assert_eq!(resumed["session"], session_id);
+    let runs: Vec<_> = h
+        .calls("hc")
+        .lines()
+        .filter(|l| l.contains("\trun\t"))
+        .map(str::to_owned)
+        .collect();
+    let rargv: Vec<_> = runs[1].split('\t').collect();
+    let rsep = rargv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &rargv[rsep + 1..rsep + 4],
+        &["claude", "--resume", session_id.as_str()]
+    );
+    assert!(!rargv[rsep + 1..rsep + 4].contains(&"--model"));
+    assert!(!rargv[rsep + 1..rsep + 4].contains(&"--effort"));
+}

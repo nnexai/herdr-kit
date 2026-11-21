@@ -602,6 +602,7 @@ mod tests {
                 role: String::new(),
                 harness: String::new(),
                 model: None,
+                effort: None,
                 summary: None,
                 terminal: Some("t1".into()),
                 space: Some("sp".into()),

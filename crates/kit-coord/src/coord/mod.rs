@@ -351,8 +351,17 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 } else {
                     role::load(&ctx.paths, &name)?
                 };
-                out.push(json!({"name":name,"source":if matches!(source, role::RoleSource::Builtin) {"builtin"} else {"file"},
-                    "overrides_builtin":overrides,"harness":r.harness,"model":role::model_of(&r.start)}));
+                out.push(json!({
+                    "name": name,
+                    "source": if matches!(source, role::RoleSource::Builtin) { "builtin" } else { "file" },
+                    "overrides_builtin": overrides,
+                    "harness": r.harness,
+                    "model": r.effective_model(),
+                    "effort": r.effective_effort(),
+                    "session": r.session,
+                    "resumable": r.resumable(),
+                    "steering": r.supports_steering(),
+                }));
             }
             json!({"roles":out})
         }

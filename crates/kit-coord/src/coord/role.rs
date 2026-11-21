@@ -18,6 +18,8 @@ pub enum RoleSource {
 pub struct Role {
     pub name: String,
     pub harness: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
     pub start: Vec<String>,
     pub resume: Option<Vec<String>>,
     pub session: SessionMode,
@@ -32,16 +34,20 @@ pub struct Vars<'a> {
     pub session_id: Option<&'a str>,
     pub repo_root: Option<&'a Path>,
     pub cwd: &'a Path,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
 }
 
-pub const BUILTIN: [(&str, &str); 8] = [
+pub const BUILTIN: [(&str, &str); 10] = [
     ("coord-main", include_str!("roles/coord-main.md")),
     ("coord-light", include_str!("roles/coord-light.md")),
     ("coord-default", include_str!("roles/coord-default.md")),
     ("coord-deep", include_str!("roles/coord-deep.md")),
     ("coord-design", include_str!("roles/coord-design.md")),
-    ("codex-default", include_str!("roles/codex-default.md")),
+    ("agy-default", include_str!("roles/agy-default.md")),
     ("claude-default", include_str!("roles/claude-default.md")),
+    ("claude-opus", include_str!("roles/claude-opus.md")),
+    ("codex-default", include_str!("roles/codex-default.md")),
     ("copilot-default", include_str!("roles/copilot-default.md")),
 ];
 
@@ -50,6 +56,119 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, text)| *text)
+}
+
+pub fn model_flag(harness: &str) -> Option<&'static str> {
+    match harness {
+        "omp" | "agy" | "claude" | "copilot" => Some("--model"),
+        "codex" => Some("-m"),
+        _ => None,
+    }
+}
+
+pub fn effort_flag(harness: &str) -> Option<&'static str> {
+    match harness {
+        "agy" | "claude" => Some("--effort"),
+        "omp" => Some("--thinking"),
+        _ => None,
+    }
+}
+
+pub fn valid_effort(harness: &str, value: &str) -> bool {
+    match harness {
+        "agy" | "claude" => matches!(value, "low" | "medium" | "high" | "xhigh" | "max"),
+        "omp" => matches!(
+            value,
+            "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto"
+        ),
+        _ => !value.is_empty(),
+    }
+}
+
+pub fn harness_supports_steering(harness: &str) -> bool {
+    harness == "omp"
+}
+
+pub fn app_supports_steering(app: Option<&str>) -> bool {
+    app == Some("omp")
+}
+
+impl Role {
+    pub fn effective_model(&self) -> Option<String> {
+        self.model.clone().or_else(|| model_of(&self.start))
+    }
+
+    pub fn effective_effort(&self) -> Option<String> {
+        self.effort.clone().or_else(|| effort_of(&self.start))
+    }
+
+    pub fn resumable(&self) -> bool {
+        self.resume.is_some() && self.session != SessionMode::None
+    }
+
+    pub fn supports_steering(&self) -> bool {
+        harness_supports_steering(&self.harness)
+    }
+
+    pub fn expand_start(&self, vars: &Vars<'_>, trusted: bool) -> Result<Vec<String>> {
+        let model = vars.model.or(self.model.as_deref());
+        let effort = vars.effort.or(self.effort.as_deref());
+        let effective = Vars {
+            model,
+            effort,
+            ..*vars
+        };
+        let mut injected = Vec::new();
+        if trusted {
+            injected.extend(self.trust.iter().cloned());
+        }
+        if let Some(m) = model {
+            if !self.start.iter().any(|arg| arg.contains("{model}")) {
+                let flag = model_flag(&self.harness).with_context(|| {
+                    format!(
+                        "harness {} requires {{model}} in start when model is set",
+                        self.harness
+                    )
+                })?;
+                injected.push(flag.into());
+                injected.push(m.into());
+            }
+        }
+        if let Some(e) = effort {
+            if !self.start.iter().any(|arg| arg.contains("{effort}")) {
+                let flag = effort_flag(&self.harness).with_context(|| {
+                    format!(
+                        "harness {} requires {{effort}} in start when effort is set",
+                        self.harness
+                    )
+                })?;
+                injected.push(flag.into());
+                injected.push(e.into());
+            }
+        }
+        expand(
+            &self.start,
+            &effective,
+            (!injected.is_empty()).then_some(injected.as_slice()),
+        )
+    }
+
+    pub fn expand_resume(&self, vars: &Vars<'_>, trusted: bool) -> Result<Vec<String>> {
+        let template = self
+            .resume
+            .as_deref()
+            .context("role has no resume command")?;
+        let effective = Vars {
+            model: vars.model.or(self.model.as_deref()),
+            effort: vars.effort.or(self.effort.as_deref()),
+            ..*vars
+        };
+        expand(
+            template,
+            &effective,
+            trusted.then_some(self.trust.as_slice()),
+        )
+    }
 }
 
 fn valid_name(name: &str) -> bool {
@@ -128,7 +247,10 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         let (key, value) = line.split_once(':').context("invalid role front matter")?;
         let key = key.trim();
         ensure!(
-            matches!(key, "harness" | "start" | "resume" | "session" | "trust"),
+            matches!(
+                key,
+                "harness" | "model" | "effort" | "start" | "resume" | "session" | "trust"
+            ),
             "unknown role key: {key}"
         );
         let value = value.split_once(" #").map_or(value, |(v, _)| v).trim();
@@ -145,7 +267,16 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
             .filter(|v| !v.is_empty())
             .with_context(|| format!("missing role {key}"))
     };
+    let optional_nonempty = |key: &str| -> Result<Option<String>> {
+        match fields.get(key) {
+            Some(v) if v.is_empty() => bail!("empty role {key}"),
+            Some(v) => Ok(Some(v.clone())),
+            None => Ok(None),
+        }
+    };
     let harness = required("harness")?.to_owned();
+    let model = optional_nonempty("model")?;
+    let effort = optional_nonempty("effort")?;
     let start = split_words(required("start")?)?;
     ensure!(
         !start.is_empty() && !start[0].is_empty(),
@@ -167,12 +298,43 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         "dir" => SessionMode::Dir,
         "preset" => SessionMode::Preset,
         "codex-rollout" => SessionMode::CodexRollout,
+        "agy-conversation" => SessionMode::AgyConversation,
         "none" => SessionMode::None,
         value => bail!("unknown session mode: {value}"),
     };
+    let has_model_placeholder = start.iter().any(|arg| arg.contains("{model}"));
+    let has_effort_placeholder = start.iter().any(|arg| arg.contains("{effort}"));
+    if model.is_some() && !has_model_placeholder {
+        ensure!(
+            model_of(&start).is_none(),
+            "role specifies model in both front matter and start command"
+        );
+        ensure!(
+            model_flag(&harness).is_some(),
+            "harness {harness} requires {{model}} in start when model is set"
+        );
+    }
+    if let Some(value) = &effort {
+        ensure!(
+            valid_effort(&harness, value),
+            "invalid effort for {harness}: {value}"
+        );
+        if !has_effort_placeholder {
+            ensure!(
+                effort_of(&start).is_none(),
+                "role specifies effort in both front matter and start command"
+            );
+            ensure!(
+                effort_flag(&harness).is_some(),
+                "harness {harness} requires {{effort}} in start when effort is set"
+            );
+        }
+    }
     Ok(Role {
         name: name.into(),
         harness,
+        model,
+        effort,
         start,
         resume,
         session,
@@ -246,6 +408,8 @@ fn expand_one(arg: &str, vars: &Vars<'_>) -> Result<String> {
             "session_id" => vars.session_id.map(str::to_owned),
             "repo_root" => vars.repo_root.map(|p| p.to_string_lossy().into_owned()),
             "cwd" => Some(vars.cwd.to_string_lossy().into_owned()),
+            "model" => vars.model.map(str::to_owned),
+            "effort" => vars.effort.map(str::to_owned),
             _ => bail!("unknown placeholder: {{{name}}}"),
         }
         .filter(|v| !v.is_empty())
@@ -283,13 +447,20 @@ pub fn model_of(argv: &[String]) -> Option<String> {
         .map(|pair| pair[1].clone())
 }
 
+pub fn effort_of(argv: &[String]) -> Option<String> {
+    argv.windows(2)
+        .find(|pair| pair[0] == "--effort" || pair[0] == "--thinking")
+        .map(|pair| pair[1].clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn builtins_and_split() {
         for (name, text) in BUILTIN {
-            parse(name, text, RoleSource::Builtin).unwrap();
+            let role = parse(name, text, RoleSource::Builtin).unwrap();
+            assert!(role.effective_model().is_some(), "{name} missing model");
         }
         let trust = split_words(r#"-c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'"#)
             .unwrap();
@@ -315,6 +486,8 @@ mod tests {
             session_id: None,
             repo_root: Some(Path::new("/repo space")),
             cwd: Path::new("/cwd"),
+            model: None,
+            effort: None,
         };
         let start = vec![
             "codex".into(),
@@ -340,6 +513,199 @@ mod tests {
         assert!(expand(&["x".into(), "{session_id}".into()], &vars, None).is_err());
         assert!(expand(&["x".into(), "{unknown}".into()], &vars, None).is_err());
         assert!(expand(&["x".into(), "{}".into()], &vars, None).is_err());
+    }
+    #[test]
+    fn agy_and_claude_roles_expand_start_and_resume() {
+        let vars = Vars {
+            brief: "do the work",
+            session_dir: Some(Path::new("/sessions/t1")),
+            session_id: Some("11111111-2222-4333-8444-555555555555"),
+            repo_root: Some(Path::new("/repo")),
+            cwd: Path::new("/cwd"),
+            model: None,
+            effort: None,
+        };
+        let agy = parse(
+            "agy-default",
+            builtin("agy-default").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(agy.harness, "agy");
+        assert_eq!(agy.session, SessionMode::AgyConversation);
+        assert!(agy.resumable());
+        assert!(!agy.supports_steering());
+        assert_eq!(
+            agy.expand_start(&vars, false).unwrap(),
+            ["agy", "--model", "gemini-4-neon-high", "-i", "do the work"]
+        );
+        assert_eq!(
+            agy.expand_resume(&vars, false).unwrap(),
+            [
+                "agy",
+                "--conversation",
+                "11111111-2222-4333-8444-555555555555",
+                "-i",
+                "do the work"
+            ]
+        );
+
+        let agy_effort = parse(
+            "agy-xhigh",
+            "---\nharness: agy\nmodel: gemini-4-neon-high\neffort: xhigh\nstart: agy -i {brief}\nresume: agy --conversation {session_id} -i {brief}\nsession: agy-conversation\n---\nbody\n",
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        let argv = agy_effort.expand_start(&vars, false).unwrap();
+        assert_eq!(
+            argv,
+            [
+                "agy",
+                "--model",
+                "gemini-4-neon-high",
+                "--effort",
+                "xhigh",
+                "-i",
+                "do the work"
+            ]
+        );
+        assert_eq!(model_of(&argv).as_deref(), Some("gemini-4-neon-high"));
+        assert_eq!(effort_of(&argv).as_deref(), Some("xhigh"));
+
+        let opus = parse(
+            "claude-opus",
+            builtin("claude-opus").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(opus.harness, "claude");
+        assert_eq!(opus.session, SessionMode::Preset);
+        assert!(opus.resumable());
+        assert!(!opus.supports_steering());
+        assert_eq!(
+            opus.expand_start(&vars, false).unwrap(),
+            [
+                "claude",
+                "--model",
+                "opus",
+                "--effort",
+                "high",
+                "--session-id",
+                "11111111-2222-4333-8444-555555555555",
+                "do the work"
+            ]
+        );
+        assert_eq!(
+            opus.expand_resume(&vars, false).unwrap(),
+            [
+                "claude",
+                "--resume",
+                "11111111-2222-4333-8444-555555555555",
+                "do the work"
+            ]
+        );
+
+        let sonnet = parse(
+            "claude-default",
+            builtin("claude-default").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(
+            sonnet.expand_start(&vars, false).unwrap(),
+            [
+                "claude",
+                "--model",
+                "sonnet",
+                "--session-id",
+                "11111111-2222-4333-8444-555555555555",
+                "do the work"
+            ]
+        );
+
+        let omp = parse(
+            "coord-default",
+            builtin("coord-default").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert!(omp.supports_steering());
+        assert_eq!(
+            omp.expand_start(&vars, false).unwrap(),
+            [
+                "omp",
+                "--model",
+                "@task",
+                "--session-dir",
+                "/sessions/t1",
+                "do the work"
+            ]
+        );
+        assert_eq!(
+            omp.expand_resume(&vars, false).unwrap(),
+            [
+                "omp",
+                "--session-dir",
+                "/sessions/t1",
+                "--resume",
+                "11111111-2222-4333-8444-555555555555",
+                "do the work"
+            ]
+        );
+    }
+    #[test]
+    fn model_and_effort_validation_rejects_conflicts_and_bad_values() {
+        assert!(
+            parse(
+                "dup-model",
+                "---\nharness: agy\nmodel: gemini-4-neon-high\nstart: agy --model other -i {brief}\nsession: none\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "bad-effort",
+                "---\nharness: claude\nmodel: opus\neffort: turbo\nstart: claude --session-id {session_id} {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "unsupported-effort",
+                "---\nharness: codex\nmodel: gpt-6-luna\neffort: high\nstart: codex {brief}\nsession: codex-rollout\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "custom-without-placeholder",
+                "---\nharness: custom\nmodel: m1\nstart: custom {brief}\nsession: none\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        let custom = parse(
+            "custom-with-placeholder",
+            "---\nharness: custom\nmodel: m1\neffort: deep\nstart: custom --llm {model} --lvl {effort} {brief}\nsession: none\n---\nbody\n",
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        let vars = Vars {
+            brief: "hi",
+            session_dir: None,
+            session_id: None,
+            repo_root: None,
+            cwd: Path::new("/cwd"),
+            model: None,
+            effort: None,
+        };
+        assert_eq!(
+            custom.expand_start(&vars, false).unwrap(),
+            ["custom", "--llm", "m1", "--lvl", "deep", "hi"]
+        );
     }
     #[test]
     fn override_wins() {

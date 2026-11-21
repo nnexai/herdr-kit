@@ -1,6 +1,7 @@
 ---
 harness: claude
-start: claude --model haiku --session-id {session_id} {brief}
+model: sonnet
+start: claude --session-id {session_id} {brief}
 resume: claude --resume {session_id} {brief}
 session: preset
 ---

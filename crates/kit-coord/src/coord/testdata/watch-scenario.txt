@@ -1886,7 +1886,7 @@ None
 ## Open questions
 
 state: {
-  "fold_version": 6,
+  "fold_version": 7,
   "last_seq": 156,
   "last_ts_ms": 1800039801000,
   "workstreams": {
@@ -1965,6 +1965,7 @@ state: {
       "role": "omp-default",
       "harness": "omp",
       "model": null,
+      "effort": null,
       "summary": "Feature implemented",
       "terminal": "d1",
       "space": "sp-a",
@@ -2023,6 +2024,7 @@ state: {
       "role": "omp-default",
       "harness": "omp",
       "model": null,
+      "effort": null,
       "summary": null,
       "terminal": null,
       "space": "sp-person",
@@ -2075,6 +2077,7 @@ state: {
       "role": "omp-default",
       "harness": "omp",
       "model": null,
+      "effort": null,
       "summary": null,
       "terminal": null,
       "space": "sp-person",
@@ -2127,6 +2130,7 @@ state: {
       "role": "omp-default",
       "harness": "omp",
       "model": null,
+      "effort": null,
       "summary": null,
       "terminal": null,
       "space": null,
@@ -2179,6 +2183,7 @@ state: {
       "role": "omp-default",
       "harness": "omp",
       "model": null,
+      "effort": null,
       "summary": null,
       "terminal": null,
       "space": "sp-person",
@@ -2456,6 +2461,7 @@ state: {
     "created_ms": 1799999999000,
     "role": "coord-main",
     "model": null,
+    "effort": null,
     "release": "r1",
     "started_ms": 1800000000000,
     "sessions_started": 1,

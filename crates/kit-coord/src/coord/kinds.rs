@@ -112,6 +112,7 @@ string_enum!(SessionMode {
     Dir,
     Preset,
     CodexRollout,
+    AgyConversation,
     None
 });
 string_enum!(WsOutcome {
@@ -250,6 +251,8 @@ pub enum Kind {
         harness: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
         title: String,
         brief: PathBuf,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -402,6 +405,8 @@ pub enum Kind {
         role: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<String>,
         terminal: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pid: Option<i32>,
@@ -610,6 +615,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(SessionMode::CodexRollout).unwrap(),
             json!("codex-rollout")
+        );
+        assert_eq!(
+            serde_json::to_value(SessionMode::AgyConversation).unwrap(),
+            json!("agy-conversation")
         );
     }
     #[test]

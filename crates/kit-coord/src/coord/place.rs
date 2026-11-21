@@ -572,7 +572,8 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     };
     let brief_path = ctx.paths.brief(id.as_str());
     fs::write(&brief_path, &message)?;
-    let template = if previous.is_some() && live_previous.is_none() {
+    let cold_resume = previous.is_some() && live_previous.is_none();
+    let template = if cold_resume {
         role.resume
             .as_ref()
             .ok_or_else(|| refuse("no_session", "role cannot resume"))?
@@ -589,8 +590,24 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         session_id: session.as_ref().and_then(|s| s.id.as_deref()),
         repo_root: repo.as_deref(),
         cwd: &cwd,
+        model: None,
+        effort: None,
     };
-    let argv = role::expand(template, &vars, trusted.then_some(role.trust.as_slice()))?;
+    let argv = if cold_resume {
+        role.expand_resume(&vars, trusted)?
+    } else {
+        role.expand_start(&vars, trusted)?
+    };
+    let placed_model = if cold_resume {
+        role::model_of(&argv)
+    } else {
+        role.effective_model().or_else(|| role::model_of(&argv))
+    };
+    let placed_effort = if cold_resume {
+        role::effort_of(&argv)
+    } else {
+        role.effective_effort().or_else(|| role::effort_of(&argv))
+    };
 
     let entry = |kind: Kind| (Some(ws.clone()), Some(id.clone()), kind);
     let superseded = |p: &Task| {
@@ -614,7 +631,8 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         rejected,
         role: role.name.clone(),
         harness: role.harness.clone(),
-        model: role::model_of(&argv),
+        model: placed_model,
+        effort: placed_effort,
         title: title.clone(),
         brief: brief_path.clone(),
         session_of: previous.as_ref().map(|p| p.id.clone()),
@@ -753,6 +771,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         cwd: cwd.clone(),
         argv,
         session,
+        session_markers: launch::task_session_markers(&ctx.paths, &id, Some(&brief_path)),
         tab_name: title.clone(),
         space_name: new_space.then(|| space_label.clone().unwrap_or_default()),
     };
@@ -842,15 +861,22 @@ fn send_to_terminal(
 ) -> Result<Value> {
     let entry = |kind: Kind| (Some(t.ws.clone()), Some(t.id.clone()), kind);
     let _terminal_guard = ctx.terminal_lock(&term.address)?;
-    let steered = term.live()
-        && term.word() == Some("working")
-        && term.turn >= 1
-        && term.reported
-        && term
-            .status
-            .as_ref()
-            .and_then(|status| status.app.as_deref())
-            == Some("omp");
+    let working_ready =
+        term.live() && term.word() == Some("working") && term.turn >= 1 && term.reported;
+    let app = term
+        .status
+        .as_ref()
+        .and_then(|status| status.app.as_deref());
+    let steered = working_ready && role::app_supports_steering(app);
+    if working_ready && !steered {
+        let harness = app.unwrap_or(&t.harness);
+        return Err(error::not_ready(
+            "steering_unsupported",
+            format!(
+                "mid-turn steering is not supported while {harness} is working; wait until the agent is settled"
+            ),
+        ));
+    }
     if !steered {
         send_guard(term)?;
     }
@@ -943,6 +969,8 @@ fn resume_with_message(
         session_id: session.id.as_deref(),
         repo_root: repo,
         cwd: &cwd,
+        model: None,
+        effort: None,
     };
     let template = role
         .resume
@@ -954,7 +982,7 @@ fn resume_with_message(
             "role resume command must include {brief}",
         ));
     }
-    let argv = role::expand(template, &vars, trusted.then_some(role.trust.as_slice()))?;
+    let argv = role.expand_resume(&vars, trusted)?;
     fs::write(&path, &message)?;
     let mut intent = ResourceRef::new(ResType::Tab, t.id.as_str());
     intent.space = Some(space.clone());
@@ -973,6 +1001,7 @@ fn resume_with_message(
         cwd: cwd.clone(),
         argv,
         session: Some(session),
+        session_markers: launch::task_session_markers(&ctx.paths, &t.id, Some(&path)),
         tab_name: t.title.clone(),
         space_name: None,
     };
@@ -1463,6 +1492,7 @@ mod tests {
                         role: "coord-light".into(),
                         harness: "omp".into(),
                         model: None,
+                        effort: None,
                         title: "x".into(),
                         brief: "/tmp/x".into(),
                         session_of: None,

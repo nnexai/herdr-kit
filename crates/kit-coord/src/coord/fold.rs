@@ -213,6 +213,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
             role,
             harness,
             model,
+            effort,
             title,
             brief,
             session_of: _,
@@ -256,6 +257,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                     role,
                     harness,
                     model,
+                    effort,
                     summary: None,
                     terminal: None,
                     space: None,
@@ -706,6 +708,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
         Kind::CoordSessionStarted {
             role,
             model,
+            effort,
             terminal,
             pid,
             created_ms,
@@ -724,6 +727,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
             s.coordinator.session = session;
             s.coordinator.role = Some(role);
             s.coordinator.model = model;
+            s.coordinator.effort = effort;
             s.coordinator.release = Some(release);
             s.coordinator.role_hash = role_hash;
             s.coordinator.started_ms = Some(e.ts_ms);

@@ -246,6 +246,7 @@ fn watcher(
             cwd: ctx.paths.home.clone(),
             argv,
             session: None,
+            session_markers: vec![],
             tab_name: "watcher".into(),
             space_name: Some("coordinator".into()),
         },
@@ -321,9 +322,12 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         session_id: id.as_deref(),
         repo_root: None,
         cwd: &ctx.paths.home,
+        model: None,
+        effort: None,
     };
-    let argv = role::expand(&role.start, &vars, None)?;
-    let model = role::model_of(&argv);
+    let argv = role.expand_start(&vars, false)?;
+    let model = role.effective_model().or_else(|| role::model_of(&argv));
+    let effort = role.effective_effort().or_else(|| role::effort_of(&argv));
     let launched = launch::launch(
         ctx,
         &LaunchPlan {
@@ -336,6 +340,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
             cwd: ctx.paths.home.clone(),
             argv,
             session: Some(session),
+            session_markers: launch::coordinator_session_markers(&ctx.cli(), &path),
             tab_name: "coordinator".into(),
             space_name: None,
         },
@@ -354,6 +359,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         Kind::CoordSessionStarted {
             role: role.name.clone(),
             model,
+            effort,
             pid: launched.term.pid.and_then(|p| i32::try_from(p).ok()),
             created_ms: Some(launched.term.created_ms),
             terminal: launched.term.address,
@@ -450,13 +456,13 @@ fn config_autostart(ctx: &Ctx, j: &Journal, enabled: bool) -> Result<Config> {
     Ok(cfg)
 }
 fn setup(cfg: &Config) -> Vec<Value> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Ok(home) = kit_core::paths::home() else {
         return vec![];
     };
     let Ok(root) = cfg.worktree_root() else {
         return vec![];
     };
-    setup_at(Path::new(&home), &root)
+    setup_at(&home, &root)
 }
 fn setup_at(home: &Path, root: &Path) -> Vec<Value> {
     let Ok(data) = fs::read(home.join(".claude.json")) else {
@@ -523,6 +529,7 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
                 Kind::CoordSessionStarted {
                     role: role.name.clone(),
                     model: None,
+                    effort: None,
                     pid: t.pid.and_then(|p| i32::try_from(p).ok()),
                     created_ms: Some(t.created_ms),
                     terminal: t.address,
@@ -881,6 +888,7 @@ mod tests {
                 Kind::CoordSessionStarted {
                     role: "coord-main".into(),
                     model: None,
+                    effort: None,
                     pid: None,
                     created_ms: None,
                     terminal: "tc".into(),

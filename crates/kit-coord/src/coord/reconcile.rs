@@ -189,8 +189,10 @@ fn settle_intent(
         return Ok(());
     };
     let cwd = Path::new(&term.cwd);
-    let session = session
-        .map(|base| launch::discover_session(ctx, &base, cwd, term.created_ms, 0).unwrap_or(base));
+    let markers = launch::task_session_markers(&ctx.paths, id, None);
+    let session = session.map(|base| {
+        launch::discover_session(ctx, &base, cwd, term.created_ms, &markers, 0).unwrap_or(base)
+    });
     note(
         ctx,
         lock,
@@ -279,8 +281,9 @@ fn discover_sessions(ctx: &Ctx, lock: &mut Locked<'_>, state: &State) -> Result<
         if session.id.is_some() || task.state == TaskState::Closed {
             continue;
         }
+        let markers = launch::task_session_markers(&ctx.paths, &task.id, Some(&task.brief));
         if let Some(found) =
-            launch::discover_session(ctx, session, cwd, task.created_ms.unwrap_or(0), 0)
+            launch::discover_session(ctx, session, cwd, task.created_ms.unwrap_or(0), &markers, 0)
                 .filter(|s| s.id.is_some())
         {
             lock.append(
@@ -527,6 +530,7 @@ mod tests {
                             role: "r".into(),
                             harness: "omp".into(),
                             model: None,
+                            effort: None,
                             title: "task".into(),
                             brief: "/tmp/brief".into(),
                             session_of: None,
@@ -747,6 +751,7 @@ mod tests {
                                 role: "r".into(),
                                 harness: "claude".into(),
                                 model: None,
+                                effort: None,
                                 title: "task".into(),
                                 brief: "/tmp/brief".into(),
                                 session_of: None,
@@ -953,6 +958,158 @@ mod tests {
                 .filter(|e| matches!(e.typed(), Kind::ResReleased { .. }))
                 .count(),
             2
+        );
+    }
+    #[test]
+    fn late_agy_conversation_is_discovered_once() {
+        use super::super::kinds::SessionMode;
+        const CHILD: &str = "HERDR_KIT_RECONCILE_AGY_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let home = tempfile::tempdir().unwrap();
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "coord::reconcile::tests::late_agy_conversation_is_discovered_once",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env("HOME", home.path())
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let paths = CoordPaths::new(dir.path());
+        let j = Journal::open(&paths).unwrap();
+        let ws = WsId::parse("ws-abcdef").unwrap();
+        let task = TaskId::new(&ws, 1);
+        let session = SessionRef {
+            mode: SessionMode::AgyConversation,
+            id: None,
+            dir: None,
+        };
+        j.lock()
+            .unwrap()
+            .append(
+                &Actor::Watcher,
+                1,
+                vec![
+                    (
+                        Some(ws.clone()),
+                        None,
+                        Kind::WsOpened {
+                            title: "test".into(),
+                            repo: None,
+                            delivery_target: None,
+                            delivery_branch: None,
+                            purpose: None,
+                            request: None,
+                        },
+                    ),
+                    (
+                        Some(ws.clone()),
+                        Some(task.clone()),
+                        Kind::TaskPlaced {
+                            rung: 2,
+                            reason: "test".into(),
+                            rejected: vec![],
+                            role: "agy-default".into(),
+                            harness: "agy".into(),
+                            model: Some("gemini-4-neon-high".into()),
+                            effort: None,
+                            title: "task".into(),
+                            brief: paths.brief(task.as_str()),
+                            session_of: None,
+                            session: Some(session.clone()),
+                            request: None,
+                            follows: None,
+                            role_hash: String::new(),
+                            brief_bytes: 0,
+                        },
+                    ),
+                    (
+                        Some(ws.clone()),
+                        Some(task.clone()),
+                        Kind::TaskStarted {
+                            terminal: "t1".into(),
+                            tab: None,
+                            tab_name: "task".into(),
+                            space: "sp".into(),
+                            cwd: dir.path().into(),
+                            pid: Some(1),
+                            created_ms: 1,
+                            session: Some(session),
+                            resumed: false,
+                        },
+                    ),
+                ],
+            )
+            .unwrap();
+        let hc = FakeHc::default();
+        for _ in 0..3 {
+            hc.lists.borrow_mut().push_back(Ok(vec![]));
+        }
+        let ctx = Ctx {
+            root: dir.path().into(),
+            paths: paths.clone(),
+            hc: Box::new(hc),
+            app: Box::new(FakeApp::default()),
+            clock: Box::new(|| 121_001),
+            op: "test".into(),
+            cause: None,
+        };
+        let mut facts = Facts::default();
+        reconcile(&ctx, &j, &mut facts).unwrap();
+        assert!(
+            j.read_state().unwrap().tasks[&task]
+                .session
+                .as_ref()
+                .unwrap()
+                .id
+                .is_none()
+        );
+        let conv_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let logs = kit_core::paths::agy_data_dir()
+            .unwrap()
+            .join("brain")
+            .join(conv_id)
+            .join(".system_generated/logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            logs.join("transcript_full.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "step_index": 0,
+                    "type": "USER_INPUT",
+                    "content": format!("Long results go into {}", paths.result(&task).display())
+                })
+            ),
+        )
+        .unwrap();
+        reconcile(&ctx, &j, &mut facts).unwrap();
+        assert_eq!(
+            j.read_state().unwrap().tasks[&task]
+                .session
+                .as_ref()
+                .unwrap()
+                .id
+                .as_deref(),
+            Some(conv_id)
+        );
+        reconcile(&ctx, &j, &mut facts).unwrap();
+        assert_eq!(
+            j.read_after(0)
+                .unwrap()
+                .iter()
+                .filter(|e| e.kind == "task.session")
+                .count(),
+            1
         );
     }
 }

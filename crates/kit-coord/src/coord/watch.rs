@@ -852,6 +852,7 @@ mod tests {
                                 role: "r".into(),
                                 harness: "omp".into(),
                                 model: None,
+                                effort: None,
                                 title: "task".into(),
                                 brief: "/tmp/brief".into(),
                                 session_of: None,
@@ -936,6 +937,7 @@ mod tests {
                         Kind::CoordSessionStarted {
                             role: "coord-main".into(),
                             model: None,
+                            effort: None,
                             terminal: "c1".into(),
                             pid: Some(1),
                             created_ms: Some(1),
@@ -1053,6 +1055,7 @@ mod tests {
                             role: "r".into(),
                             harness: "omp".into(),
                             model: None,
+                            effort: None,
                             title: "task".into(),
                             brief: "/tmp/brief".into(),
                             session_of: None,
@@ -1186,6 +1189,7 @@ mod tests {
                             role: "r".into(),
                             harness: "omp".into(),
                             model: None,
+                            effort: None,
                             title: "task".into(),
                             brief: "/tmp/brief".into(),
                             session_of: None,
@@ -1252,6 +1256,7 @@ mod tests {
                         Kind::CoordSessionStarted {
                             role: "coord-main".into(),
                             model: None,
+                            effort: None,
                             terminal: "c1".into(),
                             pid: Some(1),
                             created_ms: Some(1),
@@ -1316,6 +1321,7 @@ mod tests {
                 let started = |terminal: &str, pid, reason: &str| Kind::CoordSessionStarted {
                     role: "coord-main".into(),
                     model: None,
+                    effort: None,
                     terminal: terminal.into(),
                     pid: Some(pid),
                     created_ms: Some(pid as u64),
