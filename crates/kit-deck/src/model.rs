@@ -3,6 +3,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 
 pub const PROVIDER_ORDER: [&str; 4] = ["codex", "claude", "copilot", "antigravity"];
+pub const LIMITS_STALE_AFTER_MS: u64 = 900_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -161,6 +162,58 @@ pub struct LimitsSummary {
     pub generated_at_ms: Option<u64>,
     pub worst_provider: Option<String>,
     pub providers: Vec<ProviderSummary>,
+}
+
+impl LimitsSummary {
+    pub fn mark_stale(&mut self) {
+        self.collecting = false;
+        for provider in &mut self.providers {
+            provider.stale = true;
+            for bucket in &mut provider.buckets {
+                bucket.stale = true;
+            }
+        }
+        self.worst_provider = select_worst_provider(&self.providers);
+    }
+
+    pub fn apply_local_staleness(&mut self, now_ms: u64) {
+        if self
+            .generated_at_ms
+            .is_some_and(|gen_ms| now_ms.saturating_sub(gen_ms) > LIMITS_STALE_AFTER_MS)
+        {
+            self.mark_stale();
+        }
+    }
+}
+
+fn select_worst_provider(providers: &[ProviderSummary]) -> Option<String> {
+    let visible: Vec<&ProviderSummary> = providers
+        .iter()
+        .filter(|p| p.state != "not_signed_in")
+        .collect();
+    let fresh: Vec<&&ProviderSummary> = visible
+        .iter()
+        .filter(|p| !p.stale && p.worst_fraction.is_some())
+        .collect();
+    if !fresh.is_empty() {
+        fresh
+            .into_iter()
+            .max_by(|a, b| {
+                a.worst_fraction
+                    .unwrap_or(-1.0)
+                    .total_cmp(&b.worst_fraction.unwrap_or(-1.0))
+            })
+            .map(|p| p.id.clone())
+    } else {
+        visible
+            .into_iter()
+            .max_by(|a, b| {
+                a.worst_fraction
+                    .unwrap_or(-1.0)
+                    .total_cmp(&b.worst_fraction.unwrap_or(-1.0))
+            })
+            .map(|p| p.id.clone())
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -744,33 +797,7 @@ pub fn parse_limits(bytes: &[u8]) -> Option<LimitsSummary> {
             buckets,
         });
     }
-    let visible: Vec<&ProviderSummary> = providers
-        .iter()
-        .filter(|p| p.state != "not_signed_in")
-        .collect();
-    let fresh: Vec<&&ProviderSummary> = visible
-        .iter()
-        .filter(|p| !p.stale && p.worst_fraction.is_some())
-        .collect();
-    let worst_provider = if !fresh.is_empty() {
-        fresh
-            .into_iter()
-            .max_by(|a, b| {
-                a.worst_fraction
-                    .unwrap_or(-1.0)
-                    .total_cmp(&b.worst_fraction.unwrap_or(-1.0))
-            })
-            .map(|p| p.id.clone())
-    } else {
-        visible
-            .into_iter()
-            .max_by(|a, b| {
-                a.worst_fraction
-                    .unwrap_or(-1.0)
-                    .total_cmp(&b.worst_fraction.unwrap_or(-1.0))
-            })
-            .map(|p| p.id.clone())
-    };
+    let worst_provider = select_worst_provider(&providers);
     Some(LimitsSummary {
         available: true,
         collecting: parsed.collecting,
@@ -1110,6 +1137,9 @@ pub fn build_snapshot(
         needs_you: inbox.iter().filter(|i| i.kind != InboxKind::Done).count(),
     };
 
+    let mut limits = limits.unwrap_or_default();
+    limits.apply_local_staleness(now_ms);
+
     DeckSnapshot {
         schema_version: 1,
         generated_at_ms: now_ms,
@@ -1118,7 +1148,7 @@ pub fn build_snapshot(
         counts,
         coordinator: coordinator.cloned(),
         inbox,
-        limits: limits.unwrap_or_default(),
+        limits,
     }
 }
 

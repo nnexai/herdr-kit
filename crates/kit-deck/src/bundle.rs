@@ -139,7 +139,9 @@ pub fn install(
     let source_exe = std::fs::canonicalize(binary_path).unwrap_or_else(|_| binary_path.to_owned());
     if wrapper_mode {
         let escaped = source_exe.display().to_string().replace('\'', "'\\''");
-        let script = format!("#!/bin/sh\nexec '{escaped}' \"$@\"\n");
+        let script = format!(
+            "#!/bin/sh\nPLUGIN_DIR=$(CDPATH= cd -- \"$(dirname -- \"$0\")/..\" && pwd)\nKIT_DECK_PLUGIN_DIR=\"$PLUGIN_DIR\" exec '{escaped}' \"$@\"\n"
+        );
         write_file(&bin_dest, script.as_bytes(), true)?;
     } else {
         let bytes = fs::read(&source_exe)

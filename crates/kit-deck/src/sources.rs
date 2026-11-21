@@ -2,17 +2,18 @@ use crate::model::{
     CoordinatorSummary, DeckSnapshot, EventEffect, HcState, LimitsSummary, RawTerm, build_snapshot,
     parse_coordinator_status, parse_limits,
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, watch};
 
 const MAX_JSON_BYTES: u64 = 1024 * 1024;
+const MAX_STDERR_BYTES: u64 = 16_384;
 
 #[derive(Clone, Debug)]
 pub struct SourceConfig {
@@ -30,9 +31,30 @@ struct BundleConfig {
 
 impl SourceConfig {
     pub fn resolve(cli_data_dir: Option<PathBuf>) -> Result<Self> {
-        let data_dir = match cli_data_dir {
+        let env_data_dir = std::env::var_os("KIT_DECK_DATA_DIR")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let plugin_dir = std::env::var_os("KIT_DECK_PLUGIN_DIR")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        let exe_path = std::env::current_exe().ok();
+        Self::resolve_with(
+            cli_data_dir,
+            env_data_dir,
+            plugin_dir.as_deref(),
+            exe_path.as_deref(),
+        )
+    }
+
+    pub(crate) fn resolve_with(
+        cli_data_dir: Option<PathBuf>,
+        env_data_dir: Option<PathBuf>,
+        plugin_dir: Option<&Path>,
+        exe_path: Option<&Path>,
+    ) -> Result<Self> {
+        let data_dir = match cli_data_dir.or(env_data_dir) {
             Some(dir) => kit_core::paths::data_root(Some(dir))?,
-            None => match bundle_data_dir() {
+            None => match bundle_data_dir(plugin_dir, exe_path)? {
                 Some(dir) => kit_core::paths::data_root(Some(dir))?,
                 None => kit_core::paths::data_root(None)?,
             },
@@ -47,13 +69,27 @@ impl SourceConfig {
     }
 }
 
-fn bundle_data_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let cfg_path = exe.parent()?.parent()?.join("config.json");
-    let bytes = std::fs::read(cfg_path).ok()?;
-    serde_json::from_slice::<BundleConfig>(&bytes)
-        .ok()
-        .and_then(|c| c.data_dir)
+fn bundle_data_dir(
+    plugin_dir: Option<&Path>,
+    exe_path: Option<&Path>,
+) -> Result<Option<PathBuf>> {
+    let cfg_path = match plugin_dir {
+        Some(dir) => dir.join("config.json"),
+        None => match exe_path.and_then(|exe| exe.parent()).and_then(Path::parent) {
+            Some(dir) => dir.join("config.json"),
+            None => return Ok(None),
+        },
+    };
+    let bytes = match std::fs::read(&cfg_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to read {}", cfg_path.display()));
+        }
+    };
+    let parsed: BundleConfig = serde_json::from_slice(&bytes)
+        .with_context(|| format!("invalid plugin config {}", cfg_path.display()))?;
+    Ok(parsed.data_dir.filter(|p| !p.as_os_str().is_empty()))
 }
 
 fn discover_binary(env_name: &str, name: &str, data_dir: &Path) -> PathBuf {
@@ -103,50 +139,20 @@ pub fn now_ms() -> u64 {
 }
 
 pub async fn run_bounded(
-    mut command: Command,
+    command: Command,
     timeout: Duration,
     max_stdout: u64,
 ) -> Result<Vec<u8>> {
-    command
-        .env_remove("HC_TERMINAL_ID")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = command.spawn().context("spawn failed")?;
-    let stdout = child.stdout.take().context("missing stdout")?;
-    let stderr = child.stderr.take().context("missing stderr")?;
-    let mut out_reader = stdout.take(max_stdout + 1);
-    let mut err_reader = stderr.take(16_384);
-    let fut = async {
-        let mut out = Vec::new();
-        let mut err = Vec::new();
-        let (status, _, _) = tokio::try_join!(
-            child.wait(),
-            out_reader.read_to_end(&mut out),
-            err_reader.read_to_end(&mut err),
-        )?;
-        ensure!(
-            out.len() as u64 <= max_stdout,
-            "command output exceeded limit"
+    let output =
+        kit_core::process::run_bounded(command, timeout, max_stdout, MAX_STDERR_BYTES).await?;
+    if !output.status.success() {
+        bail!(
+            "command exited {}: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr).trim()
         );
-        if !status.success() {
-            bail!(
-                "command exited {}: {}",
-                status.code().unwrap_or(-1),
-                String::from_utf8_lossy(&err).trim()
-            );
-        }
-        Ok(out)
-    };
-    match tokio::time::timeout(timeout, fut).await {
-        Ok(res) => res,
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            bail!("command timed out")
-        }
     }
+    Ok(output.stdout)
 }
 
 async fn fetch_hc_term(cfg: &SourceConfig, terminal: &str) -> Option<RawTerm> {
@@ -236,11 +242,11 @@ pub async fn collect_once(cfg: &SourceConfig) -> DeckSnapshot {
     build_snapshot(now_ms(), &hc, coord.as_ref(), board.as_deref(), limits)
 }
 
-struct SharedRawState {
+pub(crate) struct SharedRawState {
     hc: HcState,
     coordinator: Option<CoordinatorSummary>,
     coord_board: Option<Vec<u8>>,
-    limits: Option<LimitsSummary>,
+    pub(crate) limits: Option<LimitsSummary>,
 }
 
 impl Default for SharedRawState {
@@ -255,7 +261,24 @@ impl Default for SharedRawState {
 }
 
 impl SharedRawState {
-    fn snapshot(&self) -> DeckSnapshot {
+    pub(crate) fn apply_usage_poll(&mut self, fetched: Option<LimitsSummary>) -> bool {
+        match fetched {
+            Some(limits) => {
+                self.limits = Some(limits);
+                true
+            }
+            None => {
+                if let Some(limits) = &mut self.limits {
+                    limits.mark_stale();
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> DeckSnapshot {
         build_snapshot(
             now_ms(),
             &self.hc,
@@ -408,17 +431,19 @@ pub fn start_background(cfg: SourceConfig) -> (watch::Receiver<Arc<DeckSnapshot>
                         .iter()
                         .any(|a| a.status == crate::model::AgentStateKind::Working)
                 };
-                if let Some(limits) = fetch_usage(&cfg, working).await {
+                let fetched = fetch_usage(&cfg, working).await;
+                if let Some(ref limits) = fetched {
                     if limits.collecting {
                         collecting_since.get_or_insert_with(tokio::time::Instant::now);
                     } else {
                         collecting_since = None;
                     }
-                    let mut guard = shared.lock().await;
-                    guard.limits = Some(limits);
-                    let _ = tx.send(Arc::new(guard.snapshot()));
                 } else {
                     collecting_since = None;
+                }
+                let mut guard = shared.lock().await;
+                if guard.apply_usage_poll(fetched) {
+                    let _ = tx.send(Arc::new(guard.snapshot()));
                 }
                 let followup =
                     collecting_since.is_some_and(|t| t.elapsed() < Duration::from_secs(45));

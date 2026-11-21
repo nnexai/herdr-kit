@@ -122,12 +122,118 @@ fn default_next() -> String {
 }
 
 #[derive(Clone, Debug)]
-enum StoredSettings {
+pub(crate) enum StoredSettings {
     Empty,
     Agent(AgentSettings),
     Limits(LimitsSettings),
     Bucket(BucketSettings),
     InboxAction(InboxActionSettings),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum PressTarget {
+    None,
+    InboxReply {
+        qid: String,
+        option_index: usize,
+        text: String,
+    },
+    AgentSlot {
+        terminal: String,
+        was_working: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct PressState {
+    pressed_at: Instant,
+    target: PressTarget,
+}
+
+pub(crate) fn capture_press_target(
+    action_uuid: &str,
+    stored: &StoredSettings,
+    snap: &DeckSnapshot,
+    inbox_index: usize,
+) -> PressTarget {
+    match (action_uuid, stored) {
+        (UUID_INBOX_ACTION, StoredSettings::InboxAction(settings))
+            if matches!(settings.mode.as_str(), "reply_1" | "reply_2") =>
+        {
+            let option_index = if settings.mode == "reply_1" { 0 } else { 1 };
+            snap.inbox_item(inbox_index)
+                .and_then(|(item, _)| {
+                    Some(PressTarget::InboxReply {
+                        qid: item.qid.clone()?,
+                        option_index,
+                        text: item.options.get(option_index)?.clone(),
+                    })
+                })
+                .unwrap_or(PressTarget::None)
+        }
+        (UUID_AGENT, StoredSettings::Agent(settings)) => snap
+            .agent_for_slot(
+                settings.slot,
+                &settings.filter,
+                settings.pin_space.as_deref(),
+            )
+            .map(|agent| PressTarget::AgentSlot {
+                terminal: agent.address.clone(),
+                was_working: agent.status == crate::model::AgentStateKind::Working,
+            })
+            .unwrap_or(PressTarget::None),
+        _ => PressTarget::None,
+    }
+}
+
+pub(crate) fn resolve_reply_hold(
+    target: &PressTarget,
+    current_snap: &DeckSnapshot,
+) -> Option<(String, String)> {
+    let PressTarget::InboxReply {
+        qid,
+        option_index,
+        text,
+    } = target
+    else {
+        return None;
+    };
+    let still_open = current_snap.inbox.iter().any(|item| {
+        item.qid.as_deref() == Some(qid.as_str())
+            && item.options.get(*option_index).map(String::as_str) == Some(text.as_str())
+    });
+    still_open.then(|| (qid.clone(), text.clone()))
+}
+
+pub(crate) fn resolve_agent_hold_interrupt(
+    target: &PressTarget,
+    current_snap: &DeckSnapshot,
+) -> Option<String> {
+    let PressTarget::AgentSlot {
+        terminal,
+        was_working: true,
+    } = target
+    else {
+        return None;
+    };
+    let still_working = current_snap.agents.iter().any(|agent| {
+        agent.address == *terminal && agent.status == crate::model::AgentStateKind::Working
+    });
+    still_working.then(|| terminal.clone())
+}
+
+pub(crate) fn resolve_agent_tap_focus(
+    target: &PressTarget,
+    current_snap: &DeckSnapshot,
+) -> Option<String> {
+    let PressTarget::AgentSlot { terminal, .. } = target else {
+        return None;
+    };
+    current_snap
+        .agents
+        .iter()
+        .any(|agent| agent.address == *terminal)
+        .then(|| terminal.clone())
 }
 
 struct PluginCore {
@@ -136,7 +242,7 @@ struct PluginCore {
     refresh_notify: Arc<Notify>,
     ui_notify: Arc<Notify>,
     settings: RwLock<HashMap<InstanceId, StoredSettings>>,
-    pressed_at: RwLock<HashMap<InstanceId, Instant>>,
+    pressed: RwLock<HashMap<InstanceId, PressState>>,
     last_svg: RwLock<HashMap<InstanceId, String>>,
     inbox_index: AtomicUsize,
     selected_provider: RwLock<String>,
@@ -171,7 +277,7 @@ impl PluginCore {
 
     async fn on_disappear(&self, instance: &Instance) {
         self.settings.write().await.remove(&instance.instance_id);
-        self.pressed_at.write().await.remove(&instance.instance_id);
+        self.pressed.write().await.remove(&instance.instance_id);
         self.last_svg.write().await.remove(&instance.instance_id);
     }
 
@@ -183,16 +289,24 @@ impl PluginCore {
         self.render_instance(instance).await;
     }
 
-    async fn on_key_down(&self, instance: &Instance) {
-        self.pressed_at
-            .write()
-            .await
-            .insert(instance.instance_id.clone(), Instant::now());
+    async fn on_key_down(&self, instance: &Instance, stored: StoredSettings) {
+        let snap = self.snapshot_rx.borrow().clone();
+        let inbox_idx = self.inbox_index.load(Ordering::Relaxed);
+        let target = capture_press_target(&instance.action_uuid, &stored, &snap, inbox_idx);
+        self.pressed.write().await.insert(
+            instance.instance_id.clone(),
+            PressState {
+                pressed_at: Instant::now(),
+                target,
+            },
+        );
     }
 
-    async fn take_hold(&self, instance: &Instance) -> bool {
-        let down = self.pressed_at.write().await.remove(&instance.instance_id);
-        down.is_some_and(|t| t.elapsed() >= HOLD_THRESHOLD)
+    async fn take_press(&self, instance: &Instance) -> (bool, PressTarget) {
+        match self.pressed.write().await.remove(&instance.instance_id) {
+            Some(state) => (state.pressed_at.elapsed() >= HOLD_THRESHOLD, state.target),
+            None => (false, PressTarget::None),
+        }
     }
 
     async fn render_svg_for(&self, uuid: &str, instance_id: &str, snap: &DeckSnapshot) -> String {
@@ -317,7 +431,7 @@ impl PluginCore {
         });
     }
     async fn handle_key_up(&self, instance: &Instance, stored: StoredSettings) {
-        let hold = self.take_hold(instance).await;
+        let (hold, press_target) = self.take_press(instance).await;
         let snap = self.snapshot_rx.borrow().clone();
         match (instance.action_uuid.as_str(), stored) {
             (UUID_OVERVIEW, _) => {
@@ -384,17 +498,14 @@ impl PluginCore {
                             self.flash_hold_hint().await;
                             return;
                         }
-                        let opt_idx = if settings.mode == "reply_1" { 0 } else { 1 };
-                        let idx = self.inbox_index.load(Ordering::Relaxed);
-                        if let Some((item, _)) = snap.inbox_item(idx) {
-                            if let (Some(qid), Some(text)) =
-                                (item.qid.clone(), item.options.get(opt_idx).cloned())
-                            {
-                                let cfg = self.cfg.clone();
-                                self.run_bg_action(instance, async move {
-                                    actions::answer_question(&cfg, &qid, &text).await
-                                });
-                            }
+                        if let Some((qid, text)) = resolve_reply_hold(&press_target, &snap) {
+                            let cfg = self.cfg.clone();
+                            self.run_bg_action(instance, async move {
+                                actions::answer_question(&cfg, &qid, &text).await
+                            });
+                        } else {
+                            let _ = instance.show_alert().await;
+                            self.refresh_notify.notify_one();
                         }
                     }
                     _ => {
@@ -405,28 +516,32 @@ impl PluginCore {
                     }
                 }
             }
-            (UUID_AGENT, StoredSettings::Agent(settings)) => {
-                let Some(agent) = snap.agent_for_slot(
-                    settings.slot,
-                    &settings.filter,
-                    settings.pin_space.as_deref(),
-                ) else {
-                    self.refresh_notify.notify_one();
-                    return;
-                };
-                let term = agent.address.clone();
+            (UUID_AGENT, StoredSettings::Agent(_)) => {
                 let cfg = self.cfg.clone();
-                if hold && agent.status == crate::model::AgentStateKind::Working {
-                    self.run_bg_action(instance, async move {
-                        actions::interrupt_terminal(&cfg, &term).await
-                    });
-                } else if hold {
-                    self.refresh_notify.notify_one();
-                    let _ = instance.show_ok().await;
-                } else {
+                if hold {
+                    if let Some(term) = resolve_agent_hold_interrupt(&press_target, &snap) {
+                        self.run_bg_action(instance, async move {
+                            actions::interrupt_terminal(&cfg, &term).await
+                        });
+                    } else if matches!(
+                        press_target,
+                        PressTarget::AgentSlot {
+                            was_working: true,
+                            ..
+                        }
+                    ) {
+                        let _ = instance.show_alert().await;
+                        self.refresh_notify.notify_one();
+                    } else {
+                        self.refresh_notify.notify_one();
+                        let _ = instance.show_ok().await;
+                    }
+                } else if let Some(term) = resolve_agent_tap_focus(&press_target, &snap) {
                     self.run_bg_action(instance, async move {
                         actions::focus_terminal(&cfg, &term).await
                     });
+                } else {
+                    self.refresh_notify.notify_one();
                 }
             }
             (UUID_COORDINATOR, _) => {
@@ -516,9 +631,9 @@ macro_rules! deck_action {
             async fn key_down(
                 &self,
                 instance: &Instance,
-                _settings: &Self::Settings,
+                settings: &Self::Settings,
             ) -> OpenActionResult<()> {
-                self.core.on_key_down(instance).await;
+                self.core.on_key_down(instance, ($wrap)(settings)).await;
                 Ok(())
             }
 
@@ -576,7 +691,7 @@ pub async fn run(cfg: SourceConfig, args: Vec<String>) -> anyhow::Result<()> {
         refresh_notify,
         ui_notify: Arc::new(Notify::new()),
         settings: RwLock::new(HashMap::new()),
-        pressed_at: RwLock::new(HashMap::new()),
+        pressed: RwLock::new(HashMap::new()),
         last_svg: RwLock::new(HashMap::new()),
         inbox_index: AtomicUsize::new(0),
         selected_provider: RwLock::new("antigravity".into()),
