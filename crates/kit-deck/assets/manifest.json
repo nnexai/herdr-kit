@@ -1,0 +1,136 @@
+{
+  "Name": "Herdr Kit",
+  "Description": "Live Herdr agent inbox, coordinator status, and AI subscription usage limits for Stream Deck / OpenDeck.",
+  "Author": "Herdr Kit",
+  "Version": "0.1.0",
+  "SDKVersion": 2,
+  "UUID": "dev.herdr.kit",
+  "Icon": "icons/plugin",
+  "Category": "Herdr",
+  "CategoryIcon": "icons/category",
+  "CodePath": "bin/kit-deck",
+  "CodePathLin": "bin/kit-deck",
+  "CodePathMac": "bin/kit-deck",
+  "CodePaths": {
+    "x86_64-unknown-linux-gnu": "bin/kit-deck",
+    "aarch64-unknown-linux-gnu": "bin/kit-deck",
+    "x86_64-apple-darwin": "bin/kit-deck",
+    "aarch64-apple-darwin": "bin/kit-deck"
+  },
+  "OS": [
+    {
+      "Platform": "linux"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "12"
+    }
+  ],
+  "Software": {
+    "MinimumVersion": "6.0"
+  },
+  "Actions": [
+    {
+      "UUID": "dev.herdr.kit.overview",
+      "Name": "Herdr Overview",
+      "Icon": "icons/overview",
+      "Tooltip": "Live Herdr agent counts, inbox urgency, and worst usage limit. Tap: focus top agent. Hold: refresh.",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/overview",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.inbox",
+      "Name": "Agent Inbox",
+      "Icon": "icons/inbox",
+      "Tooltip": "Needs-you blockers, coordinator questions, and unseen completions. Tap: focus. Hold: next item.",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/inbox",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.inbox-action",
+      "Name": "Inbox Action",
+      "Icon": "icons/inbox-action",
+      "Tooltip": "Cycle inbox items, focus active item, or hold-to-send coordinator quick replies.",
+      "PropertyInspectorPath": "pi/inbox-action.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/inbox-action",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.agent",
+      "Name": "Agent Slot",
+      "Icon": "icons/agent",
+      "Tooltip": "Monitor a priority or space-pinned Herdr agent. Tap: focus. Hold: interrupt working agent.",
+      "PropertyInspectorPath": "pi/agent.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/agent",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.coordinator",
+      "Name": "Coordinator",
+      "Icon": "icons/coordinator",
+      "Tooltip": "Coordinator status & task counts. Tap: focus coordinator. Hold: start or repair.",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/coordinator",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.limits",
+      "Name": "Usage Limits",
+      "Icon": "icons/limits",
+      "Tooltip": "Subscription usage gauge for Codex, Claude, Copilot, or Antigravity. Tap: select/cycle. Hold: refresh.",
+      "PropertyInspectorPath": "pi/limits.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/limits",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    },
+    {
+      "UUID": "dev.herdr.kit.limit-bucket",
+      "Name": "Limit Bucket",
+      "Icon": "icons/limit-bucket",
+      "Tooltip": "Individual quota window gauge for the selected or pinned provider.",
+      "PropertyInspectorPath": "pi/limit-bucket.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        {
+          "Image": "icons/limit-bucket",
+          "TitleAlignment": "middle",
+          "FontSize": 10
+        }
+      ]
+    }
+  ]
+}

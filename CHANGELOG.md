@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `kit-deck` (`crates/kit-deck`), a standalone OpenDeck / OpenAction Rust
+  Stream Deck extension (`dev.herdr.kit.sdPlugin`) surfacing live `hc events`
+  agents, Agent Inbox / Coordinator needs-you items with hold-to-reply actions,
+  and 240° radial usage gauges for Codex, Claude, Copilot and Antigravity.
 - Add Antigravity subscription limits to `kit-usage` via `agy -p /usage
   --output-format json` alongside OMP providers, with independent source
   scheduling/backoff and anonymous tier/window projection in the Limits UI.

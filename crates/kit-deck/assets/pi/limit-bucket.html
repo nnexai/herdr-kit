@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Limit Bucket Settings</title>
+  <style>
+    body { margin: 12px; background: #141821; color: #e5eefc; font: 12px/1.4 system-ui, sans-serif; }
+    .field { margin-bottom: 10px; }
+    label { display: block; color: #94a3b8; margin-bottom: 4px; font-weight: 600; }
+    select, input { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #2a3448; background: #0b1020; color: #e5eefc; }
+    .hint { color: #64748b; font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="field">
+    <label for="provider">Provider</label>
+    <select id="provider" data-setting="provider" data-default="selected">
+      <option value="selected">Selected Provider (from Usage Limits keys)</option>
+      <option value="antigravity">Antigravity</option>
+      <option value="claude">Claude</option>
+      <option value="codex">Codex</option>
+      <option value="copilot">Copilot</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="bucket_index">Bucket Index (0 = first window)</label>
+    <input id="bucket_index" type="number" min="0" max="15" data-setting="bucket_index" data-type="number" data-default="0" />
+  </div>
+  <div class="hint">For Antigravity, indices 0–4 map to Gemini Weekly, Gemini 5h, Claude &amp; GPT Weekly, Claude &amp; GPT 5h, and Gemini Argon Weekly.</div>
+  <script src="common.js"></script>
+</body>
+</html>

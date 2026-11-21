@@ -19,6 +19,10 @@
       "binary": {"name": "kit-usage", "cargo_package": "kit-usage"},
       "mods": ["kit-usage"]
     },
+    "kit-deck": {
+      "binary": {"name": "kit-deck", "cargo_package": "kit-deck"},
+      "mods": []
+    },
     "herdr-kit": {
       "mods": ["herdr-kit-bar"],
       "layout": "layouts/herdr-kit.json"

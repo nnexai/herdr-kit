@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Agent Slot Settings</title>
+  <style>
+    body { margin: 12px; background: #141821; color: #e5eefc; font: 12px/1.4 system-ui, sans-serif; }
+    .field { margin-bottom: 10px; }
+    label { display: block; color: #94a3b8; margin-bottom: 4px; font-weight: 600; }
+    select, input { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #2a3448; background: #0b1020; color: #e5eefc; }
+    .hint { color: #64748b; font-size: 11px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="field">
+    <label for="slot">Priority Slot (1 = highest urgency)</label>
+    <input id="slot" type="number" min="1" max="15" data-setting="slot" data-type="number" data-default="1" />
+  </div>
+  <div class="field">
+    <label for="filter">Agent Filter</label>
+    <select id="filter" data-setting="filter" data-default="all">
+      <option value="all">All Agents (blocked -> working -> done -> idle)</option>
+      <option value="attention">Needs Attention (blocked / error / unseen done)</option>
+      <option value="working">Working Only</option>
+      <option value="done">Done Only</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="pin_space">Pin to Space Name (optional)</label>
+    <input id="pin_space" type="text" placeholder="e.g. herdr-kit" data-setting="pin_space" />
+  </div>
+  <div class="hint">Tap focuses the agent terminal in Herdr. Hold (0.65s) interrupts a working agent.</div>
+  <script src="common.js"></script>
+</body>
+</html>

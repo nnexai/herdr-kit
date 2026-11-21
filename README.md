@@ -332,6 +332,7 @@ and safety rules.
 - `mods/kit-coord/`: independent native status source and strip.
 - `crates/kit-usage/`: independent usage CLI, bounded OMP and Antigravity
   adapters and cache.
+- `crates/kit-deck/`: standalone OpenDeck (OpenAction) Stream Deck plugin and CLI.
 - `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
 - `mods/kit-usage/`: native GPUI presentation and pure view model.
 - `mods/herdr-kit-bar/`: host chrome, readout composition and optional maintenance.
@@ -344,6 +345,25 @@ secure-store adapters must keep credentials in Rust and the OS keychain, use
 them internally or through a child tool's supported input, and never return
 them to JS/JSON or put them in argv/logs. This is an exposure policy, not a
 same-user process sandbox. No secret-store commands ship today.
+
+The suite's layout composes `kit-coord` and `kit-usage` together. Standalone
+`kit-deck` adds an optional OpenDeck / OpenAction Stream Deck extension.
+
+## Stream Deck (OpenDeck)
+
+`crates/kit-deck/` provides a standalone Rust OpenAction plugin (`dev.herdr.kit.sdPlugin`)
+for Stream Deck hardware via OpenDeck, surfacing live `hc` agents, Coordinator
+needs-you inbox items, quick replies, and Codex/Claude/Copilot/Antigravity
+usage gauges without reading provider credentials:
+
+```sh
+cargo build --locked --release -p kit-deck
+./target/release/kit-deck status --json
+./target/release/kit-deck install
+```
+
+See [crates/kit-deck/README.md](crates/kit-deck/README.md) for actions,
+Property Inspector options, and recommended 5×3 layouts.
 
 ## Verification and provenance
 
