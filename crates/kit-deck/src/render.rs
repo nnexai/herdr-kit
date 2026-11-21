@@ -16,6 +16,64 @@ const VIOLET: &str = "#c4b5fd";
 const FONT_SANS: &str =
     "DejaVu Sans Condensed, Nimbus Sans Narrow, Arial Narrow, Liberation Sans, sans-serif";
 const FONT_MONO: &str = "DejaVu Sans Condensed, Nimbus Sans Narrow, Liberation Mono, monospace";
+/// Horizontal text budget inside the 144x144 SVG card (132px inner frame minus padding).
+const MAX_TEXT_WIDTH: f64 = 122.0;
+
+/// Advance widths in thousandths of an em for printable ASCII (`0x20..=0x7E`)
+/// measured from DejaVu Sans Condensed Bold, the primary configured typeface.
+const ASCII_WIDTH_MILLE: [u16; 95] = [
+    313, 410, 469, 754, 626, 901, 785, 275, // 0x20..=0x27: space ! " # $ % & '
+    411, 411, 470, 754, 342, 374, 342, 329, // 0x28..=0x2F: ( ) * + , - . /
+    626, 626, 626, 626, 626, 626, 626, 626, // 0x30..=0x37: 0-7
+    626, 626, 360, 360, 754, 754, 754, 522, // 0x38..=0x3F: 8 9 : ; < = > ?
+    900, 696, 686, 660, 747, 615, 615, 738, // 0x40..=0x47: @ A-G
+    753, 334, 334, 697, 573, 896, 753, 765, // 0x48..=0x4F: H-O
+    659, 765, 693, 648, 614, 730, 696, 993, // 0x50..=0x57: P-W
+    694, 651, 652, 411, 329, 411, 754, 450, // 0x58..=0x5F: X-Z [ \ ] ^ _
+    450, 607, 644, 533, 644, 610, 391, 644, // 0x60..=0x67: ` a-g
+    641, 308, 308, 598, 308, 938, 641, 618, // 0x68..=0x6F: h-o
+    644, 644, 444, 536, 430, 641, 586, 831, // 0x70..=0x77: p-w
+    580, 586, 523, 641, 329, 641, 754, // 0x78..=0x7E: x-z { | } ~
+];
+
+fn char_width_mille(ch: char) -> u16 {
+    let code = ch as u32;
+    if (0x20..=0x7E).contains(&code) {
+        return ASCII_WIDTH_MILLE[(code - 0x20) as usize];
+    }
+    match ch {
+        '…' | '—' => 900,
+        '·' => 342,
+        c if c.is_control() => 313,
+        // Wide East Asian / emoji code points: budget conservatively.
+        c if matches!(
+            c as u32,
+            0x1100..=0x115F
+                | 0x2E80..=0xA4CF
+                | 0xAC00..=0xD7A3
+                | 0xF900..=0xFAFF
+                | 0xFE10..=0xFE6F
+                | 0xFF00..=0xFF60
+                | 0x1F300..=0x1FAFF
+        ) =>
+        {
+            1050
+        }
+        _ => 680,
+    }
+}
+
+fn measure_char(ch: char, font_size: f64) -> f64 {
+    char_width_mille(ch) as f64 * (font_size / 1000.0)
+}
+
+pub(crate) fn measure_text(input: &str, font_size: f64) -> f64 {
+    input
+        .chars()
+        .map(|ch| char_width_mille(ch) as f64)
+        .sum::<f64>()
+        * (font_size / 1000.0)
+}
 
 pub fn xml_escape(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -64,16 +122,32 @@ pub fn svg_to_data_uri(svg: &str) -> String {
     )
 }
 
-fn clip_chars(input: &str, max: usize) -> String {
+fn clip_with_ellipsis(input: &str, font_size: f64, max_width: f64) -> String {
     let trimmed = input.trim();
-    let count = trimmed.chars().count();
-    if count <= max {
-        return trimmed.to_owned();
+    let ellipsis_w = measure_char('…', font_size);
+    let mut out = String::new();
+    let mut width = 0.0;
+    for ch in trimmed.chars() {
+        let ch_w = measure_char(ch, font_size);
+        if width + ch_w + ellipsis_w > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_w;
     }
-    let keep = max.saturating_sub(1);
-    let mut out: String = trimmed.chars().take(keep).collect();
+    while out.ends_with(|c: char| c.is_whitespace() || matches!(c, '-' | '_' | '/')) {
+        out.pop();
+    }
     out.push('…');
     out
+}
+
+pub(crate) fn clip_to_width(input: &str, font_size: f64, max_width: f64) -> String {
+    let trimmed = input.trim();
+    if measure_text(trimmed, font_size) <= max_width {
+        return trimmed.to_owned();
+    }
+    clip_with_ellipsis(trimmed, font_size, max_width)
 }
 
 fn tokenize_for_wrap(input: &str) -> Vec<(String, char)> {
@@ -101,34 +175,48 @@ fn tokenize_for_wrap(input: &str) -> Vec<(String, char)> {
     tokens
 }
 
-fn wrap_lines(input: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
+pub(crate) fn wrap_lines_by_width(
+    input: &str,
+    font_size: f64,
+    max_width: f64,
+    max_lines: usize,
+) -> Vec<String> {
     let tokens = tokenize_for_wrap(input);
     if tokens.is_empty() || max_lines == 0 {
         return Vec::new();
     }
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
+    let mut current_w = 0.0;
     let mut idx = 0;
     while idx < tokens.len() {
         let (word, sep) = &tokens[idx];
-        let next_len = if current.is_empty() {
-            word.chars().count()
-        } else {
-            current.chars().count() + 1 + word.chars().count()
-        };
-        if next_len <= max_chars {
-            if !current.is_empty() {
-                current.push(*sep);
+        let word_w = measure_text(word, font_size);
+        if current.is_empty() {
+            if word_w <= max_width {
+                current.push_str(word);
+                current_w = word_w;
+                idx += 1;
+            } else {
+                lines.push(clip_with_ellipsis(word, font_size, max_width));
+                idx += 1;
+                if lines.len() == max_lines {
+                    break;
+                }
             }
-            current.push_str(word);
-            idx += 1;
-        } else if current.is_empty() {
-            current = clip_chars(word, max_chars);
-            idx += 1;
         } else {
-            lines.push(std::mem::take(&mut current));
-            if lines.len() == max_lines {
-                break;
+            let sep_w = measure_char(*sep, font_size);
+            if current_w + sep_w + word_w <= max_width {
+                current.push(*sep);
+                current.push_str(word);
+                current_w += sep_w + word_w;
+                idx += 1;
+            } else {
+                lines.push(std::mem::take(&mut current));
+                current_w = 0.0;
+                if lines.len() == max_lines {
+                    break;
+                }
             }
         }
     }
@@ -136,9 +224,12 @@ fn wrap_lines(input: &str, max_chars: usize, max_lines: usize) -> Vec<String> {
         lines.push(current);
     } else if idx < tokens.len() && !lines.is_empty() {
         if let Some(last) = lines.last_mut() {
-            *last = clip_chars(last, max_chars);
             if !last.ends_with('…') {
-                *last = clip_chars(&format!("{last}…"), max_chars);
+                if measure_text(last, font_size) + measure_char('…', font_size) <= max_width {
+                    last.push('…');
+                } else {
+                    *last = clip_with_ellipsis(last, font_size, max_width);
+                }
             }
         }
     }
@@ -237,8 +328,8 @@ fn svg_radial_gauge(
   <text x="72" y="109" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
   <text x="72" y="133" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(center_text),
-        xml_escape(&clip_chars(label, 11)),
-        xml_escape(&clip_chars(sublabel, 12)),
+        xml_escape(&clip_to_width(label, 20.0, MAX_TEXT_WIDTH)),
+        xml_escape(&clip_to_width(sublabel, 18.0, MAX_TEXT_WIDTH)),
     );
     svg_card(accent, selected, &body)
 }
@@ -280,7 +371,11 @@ pub fn render_overview(snap: &DeckSnapshot) -> String {
     } else {
         format!("{} LIVE", snap.counts.total)
     };
-    let hero_size = if hero.len() <= 6 { 34 } else { 26 };
+    let hero_size = if measure_text(&hero, 34.0) <= MAX_TEXT_WIDTH {
+        34
+    } else {
+        26
+    };
     let body = format!(
         r#"<circle cx="22" cy="26" r="6" fill="{dot_col}"/>
   <text x="36" y="33" fill="{ICE}" font-family="{FONT_SANS}" font-size="20" font-weight="900">HERDR</text>
@@ -290,7 +385,7 @@ pub fn render_overview(snap: &DeckSnapshot) -> String {
   <text x="72" y="124" text-anchor="middle" fill="{ICE}" font-family="{FONT_MONO}" font-size="22" font-weight="900">{}</text>"#,
         snap.counts.total,
         xml_escape(&hero),
-        xml_escape(&clip_chars(&footer, 9)),
+        xml_escape(&clip_to_width(&footer, 22.0, 114.0)),
     );
     svg_card(accent, snap.counts.needs_you > 0, &body)
 }
@@ -312,21 +407,29 @@ pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
         InboxKind::Done => (MINT, "DONE"),
     };
     let count_badge = format!("{}/{}", idx + 1, snap.inbox.len());
-    let lines = wrap_lines(&item.text, 13, 2);
-    let line1 = lines.first().map(String::as_str).unwrap_or("");
-    let line2 = lines.get(1).map(String::as_str).unwrap_or("");
-    let mid = if line2.is_empty() {
+    let trimmed_text = item.text.trim();
+    let mid = if !trimmed_text.is_empty() && measure_text(trimmed_text, 22.0) <= MAX_TEXT_WIDTH {
         format!(
             r#"<text x="72" y="84" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="22" font-weight="900">{}</text>"#,
-            xml_escape(line1)
+            xml_escape(trimmed_text)
         )
     } else {
-        format!(
-            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
+        let lines = wrap_lines_by_width(trimmed_text, 21.0, MAX_TEXT_WIDTH, 2);
+        let line1 = lines.first().map(String::as_str).unwrap_or("");
+        let line2 = lines.get(1).map(String::as_str).unwrap_or("");
+        if line2.is_empty() {
+            format!(
+                r#"<text x="72" y="84" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
+                xml_escape(line1)
+            )
+        } else {
+            format!(
+                r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
   <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
-            xml_escape(line1),
-            xml_escape(line2)
-        )
+                xml_escape(line1),
+                xml_escape(line2)
+            )
+        }
     };
     let body = format!(
         r#"<text x="10" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
@@ -335,7 +438,7 @@ pub fn render_inbox(snap: &DeckSnapshot, selected_index: usize) -> String {
   <text x="72" y="132" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(kind_tag),
         xml_escape(&count_badge),
-        xml_escape(&clip_chars(&item.source, 13)),
+        xml_escape(&clip_to_width(&item.source, 18.0, MAX_TEXT_WIDTH)),
     );
     svg_card(accent, item.kind != InboxKind::Done, &body)
 }
@@ -384,7 +487,7 @@ pub fn render_inbox_action(
                     format!("OPT {}", opt_idx + 1),
                     format!(
                         r#"<text x="72" y="66" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>"#,
-                        xml_escape(&clip_chars(label, 8))
+                        xml_escape(&clip_to_width(label, 24.0, MAX_TEXT_WIDTH))
                     ),
                 )
             } else {
@@ -410,7 +513,7 @@ pub fn render_inbox_action(
   <text x="72" y="106" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>
   <text x="72" y="134" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="18" font-weight="800">{}</text>"#,
         xml_escape(title),
-        xml_escape(&clip_chars(&sub, 9)),
+        xml_escape(&clip_to_width(&sub, 18.0, MAX_TEXT_WIDTH)),
     );
     svg_card(accent, false, &body)
 }
@@ -430,7 +533,7 @@ pub fn render_agent_slot(
             r#"<text x="72" y="42" text-anchor="middle" fill="{MUTED}" font-family="{FONT_SANS}" font-size="20" font-weight="900">{}</text>
   <text x="72" y="88" text-anchor="middle" fill="{TRACK}" font-family="{FONT_MONO}" font-size="34" font-weight="900">—</text>
   <text x="72" y="130" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="20" font-weight="800">#{slot}</text>"#,
-            xml_escape(&clip_chars(label, 9)),
+            xml_escape(&clip_to_width(label, 20.0, MAX_TEXT_WIDTH)),
         );
         return svg_card(MUTED, false, &body);
     };
@@ -446,22 +549,29 @@ pub fn render_agent_slot(
     } else {
         agent.status.short_label()
     };
-    let space_lines = wrap_lines(&agent.space, 12, 2);
-    let line1 = space_lines.first().map(String::as_str).unwrap_or("agent");
-    let line2 = space_lines.get(1).map(String::as_str).unwrap_or("");
-    let mid = if line2.is_empty() {
-        let size = if line1.chars().count() <= 9 { 24 } else { 21 };
+    let space_trimmed = agent.space.trim();
+    let mid = if !space_trimmed.is_empty() && measure_text(space_trimmed, 24.0) <= MAX_TEXT_WIDTH {
         format!(
-            r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="{size}" font-weight="900">{}</text>"#,
-            xml_escape(line1)
+            r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="24" font-weight="900">{}</text>"#,
+            xml_escape(space_trimmed)
         )
     } else {
-        format!(
-            r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
+        let space_lines = wrap_lines_by_width(space_trimmed, 21.0, MAX_TEXT_WIDTH, 2);
+        let line1 = space_lines.first().map(String::as_str).unwrap_or("agent");
+        let line2 = space_lines.get(1).map(String::as_str).unwrap_or("");
+        if line2.is_empty() {
+            format!(
+                r#"<text x="72" y="86" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
+                xml_escape(line1)
+            )
+        } else {
+            format!(
+                r#"<text x="72" y="70" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>
   <text x="72" y="98" text-anchor="middle" fill="{ICE}" font-family="{FONT_SANS}" font-size="21" font-weight="900">{}</text>"#,
-            xml_escape(line1),
-            xml_escape(line2)
-        )
+                xml_escape(line1),
+                xml_escape(line2)
+            )
+        }
     };
     let body = format!(
         r#"<text x="10" y="32" fill="{accent}" font-family="{FONT_SANS}" font-size="18" font-weight="900">{}</text>
@@ -515,14 +625,18 @@ pub fn render_coordinator(snap: &DeckSnapshot) -> String {
     } else {
         "HOLD: UP".into()
     };
-    let mid_size = if mid.len() <= 6 { 34 } else { 26 };
+    let mid_size = if measure_text(&mid, 34.0) <= MAX_TEXT_WIDTH {
+        34
+    } else {
+        26
+    };
     let body = format!(
         r#"<circle cx="22" cy="26" r="6" fill="{accent}"/>
   <text x="36" y="33" fill="{ICE}" font-family="{FONT_SANS}" font-size="20" font-weight="900">COORD</text>
   <text x="72" y="84" text-anchor="middle" fill="{accent}" font-family="{FONT_SANS}" font-size="{mid_size}" font-weight="900">{}</text>
   <text x="72" y="130" text-anchor="middle" fill="{MUTED}" font-family="{FONT_MONO}" font-size="20" font-weight="800">{}</text>"#,
         xml_escape(&mid),
-        xml_escape(&clip_chars(&bot, 9)),
+        xml_escape(&clip_to_width(&bot, 20.0, MAX_TEXT_WIDTH)),
     );
     svg_card(accent, coord.needs_you > 0, &body)
 }
@@ -620,7 +734,7 @@ fn render_bucket_gauge(p: &ProviderSummary, b: &BucketSummary, now_ms: u64) -> S
         &center,
         &b.label,
         &sub,
-        b.stale,
+        b.stale || p.stale,
         false,
     )
 }
