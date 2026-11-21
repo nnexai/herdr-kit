@@ -21,6 +21,7 @@ pub enum QuotaProvider {
     Codex,
     Claude,
     Copilot,
+    Antigravity,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,10 +104,17 @@ const WORKING_CADENCE: u64 = 60_000;
 const STALE: u64 = 900_000;
 const RETAIN: u64 = 86_400_000;
 const MAX_CACHE: u64 = 65_536;
-const PROVIDERS: [QuotaProvider; 3] = [
+const OMP_PROVIDERS: [QuotaProvider; 3] = [
     QuotaProvider::Codex,
     QuotaProvider::Claude,
     QuotaProvider::Copilot,
+];
+const ANTIGRAVITY_PROVIDERS: [QuotaProvider; 1] = [QuotaProvider::Antigravity];
+const PROVIDERS: [QuotaProvider; 4] = [
+    QuotaProvider::Codex,
+    QuotaProvider::Claude,
+    QuotaProvider::Copilot,
+    QuotaProvider::Antigravity,
 ];
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -132,12 +140,14 @@ struct ProviderRecord {
 struct PersistedQuota {
     schema: u32,
     omp: SourceRecord,
+    antigravity: SourceRecord,
 }
 impl Default for PersistedQuota {
     fn default() -> Self {
         Self {
-            schema: 2,
+            schema: 3,
             omp: SourceRecord::default(),
+            antigravity: SourceRecord::default(),
         }
     }
 }
@@ -150,11 +160,30 @@ fn now() -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
+fn begin_attempt(record: &mut SourceRecord, providers: &[QuotaProvider], started: u64) {
+    record.attempted_at_ms = Some(started);
+    record.succeeded_at_ms = None;
+    record.next_attempt_at_ms = started.saturating_add(CADENCE);
+    if record.providers.is_empty() {
+        record.providers = providers
+            .iter()
+            .map(|p| {
+                empty(
+                    *p,
+                    QuotaProviderState::Unavailable,
+                    Some(QuotaErrorCode::UsageUnavailable),
+                )
+            })
+            .collect();
+    }
+}
+
 /// Return the shared anonymous snapshot, collecting once when due.
 pub async fn snapshot(
     cache_dir: &Path,
     agents_working: bool,
     omp_executable: Option<&Path>,
+    agy_executable: Option<&Path>,
 ) -> anyhow::Result<Snapshot> {
     let started = now();
     let mut cache = match cache::Cache::open(cache_dir, started) {
@@ -169,28 +198,46 @@ pub async fn snapshot(
     if cache.lock.is_none() {
         return Ok(response(&value, started, true));
     }
-    if due(&value.omp, started, agents_working) {
-        value.omp.attempted_at_ms = Some(started);
-        value.omp.succeeded_at_ms = None;
-        value.omp.next_attempt_at_ms = started.saturating_add(CADENCE);
-        if value.omp.providers.is_empty() {
-            value.omp.providers = PROVIDERS
-                .iter()
-                .map(|p| {
-                    empty(
-                        *p,
-                        QuotaProviderState::Unavailable,
-                        Some(QuotaErrorCode::UsageUnavailable),
-                    )
-                })
-                .collect();
+    let omp_due = due(&value.omp, started, agents_working);
+    let agy_due = due(&value.antigravity, started, agents_working);
+    if omp_due || agy_due {
+        if omp_due {
+            begin_attempt(&mut value.omp, &OMP_PROVIDERS, started);
+        }
+        if agy_due {
+            begin_attempt(&mut value.antigravity, &ANTIGRAVITY_PROVIDERS, started);
         }
         if cache.save(&value).is_err() {
             mark_cache_failure(&mut value, now());
             return Ok(response(&value, now(), false));
         }
-        let result = source::collect(cache_dir, omp_executable).await;
-        apply(&mut value.omp, result, &PROVIDERS, now());
+        let (omp_result, agy_result) = tokio::join!(
+            async {
+                if omp_due {
+                    Some(source::collect_omp(cache_dir, omp_executable).await)
+                } else {
+                    None
+                }
+            },
+            async {
+                if agy_due {
+                    Some(source::collect_antigravity(cache_dir, agy_executable).await)
+                } else {
+                    None
+                }
+            },
+        );
+        if let Some(result) = omp_result {
+            apply(&mut value.omp, result, &OMP_PROVIDERS, now());
+        }
+        if let Some(result) = agy_result {
+            apply(
+                &mut value.antigravity,
+                result,
+                &ANTIGRAVITY_PROVIDERS,
+                now(),
+            );
+        }
         if cache.save(&value).is_err() {
             mark_cache_failure(&mut value, now());
         }
@@ -269,7 +316,13 @@ fn mark_cache_failure(snapshot: &mut PersistedQuota, now: u64) {
     apply(
         &mut snapshot.omp,
         Err(QuotaErrorCode::CacheUnavailable),
-        &PROVIDERS,
+        &OMP_PROVIDERS,
+        now,
+    );
+    apply(
+        &mut snapshot.antigravity,
+        Err(QuotaErrorCode::CacheUnavailable),
+        &ANTIGRAVITY_PROVIDERS,
         now,
     );
 }
@@ -289,7 +342,12 @@ fn response(snapshot: &PersistedQuota, now: u64, collecting: bool) -> Snapshot {
     let providers = PROVIDERS
         .into_iter()
         .map(|provider| {
-            let source = &snapshot.omp;
+            let source = match provider {
+                QuotaProvider::Antigravity => &snapshot.antigravity,
+                QuotaProvider::Codex | QuotaProvider::Claude | QuotaProvider::Copilot => {
+                    &snapshot.omp
+                }
+            };
             let mut value = source
                 .providers
                 .iter()
@@ -340,7 +398,9 @@ fn response(snapshot: &PersistedQuota, now: u64, collecting: bool) -> Snapshot {
     }
 }
 fn valid_snapshot(snapshot: &PersistedQuota, now: u64) -> bool {
-    snapshot.schema == 2 && valid_source(&snapshot.omp, &PROVIDERS, now)
+    snapshot.schema == 3
+        && valid_source(&snapshot.omp, &OMP_PROVIDERS, now)
+        && valid_source(&snapshot.antigravity, &ANTIGRAVITY_PROVIDERS, now)
 }
 fn valid_source(source: &SourceRecord, providers: &[QuotaProvider], now: u64) -> bool {
     if source.succeeded_at_ms.is_some()

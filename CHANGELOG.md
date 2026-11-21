@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add Antigravity subscription limits to `kit-usage` via `agy -p /usage
+  --output-format json` alongside OMP providers, with independent source
+  scheduling/backoff and anonymous tier/window projection in the Limits UI.
 - Replace the separate coordinator views with one dialog for needs-you items,
   messages, workstream receipts and the journal, opened from the bottom-bar
   coordinator item (the sidebar row is gone). The journal groups plain-language

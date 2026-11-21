@@ -3,7 +3,7 @@ name = "kit-usage"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Independent anonymous OMP subscription limits collector for Herdr"
+description = "Independent anonymous OMP and Antigravity subscription limits collector for Herdr"
 
 [dependencies]
 kit-core.workspace = true

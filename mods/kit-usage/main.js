@@ -9,7 +9,7 @@ let strips = 0, inflight = false, validated = false, dialog = null;
 const args = () => DATA_DIR ? ['--data-dir', DATA_DIR] : [];
 const working = () => agents().some(a => a.status === 'working');
 function readShared() { try { const s = shared(KEY); return s ? decodeSnapshot(JSON.stringify(s)) : null; } catch (_) { return null; } }
-function statusText(p) { return ({pending:'…',not_signed_in:'Not signed in to OMP',unsupported:'Not reported for this account',unavailable:errorText(p.error)})[p.state] || 'No usage report available'; }
+function statusText(p) { return ({pending:'…',not_signed_in:p.provider === 'antigravity' ? 'Not signed in to Antigravity' : 'Not signed in to OMP',unsupported:'Not reported for this account',unavailable:errorText(p.error, p.provider)})[p.state] || 'No usage report available'; }
 function segmentText(s, compact = false) { if (!s) return '—'; const parts = [label(s.limit),value(s.limit)]; const c = credits(s.limit); if (c && !compact) parts.push(c); if (s.pace?.runsOutMs && !compact) parts.push(`out ${span(s.pace.runsOutMs)}`); if (s.stale) parts.push(compact ? '~' : 'stale'); return parts.join(' '); }
 function fullLabel(all, offline) { return `Subscription limits, percentages used. ${all.map(v => `${v.name}: ${v.segments.length ? v.segments.map(s => segmentText(s)).join(', ') : statusText(v.provider)}`).join('. ')}${offline ? '. Stale, last check failed' : ''}. Open details`; }
 function segmentColor(s,t) { return s?.used > .95 ? t.blocked : s?.used > .8 ? t.working : t.accent; }
@@ -70,7 +70,7 @@ export default class Usage extends View {
     if (encoded !== this.published) { this.published = encoded; setShared('herdr-kit.usage.readout.v1',readout); }
     if (this.source) return div().w(0).h(0);
     const button = Button.new('usage-readout').track_focus(this.handle).tab_index(0)
-      .w(Math.min(narrow ? 120 : 200, Math.max(0, this.width - 16))).flex_shrink_0().h(26).px(6).items_center().justify_end().overflow_hidden()
+      .w(Math.min(narrow ? 120 : 220, Math.max(0, this.width - 16))).flex_shrink_0().h(26).px(6).items_center().justify_end().overflow_hidden()
       .bg(t.chrome).rounded(3).border(1)
       .border_color(this.handle.is_focused() ? t.accent : t.chrome)
       .hover(s => s.bg(t.hover).text_color(t.foreground))
@@ -102,24 +102,24 @@ export default class Usage extends View {
     return row;
   }
   detail(snapshot,offline,t,now) {
-    const all = views(snapshot,now,offline), report = snapshot ? ` · updated ${formatTime(snapshot.generated_at_ms)}` : '';
+    const all = views(snapshot,now,offline), report = snapshot ? ` · updated ${formatTime(snapshot.generated_at_ms)}` : '', maxScroll = Math.max(0, all.length - 1);
     const body = v_flex().id('usage-body').flex_1().min_h(0).overflow_y_scrollbar().track_scroll(this.scroll).track_focus(this.scrollFocus).tab_index(1).gap(12).text_size(13).text_color(t.foreground).on_key_down((e,cx) => {
-      if (e.key === 'down' || e.key === 'pagedown') this.scrollIndex = Math.min(2,this.scrollIndex+1);
+      if (e.key === 'down' || e.key === 'pagedown') this.scrollIndex = Math.min(maxScroll,this.scrollIndex+1);
       else if (e.key === 'up' || e.key === 'pageup') this.scrollIndex = Math.max(0,this.scrollIndex-1);
       else if (e.key === 'home') this.scrollIndex = 0;
-      else if (e.key === 'end') this.scrollIndex = 2;
+      else if (e.key === 'end') this.scrollIndex = maxScroll;
       else return;
       this.scroll.scroll_to_item(this.scrollIndex); cx.stop_propagation();
     });
     if (!snapshot) body.child(div().text_color(t.muted).child(this.failed ? 'Usage unavailable' : 'Reading limits…'));
     else for (const v of all) {
       const p = v.provider, section = v_flex().gap(8).border_t(1).border_color(t.border).pt(10).child(h_flex().justify_between().child(div().font_semibold().child(v.name)).child(div().text_color(t.muted).child(p.fetched_at_ms === null ? '' : `Report ${formatTime(p.fetched_at_ms)}`)));
-      if (p.error) section.child(div().text_color(t.muted).child(`Last check failed: ${errorText(p.error)}`));
+      if (p.error) section.child(div().text_color(t.muted).child(`Last check failed: ${errorText(p.error, p.provider)}`));
       if (!p.accounts.length) section.child(div().text_color(t.muted).child(statusText(p)));
       p.accounts.forEach((a,i) => { if (p.accounts.length > 1) section.child(div().font_semibold().child(`Account ${i+1} · ${formatDateTime(a.fetched_at_ms)}`)); if (!a.limits.length) section.child(div().text_color(t.muted).child('No usage report available')); for (const l of a.limits) section.child(this.detailLimit(l,a,p,offline,t,now)); });
       body.child(section);
     }
-    return v_flex().id('usage-details').size_full().min_h(0).p(14).gap(8).bg(t.popover).text_color(t.foreground).text_size(13).role('dialog').accessibility_label('Subscription limits').child(h_flex().items_center().child(div().flex_1().font_semibold().text_size(15).child('Subscription limits')).child(Button.new('usage-close').track_focus(this.handle).tab_index(0).px(8).py(4).rounded(4).border(1).border_color(this.handle.is_focused()?t.accent:t.border).hover(s => s.bg(t.hover)).accessibility_label('Close subscription limits').on_click(() => closeOverlay(props().overlay)).child('Close'))).child(div().text_color(t.muted).child(`Local OMP usage${report}${snapshot?.collecting ? ' · Checking…' : ''}${offline && snapshot ? ' · Stale' : ''}`)).child(div().text_color(t.muted).child('Usage changed elsewhere may appear after a later check.')).child(body);
+    return v_flex().id('usage-details').size_full().min_h(0).p(14).gap(8).bg(t.popover).text_color(t.foreground).text_size(13).role('dialog').accessibility_label('Subscription limits').child(h_flex().items_center().child(div().flex_1().font_semibold().text_size(15).child('Subscription limits')).child(Button.new('usage-close').track_focus(this.handle).tab_index(0).px(8).py(4).rounded(4).border(1).border_color(this.handle.is_focused()?t.accent:t.border).hover(s => s.bg(t.hover)).accessibility_label('Close subscription limits').on_click(() => closeOverlay(props().overlay)).child('Close'))).child(div().text_color(t.muted).child(`Local usage${report}${snapshot?.collecting ? ' · Checking…' : ''}${offline && snapshot ? ' · Stale' : ''}`)).child(div().text_color(t.muted).child('Usage changed elsewhere may appear after a later check.')).child(body);
   }
   render() {
     const snapshot = readShared(), offline = !validated || this.failed, t = theme(), now = Date.now();

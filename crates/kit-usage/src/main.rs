@@ -6,7 +6,7 @@ use kit_core::paths::data_root;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(version, about = "Anonymous OMP subscription usage")]
+#[command(version, about = "Anonymous OMP and Antigravity subscription usage")]
 struct Cli {
     #[arg(long, env = "KIT_USAGE_DATA_DIR", global = true)]
     data_dir: Option<PathBuf>,
@@ -23,6 +23,8 @@ enum Command {
         agents_working: bool,
         #[arg(long, env = "KIT_USAGE_OMP_EXECUTABLE")]
         omp_executable: Option<PathBuf>,
+        #[arg(long, env = "KIT_USAGE_AGY_EXECUTABLE")]
+        agy_executable: Option<PathBuf>,
     },
 }
 
@@ -46,12 +48,14 @@ async fn run(cli: Cli) -> Result<usage::Snapshot> {
         Command::Snapshot {
             agents_working,
             omp_executable,
+            agy_executable,
             ..
         } => {
             usage::snapshot(
                 &root.join("usage"),
                 agents_working,
                 omp_executable.as_deref(),
+                agy_executable.as_deref(),
             )
             .await
         }

@@ -12,9 +12,10 @@ This is not a Herdr fork or browser frontend.
 
 ## Build and install
 
-Requirements: Linux or macOS, Rust/Cargo, Git, tar, `hc`, `herdr-app`, and OMP
-for usage reports. The JavaScript runs inside Herdr's GPUI host, not Node.
-Node is only needed for the pure model tests.
+Requirements: Linux or macOS, Rust/Cargo, Git, tar, `hc`, `herdr-app`, OMP for
+Codex/Claude/Copilot usage reports, and Antigravity CLI (`agy`) for Antigravity
+usage reports. The JavaScript runs inside Herdr's GPUI host, not Node. Node is
+only needed for the pure model tests.
 
 ```sh
 cargo test --locked
@@ -161,11 +162,14 @@ windows, credits and estimates in the native details dialog. Escape/Close
 dismisses it. Narrow bars omit the provider name instead of shrinking the text;
 the command-palette shortcut still works.
 
-Rust runs `omp usage --json --redact --no-extensions`, then keeps only anonymous
-allowlisted quotas for Codex, Claude and Copilot. OMP owns authentication and
-may refresh its existing credentials; herdr-kit does not read credentials or
-make separate provider quota calls. Override source discovery with
-`KIT_USAGE_OMP_EXECUTABLE` or `kit-usage snapshot --omp-executable PATH`.
+Rust runs `omp usage --json --redact --no-extensions` for Codex, Claude and
+Copilot, and `agy -p /usage --output-format json --print-timeout 25s` for
+Antigravity, keeping only anonymous allowlisted quotas. OMP and `agy` own
+authentication and may refresh their existing credentials; herdr-kit does not
+read credentials or make separate provider quota calls. Each source tracks its
+own cadence and failure backoff independently. Override source discovery with
+`KIT_USAGE_OMP_EXECUTABLE` / `kit-usage snapshot --omp-executable PATH` and
+`KIT_USAGE_AGY_EXECUTABLE` / `kit-usage snapshot --agy-executable PATH`.
 
 ```sh
 <data-dir>/bin/kit-usage snapshot --json --agents-working
@@ -326,7 +330,8 @@ and safety rules.
 - `crates/kit-manager/src/main.rs`: optional installation/update CLI only.
 - `crates/kit-coord/`: independent coordinator CLI, engine, roles and fixtures.
 - `mods/kit-coord/`: independent native status source and strip.
-- `crates/kit-usage/`: independent usage CLI, bounded OMP adapter and cache.
+- `crates/kit-usage/`: independent usage CLI, bounded OMP and Antigravity
+  adapters and cache.
 - `crates/kit-manager/src/manager/`: selected builds/receipts/activation/recovery.
 - `mods/kit-usage/`: native GPUI presentation and pure view model.
 - `mods/herdr-kit-bar/`: host chrome, readout composition and optional maintenance.

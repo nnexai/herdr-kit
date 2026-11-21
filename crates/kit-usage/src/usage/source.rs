@@ -5,7 +5,7 @@ use tokio::{
     process::{Child, Command},
 };
 
-fn executable(override_path: Option<&Path>) -> PathBuf {
+fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str]) -> PathBuf {
     if let Some(path) = override_path {
         return std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     }
@@ -18,7 +18,7 @@ fn executable(override_path: Option<&Path>) -> PathBuf {
         .unwrap_or_default();
     if let Some(home) = std::env::var_os("HOME") {
         let home = PathBuf::from(home);
-        directories.extend([home.join(".local/bin"), home.join(".bun/bin")]);
+        directories.extend(home_subdirs.iter().map(|sub| home.join(sub)));
     }
     directories.extend(
         [
@@ -32,12 +32,12 @@ fn executable(override_path: Option<&Path>) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     directories
         .into_iter()
-        .map(|p| p.join("omp"))
+        .map(|p| p.join(binary))
         .find(|p| {
             std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         })
         .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
-        .unwrap_or_else(|| PathBuf::from("omp"))
+        .unwrap_or_else(|| PathBuf::from(binary))
 }
 
 struct OwnedChild {
@@ -74,15 +74,11 @@ async fn bounded<R: AsyncRead + Unpin>(input: R, max: u64) -> Result<Vec<u8>, Qu
     Ok(data)
 }
 
-pub(super) async fn collect(
-    root: &Path,
-    override_path: Option<&Path>,
-) -> Result<Vec<ProviderRecord>, QuotaErrorCode> {
-    let mut command = Command::new(executable(override_path));
+async fn run_command(
+    mut command: Command,
+    stderr_limit: u64,
+) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), QuotaErrorCode> {
     command
-        .args(["usage", "--json", "--redact", "--no-extensions"])
-        .current_dir(root)
-        .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -101,23 +97,19 @@ pub(super) async fn collect(
         finished: false,
     };
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let (out, _, status) = tokio::try_join!(
+        let (out, err, status) = tokio::try_join!(
             bounded(stdout, 2 * 1024 * 1024),
-            bounded(stderr, 8192),
+            bounded(stderr, stderr_limit),
             async { owned.child.wait().await.map_err(|_| QuotaErrorCode::Failed) }
         )?;
-        Ok((out, status))
+        Ok((out, err, status))
     })
     .await
     .unwrap_or(Err(QuotaErrorCode::Timeout));
     match result {
-        Ok((out, status)) => {
+        Ok((out, err, status)) => {
             owned.finished = true;
-            if status.success() {
-                parse::omp(&out, now())
-            } else {
-                Err(QuotaErrorCode::Failed)
-            }
+            Ok((out, err, status))
         }
         Err(error) => {
             owned.kill_group();
@@ -125,5 +117,65 @@ pub(super) async fn collect(
             owned.finished = true;
             Err(error)
         }
+    }
+}
+
+pub(super) async fn collect_omp(
+    root: &Path,
+    override_path: Option<&Path>,
+) -> Result<Vec<ProviderRecord>, QuotaErrorCode> {
+    let mut command = Command::new(executable(
+        override_path,
+        "omp",
+        &[".local/bin", ".bun/bin"],
+    ));
+    command
+        .args(["usage", "--json", "--redact", "--no-extensions"])
+        .current_dir(root)
+        .env("NO_COLOR", "1");
+    let (out, _err, status) = run_command(command, 8192).await?;
+    if status.success() {
+        parse::omp(&out, now())
+    } else {
+        Err(QuotaErrorCode::Failed)
+    }
+}
+
+pub(super) async fn collect_antigravity(
+    root: &Path,
+    override_path: Option<&Path>,
+) -> Result<Vec<ProviderRecord>, QuotaErrorCode> {
+    let mut command = Command::new(executable(
+        override_path,
+        "agy",
+        &[
+            ".gemini/antigravity-cli/bin",
+            ".local/bin",
+            ".omp/antigravity-cli/bin",
+            ".bun/bin",
+        ],
+    ));
+    command
+        .args([
+            "-p",
+            "/usage",
+            "--output-format",
+            "json",
+            "--print-timeout",
+            "25s",
+        ])
+        .current_dir(root)
+        .env("NO_COLOR", "1");
+    let (out, err, status) = run_command(command, 65536).await?;
+    if status.success() {
+        parse::antigravity(&out, now())
+    } else if parse::looks_not_signed_in(&out) || parse::looks_not_signed_in(&err) {
+        Ok(vec![empty(
+            QuotaProvider::Antigravity,
+            QuotaProviderState::NotSignedIn,
+            Some(QuotaErrorCode::NotSignedIn),
+        )])
+    } else {
+        Err(QuotaErrorCode::Failed)
     }
 }

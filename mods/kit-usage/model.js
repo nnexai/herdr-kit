@@ -1,4 +1,12 @@
-export const ORDER = ['codex', 'claude', 'copilot'];
+export const ORDER = ['codex', 'claude', 'copilot', 'antigravity'];
+const TIERS = ['opus', 'sonnet', 'haiku', 'fable', 'gemini', 'gemini_argon', 'gemini_pro', 'gemini_flash', 'claude_gpt'];
+const TIER_LABELS = {
+  gemini: 'Gemini',
+  gemini_argon: 'Gemini Argon',
+  gemini_pro: 'Gemini Pro',
+  gemini_flash: 'Gemini Flash',
+  claude_gpt: 'Claude & GPT',
+};
 const number = { format(n) { const parts = String(Math.round(n * 100) / 100).split('.'); parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ','); return parts.join('.'); } };
 const weekdays = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -15,7 +23,7 @@ const clamp = n => Math.max(0, Math.min(1, n));
 export function decodeSnapshot(text) {
   if (typeof text !== 'string' || text.length > 1048576) throw new Error('malformed');
   const x = JSON.parse(text);
-  if (!x || x.schema_version !== 1 || !timestamp(x.generated_at_ms) || typeof x.collecting !== 'boolean' || !Array.isArray(x.providers) || x.providers.length > 3) throw new Error('malformed');
+  if (!x || x.schema_version !== 1 || !timestamp(x.generated_at_ms) || typeof x.collecting !== 'boolean' || !Array.isArray(x.providers) || x.providers.length > ORDER.length) throw new Error('malformed');
   const seen = new Set();
   const providers = x.providers.map(p => {
     if (!p || !ORDER.includes(p.provider) || seen.has(p.provider) || !['pending','available','not_signed_in','unsupported','unavailable'].includes(p.state) || (p.error !== null && !['source_missing','not_signed_in','usage_unavailable','unsupported','failed','timeout','malformed','cache_unavailable'].includes(p.error)) || !nullableTimestamp(p.fetched_at_ms) || typeof p.stale !== 'boolean' || !Array.isArray(p.accounts) || p.accounts.length > 8) throw new Error('malformed');
@@ -24,7 +32,7 @@ export function decodeSnapshot(text) {
       if (!a || !timestamp(a.fetched_at_ms) || !Array.isArray(a.limits) || a.limits.length > 24) throw new Error('malformed');
       return { fetched_at_ms:a.fetched_at_ms, limits:a.limits.map((l,index) => {
         const isCredits = p.provider === 'copilot';
-        if (!l || !(l.window === null || /^(weekly|monthly|\d{1,4}[smhdw])$/.test(l.window)) || !(l.tier === null || ['opus','sonnet','haiku','fable'].includes(l.tier)) || l.id !== `${p.provider}:${l.window ?? 'none'}:${index}` || l.unit !== (isCredits ? 'credits' : 'percent') || !bounded(l.used_fraction,10) || ![l.used,l.limit,l.remaining].every(n => bounded(n,1e9) && (isCredits || n === null)) || typeof l.unlimited !== 'boolean' || (l.unlimited && (!isCredits || l.used_fraction !== null || l.used !== null || l.limit !== null || l.remaining !== null)) || !['ok','warning','exhausted','unknown'].includes(l.level) || !nullableTimestamp(l.resets_at_ms)) throw new Error('malformed');
+        if (!l || !(l.window === null || /^(weekly|monthly|\d{1,4}[smhdw])$/.test(l.window)) || !(l.tier === null || TIERS.includes(l.tier)) || l.id !== `${p.provider}:${l.window ?? 'none'}:${index}` || l.unit !== (isCredits ? 'credits' : 'percent') || !bounded(l.used_fraction,10) || ![l.used,l.limit,l.remaining].every(n => bounded(n,1e9) && (isCredits || n === null)) || typeof l.unlimited !== 'boolean' || (l.unlimited && (!isCredits || l.used_fraction !== null || l.used !== null || l.limit !== null || l.remaining !== null)) || !['ok','warning','exhausted','unknown'].includes(l.level) || !nullableTimestamp(l.resets_at_ms)) throw new Error('malformed');
         return { id:l.id, window:l.window, tier:l.tier, unit:l.unit, used_fraction:l.used_fraction, used:l.used, limit:l.limit, remaining:l.remaining, unlimited:l.unlimited, level:l.level, resets_at_ms:l.resets_at_ms };
       }) };
     }) };
@@ -48,7 +56,10 @@ export function credits(l, detail = false) {
   return detail ? `${fmt(used)}${l.limit === null ? '' : ` of ${fmt(l.limit)}`} AI credits used` : `${fmt(used)}${l.limit === null ? '' : ` / ${fmt(l.limit)}`} AIC`;
 }
 export function value(l) { const n = usedFraction(l); return l.unlimited ? 'unlimited' : n === null ? '—' : `${number.format(n*100)}%`; }
-export function label(l) { return [l.tier,l.window].filter(Boolean).map(s => /^\d+[smhdw]$/.test(s) ? s : s.replace(/[-_]/g,' ').replace(/^./, c => c.toUpperCase())).join(' ') || 'Limit'; }
+export function label(l) {
+  const format = s => TIER_LABELS[s] || (/^\d+[smhdw]$/.test(s) ? s : s.replace(/[-_]/g, ' ').replace(/^./, c => c.toUpperCase()));
+  return [l.tier, l.window].filter(Boolean).map(format).join(' ') || 'Limit';
+}
 export function staleLimit(l, fetched, now) { return l.resets_at_ms !== null && l.resets_at_ms <= now && l.resets_at_ms > fetched; }
 export function pace(l, now, stale = false) {
   if (stale || l.unlimited || l.resets_at_ms === null || l.resets_at_ms <= now) return null;
@@ -92,4 +103,10 @@ export function summary(all) {
   const pool = fresh.length ? fresh : visible;
   return pool.reduce((best,v) => !best || (bestSegment(v.segments,!!fresh.length)?.used ?? -1) > (bestSegment(best.segments,!!fresh.length)?.used ?? -1) ? v : best,null);
 }
-export function errorText(error) { return ({source_missing:'OMP usage source not found',not_signed_in:'Not signed in to OMP',usage_unavailable:'Usage unavailable',unsupported:'Not reported for this account',failed:'Usage check failed',timeout:'Usage check timed out',malformed:'Invalid usage report',cache_unavailable:'Shared usage cache unavailable'})[error] || 'Usage unavailable'; }
+export function errorText(error, provider = null) {
+  if (provider === 'antigravity') {
+    if (error === 'source_missing') return 'Antigravity CLI (agy) not found';
+    if (error === 'not_signed_in') return 'Not signed in to Antigravity';
+  }
+  return ({source_missing:'OMP usage source not found',not_signed_in:'Not signed in to OMP',usage_unavailable:'Usage unavailable',unsupported:'Not reported for this account',failed:'Usage check failed',timeout:'Usage check timed out',malformed:'Invalid usage report',cache_unavailable:'Shared usage cache unavailable'})[error] || 'Usage unavailable';
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset } from '../mods/kit-usage/model.js';
+import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset, label, errorText } from '../mods/kit-usage/model.js';
 const now = 10_000_000;
 const limit = (x={}) => ({id:'a',window:'5h',tier:null,unit:'percent',used_fraction:0.5,used:null,limit:null,remaining:null,unlimited:false,level:'ok',resets_at_ms:now+3600000,...x});
 const provider = (name,limits,extra={}) => ({provider:name,state:'available',error:null,fetched_at_ms:now-1000,stale:false,accounts:[{fetched_at_ms:now-1000,limits}],...extra});
@@ -35,4 +35,39 @@ test('decoder copies only protocol fields and rejects malformed envelope', () =>
  assert.throws(()=>decodeSnapshot(JSON.stringify({...s,generated_at_ms:-1})));
  assert.throws(()=>decodeSnapshot(JSON.stringify({...s,providers:[{...s.providers[0],accounts:Array(9).fill(s.providers[0].accounts[0])}]})));
  assert.throws(()=>decodeSnapshot(JSON.stringify({...s,providers:[{...s.providers[0],accounts:[{...s.providers[0].accounts[0],limits:Array(25).fill(s.providers[0].accounts[0].limits[0])}]}]})));
+});
+test('antigravity snapshots decode cleanly, preserve group buckets, and format labels', () => {
+ const agyLimits = [
+  limit({id:'antigravity:weekly:0',window:'weekly',tier:'gemini',used_fraction:0.12}),
+  limit({id:'antigravity:5h:1',window:'5h',tier:'gemini',used_fraction:0.41}),
+  limit({id:'antigravity:weekly:2',window:'weekly',tier:'claude_gpt',used_fraction:0}),
+  limit({id:'antigravity:weekly:3',window:'weekly',tier:'gemini_argon',used_fraction:0.85}),
+ ];
+ const s = {
+  schema_version: 1,
+  generated_at_ms: now,
+  collecting: false,
+  providers: [
+   provider('codex', [limit({id:'codex:5h:0',used_fraction:0.1})]),
+   provider('claude', [limit({id:'claude:5h:0',used_fraction:0.2})]),
+   provider('copilot', [limit({id:'copilot:monthly:0',window:'monthly',unit:'credits',used_fraction:0.05,used:75,limit:1500,remaining:1425})]),
+   provider('antigravity', agyLimits),
+  ],
+ };
+ s.providers[3].accounts[0].extra = 'hidden';
+ const decoded = decodeSnapshot(JSON.stringify(s));
+ assert.equal(decoded.providers.length, 4);
+ assert.equal(decoded.providers[3].accounts[0].extra, undefined);
+ assert.equal(label(agyLimits[1]), 'Gemini 5h');
+ assert.equal(label(agyLimits[0]), 'Gemini Weekly');
+ assert.equal(label(limit({tier:'claude_gpt',window:'5h'})), 'Claude & GPT 5h');
+ assert.equal(label(agyLimits[3]), 'Gemini Argon Weekly');
+ const agyGroups = groups(decoded.providers[3], now);
+ assert.equal(agyGroups.length, 4);
+ assert.equal(summary(views(decoded, now)).name, 'Antigravity');
+ assert.equal(errorText('source_missing', 'antigravity'), 'Antigravity CLI (agy) not found');
+ assert.equal(errorText('not_signed_in', 'antigravity'), 'Not signed in to Antigravity');
+ assert.equal(errorText('source_missing', 'codex'), 'OMP usage source not found');
+ assert.throws(() => decodeSnapshot(JSON.stringify({...s, providers:[...s.providers, provider('codex', [limit({id:'codex:5h:0'})])]})));
+ assert.throws(() => decodeSnapshot(JSON.stringify({...s, providers:[provider('antigravity', [limit({id:'antigravity:5h:0',tier:'unknown_tier'})])]})));
 });
