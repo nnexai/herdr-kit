@@ -360,8 +360,10 @@ name = "kit-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "rustix",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

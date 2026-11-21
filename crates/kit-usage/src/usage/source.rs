@@ -1,9 +1,6 @@
 use super::*;
-use std::process::Stdio;
-use tokio::{
-    io::AsyncRead,
-    process::{Child, Command},
-};
+use kit_core::process::{ProcessError, run_bounded};
+use tokio::process::Command;
 
 fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str]) -> PathBuf {
     if let Some(path) = override_path {
@@ -40,84 +37,26 @@ fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str])
         .unwrap_or_else(|| PathBuf::from(binary))
 }
 
-struct OwnedChild {
-    child: Child,
-    pid: Option<rustix::process::Pid>,
-    finished: bool,
-}
-impl OwnedChild {
-    fn kill_group(&mut self) {
-        if let Some(pid) = self.pid {
-            let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-        }
-        let _ = self.child.start_kill();
-    }
-}
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        if !self.finished {
-            self.kill_group();
-        }
-    }
-}
-
-async fn bounded<R: AsyncRead + Unpin>(input: R, max: u64) -> Result<Vec<u8>, QuotaErrorCode> {
-    let mut data = Vec::new();
-    input
-        .take(max + 1)
-        .read_to_end(&mut data)
-        .await
-        .map_err(|_| QuotaErrorCode::Malformed)?;
-    if data.len() as u64 > max {
-        return Err(QuotaErrorCode::Malformed);
-    }
-    Ok(data)
-}
-
 async fn run_command(
-    mut command: Command,
+    command: Command,
     stderr_limit: u64,
 ) -> Result<(Vec<u8>, Vec<u8>, std::process::ExitStatus), QuotaErrorCode> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .process_group(0);
-    let mut child = command.spawn().map_err(|_| QuotaErrorCode::SourceMissing)?;
-    let stdout = child.stdout.take().ok_or(QuotaErrorCode::Failed)?;
-    let stderr = child.stderr.take().ok_or(QuotaErrorCode::Failed)?;
-    let pid = child
-        .id()
-        .and_then(|id| i32::try_from(id).ok())
-        .and_then(rustix::process::Pid::from_raw);
-    let mut owned = OwnedChild {
-        child,
-        pid,
-        finished: false,
-    };
-    let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let (out, err, status) = tokio::try_join!(
-            bounded(stdout, 2 * 1024 * 1024),
-            bounded(stderr, stderr_limit),
-            async { owned.child.wait().await.map_err(|_| QuotaErrorCode::Failed) }
-        )?;
-        Ok((out, err, status))
-    })
+    let output = run_bounded(
+        command,
+        Duration::from_secs(30),
+        2 * 1024 * 1024,
+        stderr_limit,
+    )
     .await
-    .unwrap_or(Err(QuotaErrorCode::Timeout));
-    match result {
-        Ok((out, err, status)) => {
-            owned.finished = true;
-            Ok((out, err, status))
+    .map_err(|error| match error {
+        ProcessError::Spawn(_) => QuotaErrorCode::SourceMissing,
+        ProcessError::Timeout(_) => QuotaErrorCode::Timeout,
+        ProcessError::OutputLimitExceeded { .. } | ProcessError::Read(_) => {
+            QuotaErrorCode::Malformed
         }
-        Err(error) => {
-            owned.kill_group();
-            let _ = owned.child.wait().await;
-            owned.finished = true;
-            Err(error)
-        }
-    }
+        ProcessError::Wait(_) => QuotaErrorCode::Failed,
+    })?;
+    Ok((output.stdout, output.stderr, output.status))
 }
 
 pub(super) async fn collect_omp(
