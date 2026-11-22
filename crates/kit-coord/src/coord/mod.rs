@@ -227,9 +227,6 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 };
                 place::task_send(&ctx, &caller, &TaskId::parse(&task)?, &text)?
             }
-            TaskCommand::Trust { task } => {
-                place::task_trust(&ctx, &caller, &TaskId::parse(&task)?)?
-            }
             TaskCommand::Close {
                 task,
                 reason,

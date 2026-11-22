@@ -249,11 +249,6 @@ pub enum TaskCommand {
         #[arg(long)]
         file: Option<PathBuf>,
     },
-    /// Check a delegate's start-up trust prompt; refuses without sending input when no atomic prompt-bound confirmation is available.
-    Trust {
-        /// Task identifier.
-        task: String,
-    },
     /// Close a task with a reason and optional outcome.
     Close {
         /// Task identifier.
@@ -658,11 +653,7 @@ mod tests {
         assert!(!parses(&[
             "task", "send", "task-id", "--text", "hello", "--file", "x"
         ]));
-        assert!(parses(&["task", "trust", "task-id"]));
-        assert!(!parses(&["task", "trust", "task-id", "--key", "enter"]));
-        assert!(!parses(&[
-            "task", "trust", "task-id", "--key", "down", "--key", "enter"
-        ]));
+        assert!(!parses(&["task", "trust", "task-id"]));
     }
 
     #[test]

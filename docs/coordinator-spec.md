@@ -85,7 +85,7 @@ decide, and the CLI executes and records in one step.
 | Caller | Verbs |
 |---|---|
 | Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>` |
-| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task trust`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff` |
+| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff` |
 | Delegate | `report done\|blocked\|question\|progress [--result <file>]`, `note` |
 | Watcher | `watch` |
 
@@ -149,7 +149,7 @@ overrides the built-in one and is never written by updates; `kit-coord roles
 | `coord-default` | `omp` | `@task` | `dir` | Clear goal, known approach |
 | `coord-deep` | `omp` | `@slow` | `dir` | Open technical design, unclear cause, high cost of error |
 | `coord-design` | `omp` | `@design` | `dir` | UI/UX, interaction, layout and visual design, including open-ended work |
-| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | Antigravity CLI delegate on Gemini 4 Neon (High) |
+| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | Antigravity CLI delegate on Gemini 4 Neon (High) (with per-session `--settings` trust override for trusted repos) |
 | `claude-default` | `claude` | `haiku` | `preset` | Claude Code delegate (lightweight / default) |
 | `claude-sonnet` | `claude` | `sonnet` | `preset` | Claude Code delegate for clear-goal tasks |
 | `claude-opus` | `claude` | `opus` (`effort: high`) | `preset` | Claude Code delegate for open technical design or complex work |
@@ -199,6 +199,7 @@ effort: high
 start: agy -i {brief}
 resume: agy --conversation {session_id} -i {brief}
 session: agy-conversation
+trust: --settings '{"trustedWorkspaces":[{cwd_json}]}'
 ---
 Standing instructions for this role.
 ```
@@ -280,7 +281,7 @@ omp *(verified with `gpt-6-luna`)*:
 - The session folder then holds one `<timestamp>_<id>.jsonl`; the id is read from that file name and journaled in `task.started`.
 - Resume: `omp --session-dir <same> --resume <id> "<message>"`. The earlier conversation is available and the model is unchanged without passing `--model`.
 
-Other harnesses *(codex 0.166/0.168, Claude Code 2.1.322, Copilot CLI 1.0.103 verified 2026-11-13; Antigravity CLI `agy` 1.5.14 launch, `hc` status, `HC_TERMINAL_ID`, and transcript storage observed live 2026-11-21)*:
+Other harnesses *(codex 0.166/0.168, Claude Code 2.1.322, Copilot CLI 1.0.103 verified 2026-11-13; Antigravity CLI `agy` 1.5.14 launch, `hc` status, `HC_TERMINAL_ID`, and transcript storage observed live 2026-11-21; `agy` 1.5.14 per-session `--settings` workspace pre-trust verified live 2026-11-22)*:
 
 | | omp | agy | claude | codex | copilot |
 |---|---|---|---|---|---|
@@ -318,9 +319,8 @@ Rules that follow:
   `delivery: "new_turn"`, or resumes when dormant. Blocked/permission prompts
   remain person-owned and refuse delivery with `agent_blocked` (exit 3); no
   force flag is used.
-- A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person. The system does not type into start-up dialogs, approximate prompt checks with screen reads or timeouts, or claim confirmation on key delivery.
-- `kit-coord task trust <task>` accepts no key arguments. Because `hc` has no atomic prompt-bound trust confirmation operation, `task trust` refuses (`trust_confirmation_unavailable`, exit 3) without sending any input or writing a confirmation journal entry, and tells the coordinator which tab, space and terminal need the person. Mid-task permission prompts, errors, already-started turns (`turn >= 1`), working delegates and unblocked tasks are also refused without sending input.
-- Role files may carry verified, narrowly scoped harness-native flags that avoid start-up trust dialogs without persisting workspace trust changes (currently `codex`'s per-launch `-c` override for already-trusted repositories).
+- A task whose terminal has not reached `working` within 30 s of launch gets `task.start_blocked`. It shows on the board as needing the person. The system never types into start-up dialogs or permission prompts, never approximates prompt checks with screen reads or timeouts, and has no trust-keystroke command.
+- Role files may carry verified, narrowly scoped harness-native `trust:` flags that avoid start-up trust dialogs without persisting workspace trust changes (`codex`'s per-launch `-c` override and `agy`'s per-session `--settings '{"trustedWorkspaces":[{cwd_json}]}'` override for already-trusted repositories).
 
 ### Folder trust for owned worktrees *(verified)*
 
@@ -330,7 +330,7 @@ worktrees are laid out.
 | Harness | New worktree asks? | What removes the question |
 |---|---|---|
 | omp | No | Nothing needed |
-| agy | May ask for untrusted workspaces (`settings.json` `trustedWorkspaces`) | No verified narrowly scoped per-launch mechanism (`--settings` is unverified live; `kit-coord` never edits `settings.json` and never types into prompts). Untrusted launches surface as `task.start_blocked` and require the person in that tab (`task trust <task>` refuses without sending input and names the tab). |
+| agy | Yes, for any workspace path not listed in `settings.json` `trustedWorkspaces` (parent-folder and repo-root trust are not inherited) | Per-session `--settings '{"trustedWorkspaces":["<launch cwd>"]}'` (never saved to `~/.gemini/antigravity-cli/settings.json`). Merges top-level settings keys (preserving `model`, `colorScheme`, `toolPermission`, `allowNonWorkspaceAccess`, `altScreenMode`) while scoping `trustedWorkspaces` to the delegate's launch directory only. Applied via `agy-default.md` `trust:` only when the workstream's repo is already trusted by the person. |
 | codex | Yes, in any git repo not yet trusted. Trust of a parent folder is not inherited. | Trust belongs to the repository root, so a worktree of a trusted repo does not ask. Per launch, without saving anything: `-c 'projects={ "<repo root>" = { trust_level = "trusted" } }'` |
 | claude | Yes. Being a worktree of a trusted repo does not help. | Trust of a parent folder is inherited: trusting the worktree root once covers every worktree below it |
 | copilot | Yes | A remembered folder covers its subfolders, and also a worktree elsewhere whose main repo is inside a remembered folder. `--trust-folder` is prompt-mode (`-p`) only (not interactive `-i`), and `COPILOT_ALLOW_ALL=true` approves all tools as well |
@@ -338,7 +338,8 @@ worktrees are laid out.
 Consequences:
 
 - omp needs nothing.
-- codex: the role's start command passes the trust override for the repo root, but only when the workstream's repo is one the person already uses with the system; this saves nothing to codex's config.
+- agy: the role's start and resume commands pass `--settings '{"trustedWorkspaces":[{cwd_json}]}'` for the delegate's own launch directory when the workstream's repo is one the person already uses with the system; this merges onto the user's other settings for that session only and never modifies `~/.gemini/antigravity-cli/settings.json`. Untrusted repos omit the flag and surface as `task.start_blocked` for the person.
+- codex: the role's start and resume commands pass the trust override for the repo root, but only when the workstream's repo is one the person already uses with the system; this saves nothing to codex's config.
 - claude: `kit-coord up` checks whether the worktree root (`~/.herdr/worktrees`) is trusted and, if not, reports it as a one-time setup step for the person. The system does not write claude's config.
 - copilot: no step is needed when the main repo is already remembered; otherwise the task surfaces as `task.start_blocked`.
 - Trust is a decision about running a repo's own hooks and settings, so the system never grants it for a repo the person has not worked in.

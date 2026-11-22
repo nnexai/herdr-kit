@@ -102,9 +102,7 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
   `kit board` and decide. Start-up dialogs (including folder/workspace trust
   prompts, update offers and logins) and mid-task permission prompts
   (`task.attention blocked`) are the person's to answer: tell them which tab
-  needs them; never answer them yourself. `kit task trust <task>` refuses
-  without sending input when no atomic prompt-bound confirmation is available
-  and reports the tab, space and terminal that need the person.
+  needs them; never answer them yourself.
 - To steer a working delegate, check whether its role supports steering
   (`kit roles`). On OMP delegates after their first settled turn,
   `kit task send <task> --text "..."` or `--file <path>` pastes and presses

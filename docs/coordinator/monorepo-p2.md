@@ -120,7 +120,7 @@ paste-plus-Enter send, guarded by `--if working`. Its JSON includes
 `claude`, `codex`, `copilot`) refuse mid-turn sends with exit 4 and error code
 `steering_unsupported` until settled. Never-ready agents, startup dialogs,
 blocked states and permission prompts still refuse `task send`; no force flag
-is used. Without an atomic prompt-bound confirmation operation in `hc`,
-`task trust <task>` accepts no key arguments, refuses without sending any input
-or journaling confirmation, and names the tab that needs the person.
+is used, and `kit-coord` never types into startup dialogs or permission prompts
+(verified per-launch harness trust flags apply only to already-trusted repos;
+any remaining startup dialog surfaces as `task.start_blocked` for the person).
 

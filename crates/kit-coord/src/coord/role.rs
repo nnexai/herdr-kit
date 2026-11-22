@@ -421,6 +421,7 @@ fn expand_one(arg: &str, vars: &Vars<'_>) -> Result<String> {
             "session_id" => vars.session_id.map(str::to_owned),
             "repo_root" => vars.repo_root.map(|p| p.to_string_lossy().into_owned()),
             "cwd" => Some(vars.cwd.to_string_lossy().into_owned()),
+            "cwd_json" => serde_json::to_string(&vars.cwd.to_string_lossy()).ok(),
             "model" => vars.model.map(str::to_owned),
             "effort" => vars.effort.map(str::to_owned),
             _ => bail!("unknown placeholder: {{{name}}}"),
@@ -601,6 +602,18 @@ mod tests {
             ["agy", "--model", "gemini-4-neon-high", "-i", "do the work"]
         );
         assert_eq!(
+            agy.expand_start(&vars, true).unwrap(),
+            [
+                "agy",
+                "--settings",
+                r#"{"trustedWorkspaces":["/cwd"]}"#,
+                "--model",
+                "gemini-4-neon-high",
+                "-i",
+                "do the work"
+            ]
+        );
+        assert_eq!(
             agy.expand_resume(&vars, false).unwrap(),
             [
                 "agy",
@@ -609,6 +622,30 @@ mod tests {
                 "-i",
                 "do the work"
             ]
+        );
+        assert_eq!(
+            agy.expand_resume(&vars, true).unwrap(),
+            [
+                "agy",
+                "--settings",
+                r#"{"trustedWorkspaces":["/cwd"]}"#,
+                "--conversation",
+                "11111111-2222-4333-8444-555555555555",
+                "-i",
+                "do the work"
+            ]
+        );
+        let weird_cwd = Path::new(r#"/work/dir "quoted"\slash"#);
+        let weird_vars = Vars {
+            cwd: weird_cwd,
+            ..vars
+        };
+        let weird_argv = agy.expand_start(&weird_vars, true).unwrap();
+        assert_eq!(weird_argv[1], "--settings");
+        let parsed: serde_json::Value = serde_json::from_str(&weird_argv[2]).unwrap();
+        assert_eq!(
+            parsed,
+            serde_json::json!({"trustedWorkspaces": [r#"/work/dir "quoted"\slash"#]})
         );
 
         let agy_effort = parse(

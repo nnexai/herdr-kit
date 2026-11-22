@@ -1381,148 +1381,266 @@ fn claude_roles_expand_model_effort_and_resume_cleanly() {
 }
 
 #[test]
-fn task_trust_refuses_without_input_and_identifies_tab_for_person() {
+fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed() {
     let h = Harness::new();
-    let ws = h.open();
-    let task = format!("{ws}-t1");
+    let worktree_root = h.root().join("worktrees");
+    fs::create_dir_all(h.root().join("data/coord")).unwrap();
+    fs::write(
+        h.root().join("data/coord/config.json"),
+        json!({"worktree_root": worktree_root}).to_string(),
+    )
+    .unwrap();
+
+    // `task trust` subcommand is removed completely (CLI parse error exit 2).
+    let removed = h.run(&["task", "trust", "ws-abcdef-t1"]);
+    assert_eq!(removed.status.code(), Some(2));
+
+    let init_repo = |name: &str| {
+        let repo = h.root().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ][..],
+        ] {
+            assert!(
+                kit_core::git_env::git()
+                    .env("HOME", h.root())
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        repo
+    };
+
+    let trusted_repo = init_repo("trusted-repo");
+    let untrusted_repo = init_repo("untrusted-repo");
     let brief = h.root().join("brief");
-    fs::write(&brief, "Work in new worktree").unwrap();
-    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    fs::write(&brief, "Work in owned worktree").unwrap();
+
+    // 1. Trusted repo (person has it open in an unowned Herdr space):
+    //    `agy-default` receives `--settings '{"trustedWorkspaces":["<worktree cwd>"]}'`
+    //    on both initial launch and cold resume, scoped only to its launch directory.
+    let ws_trusted = h.ok(&[
+        "ws",
+        "open",
+        "--title",
+        "Trusted",
+        "--target",
+        "main",
+        "--repo",
+        trusted_repo.to_str().unwrap(),
+    ])["ws"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let task_trusted = format!("{ws_trusted}-t1");
+    let conv_id = "22222222-3333-4444-8555-666666666666";
+    let result_file = h
+        .root()
+        .join(format!("data/coord/results/{task_trusted}.md"));
+    let logs = h.root().join(format!(
+        ".gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs"
+    ));
+    fs::create_dir_all(&logs).unwrap();
+    let transcript_line = json!({
+        "step_index": 0,
+        "source": "USER_EXPLICIT",
+        "type": "USER_INPUT",
+        "status": "DONE",
+        "content": format!(
+            "<USER_REQUEST>\nWork in owned worktree\n\n---\nReporting (fixed by the coordinator system):\n\n- Long results go into {}; add --result {} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>",
+            result_file.display(),
+            result_file.display()
+        )
+    });
+    fs::write(
+        logs.join("transcript_full.jsonl"),
+        format!("{transcript_line}\n"),
+    )
+    .unwrap();
+
+    h.queue(
+        "herdr-app",
+        "ls",
+        &json!({"spaces":[{"id":"person-sp","name":"Person Repo","folder":trusted_repo,"machine":null,"tabs":[]}]}),
+    );
     let mut term: Value =
         serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
-    term["address"] = json!("t7");
+    term["address"] = json!("t10");
     term["state"] = json!("live");
-    term["turn"] = json!(0);
-    term["reported"] = json!(false);
-    term["status"] = Value::Null;
-    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
-    h.queue("hc", "run", &json!({"address":"t7"}));
+    term["created_ms"] = json!(0);
+    term["turn"] = json!(1);
+    term["reported"] = json!(true);
+    term["status"] = json!({"app":"antigravity","state":"idle"});
+    term["labels"] = json!({"herdr.space":"sp","coord.managed":"1","coord.role":"delegate","coord.ws":ws_trusted,"coord.task":task_trusted});
+    h.queue("hc", "run", &json!({"address":"t10"}));
     h.queue("hc", "get", &term);
 
-    h.ok(&[
+    let started = h.ok(&[
         "task",
         "start",
         "--ws",
-        &ws,
+        &ws_trusted,
         "--rung",
-        "3",
+        "4",
         "--reason",
-        "work",
+        "isolated worktree",
         "--brief",
         brief.to_str().unwrap(),
         "--role",
         "agy-default",
-        "--space",
-        "existing",
+        "--branch",
+        "feat/agy-trust",
         "--reject",
         "1=no",
         "--reject",
         "2=no",
+        "--reject",
+        "3=no",
     ]);
+    assert_eq!(started["session"], conv_id);
+    let expected_cwd = worktree_root.join("trusted-repo/feat-agy-trust");
+    let expected_settings = json!({"trustedWorkspaces": [expected_cwd]}).to_string();
 
-    // Before watcher records task.start_blocked: refused with exit 4 (not_startup_dialog).
-    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 4);
-
-    // Delegate callers are forbidden from invoking task trust.
-    rail_error(
-        h.command(&["task", "trust", &task])
-            .env("HC_TERMINAL_ID", "t7")
-            .output()
-            .unwrap(),
-        "forbidden_caller",
-        3,
-    );
-
-    // Arbitrary or batched --key arguments are rejected at CLI parse time (exit 2).
-    let key_arg = h.run(&["task", "trust", &task, "--key", "enter"]);
-    assert_eq!(key_arg.status.code(), Some(2));
-    let batched_keys = h.run(&["task", "trust", &task, "--key", "down", "--key", "enter"]);
-    assert_eq!(batched_keys.status.code(), Some(2));
-
-    // Append watcher-detected task.start_blocked to the journal and invalidate state cache.
-    let journal_dir = h.root().join("data/coord/journal");
-    let journal_file = fs::read_dir(&journal_dir)
+    let start_run = h
+        .calls("hc")
+        .lines()
+        .find(|l| l.contains("\trun\t"))
         .unwrap()
-        .flatten()
-        .find(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .to_owned();
+    let start_argv: Vec<_> = start_run.split('\t').collect();
+    let sep = start_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &start_argv[sep + 1..sep + 7],
+        &[
+            "agy",
+            "--settings",
+            expected_settings.as_str(),
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
+    );
+
+    // Cold resume also passes `--settings` for the worktree cwd (since `--settings` is
+    // session-only and never persisted) while still omitting `--model`.
+    let mut resumed_term = term.clone();
+    resumed_term["address"] = json!("t11");
+    resumed_term["turn"] = json!(0);
+    h.queued("hc", "get", 1, &json!({"error":{"kind":"not_found"}}), 3);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &json!({"spaces":[{"id":"person-sp","name":"Person Repo","folder":trusted_repo,"machine":null,"tabs":[]}]}),
+    );
+    h.queued("hc", "run", 1, &json!({"address":"t11"}), 0);
+    h.queued("hc", "get", 2, &resumed_term, 0);
+    let resumed = h.ok(&["task", "send", &task_trusted, "--text", "continue"]);
+    assert_eq!(resumed["session"], conv_id);
+    let runs: Vec<_> = h
+        .calls("hc")
+        .lines()
+        .filter(|l| l.contains("\trun\t"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(runs.len(), 2);
+    let resume_argv: Vec<_> = runs[1].split('\t').collect();
+    let rsep = resume_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &resume_argv[rsep + 1..rsep + 7],
+        &[
+            "agy",
+            "--settings",
+            expected_settings.as_str(),
+            "--conversation",
+            conv_id,
+            "-i"
+        ]
+    );
+    assert!(!resume_argv[rsep + 1..rsep + 7].contains(&"--model"));
+
+    // 2. Untrusted repo (not open in any person-owned Herdr space):
+    //    `agy-default` MUST NOT receive `--settings`.
+    let ws_untrusted = h.ok(&[
+        "ws",
+        "open",
+        "--title",
+        "Untrusted",
+        "--target",
+        "main",
+        "--repo",
+        untrusted_repo.to_str().unwrap(),
+    ])["ws"]
+        .as_str()
         .unwrap()
-        .path();
-    let entries = h.journal();
-    let sb_seq = entries.last().unwrap()["seq"].as_u64().unwrap() + 1;
-    let sb_entry = json!({
-        "v": 1,
-        "seq": sb_seq,
-        "ts_ms": 999999,
-        "actor": "watcher",
-        "kind": "task.start_blocked",
-        "ws": ws,
-        "task": task,
-        "data": {"terminal": "t7", "after_secs": 30}
-    });
-    let mut existing = fs::read_to_string(&journal_file).unwrap();
-    existing.push_str(&format!("{sb_entry}\n"));
-    fs::write(&journal_file, existing).unwrap();
-    let _ = fs::remove_file(h.root().join("data/coord/state.json"));
-    let journal_len_before = h.journal().len();
-
-    // Even with active task.start_blocked and turn == 0, task trust refuses without sending
-    // any input, without screen-read heuristics, and without journaling confirmation, and
-    // reports the exact tab/terminal/space needing the person.
-    let refused = h.run(&["task", "trust", &task]);
-    assert_eq!(refused.status.code(), Some(3));
-    let err: Value = serde_json::from_slice(&refused.stderr).unwrap();
-    assert_eq!(err["error"]["code"], "trust_confirmation_unavailable");
-    let msg = err["error"]["message"].as_str().unwrap();
-    assert!(
-        msg.contains("no input was sent"),
-        "unexpected message: {msg}"
+        .to_owned();
+    let task_untrusted = format!("{ws_untrusted}-t1");
+    h.queue(
+        "herdr-app",
+        "ls",
+        &json!({"spaces":[{"id":"person-sp","name":"Person Repo","folder":trusted_repo,"machine":null,"tabs":[]}]}),
     );
-    assert!(
-        msg.contains("tab \"Work in new worktree\""),
-        "missing tab name: {msg}"
+    let mut uterm = term.clone();
+    uterm["address"] = json!("t12");
+    uterm["labels"] = json!({"herdr.space":"sp2","coord.managed":"1","coord.role":"delegate","coord.ws":ws_untrusted,"coord.task":task_untrusted});
+    h.queue("hc", "run", &json!({"address":"t12"}));
+    h.queue("hc", "get", &uterm);
+    h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_untrusted,
+        "--rung",
+        "4",
+        "--reason",
+        "isolated worktree",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--branch",
+        "feat/untrusted",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+        "--reject",
+        "3=no",
+    ]);
+    let all_runs: Vec<_> = h
+        .calls("hc")
+        .lines()
+        .filter(|l| l.contains("\trun\t"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(all_runs.len(), 3);
+    let untrusted_argv: Vec<_> = all_runs[2].split('\t').collect();
+    let usep = untrusted_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(
+        &untrusted_argv[usep + 1..usep + 5],
+        &["agy", "--model", "gemini-4-neon-high", "-i"]
     );
-    assert!(msg.contains("tab tab1"), "missing tab id: {msg}");
-    assert!(msg.contains("terminal t7"), "missing terminal: {msg}");
+    assert!(!untrusted_argv[usep + 1..].contains(&"--settings"));
+
+    // No persistent settings.json was created or modified.
     assert!(
-        msg.contains("space \"Existing\""),
-        "missing space name: {msg}"
+        !h.root()
+            .join(".gemini/antigravity-cli/settings.json")
+            .exists()
     );
-
-    // Mid-task permission prompt (status: blocked) is strictly refused and names the tab.
-    term["status"] = json!({"app":"antigravity","state":"blocked","msg":"Run rm -rf?"});
-    h.queue("hc", "get", &term);
-    let blocked = h.run(&["task", "trust", &task]);
-    assert_eq!(blocked.status.code(), Some(3));
-    let blocked_err: Value = serde_json::from_slice(&blocked.stderr).unwrap();
-    assert_eq!(blocked_err["error"]["code"], "agent_blocked");
-    assert!(
-        blocked_err["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("tab tab1")
-    );
-
-    // Already-turned delegate (turn >= 1) is strictly refused.
-    term["status"] = json!({"app":"antigravity","state":"idle"});
-    term["turn"] = json!(1);
-    term["reported"] = json!(true);
-    h.queue("hc", "get", &term);
-    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 3);
-
-    // Working delegate (turn 0, status working) is refused.
-    term["turn"] = json!(0);
-    term["status"] = json!({"app":"antigravity","state":"working"});
-    h.queue("hc", "get", &term);
-    rail_error(h.run(&["task", "trust", &task]), "not_startup_dialog", 3);
-
-    // Zero input or screen-read calls were ever made, and no confirmation was journaled.
-    let calls = h.calls("hc");
-    assert!(!calls.contains("\tkeys\t"), "unexpected hc keys: {calls}");
-    assert!(!calls.contains("\tsend\t"), "unexpected hc send: {calls}");
-    assert!(!calls.contains("\tread\t"), "unexpected hc read: {calls}");
-    let journal = h.journal();
-    assert_eq!(journal.len(), journal_len_before);
-    assert!(!journal.iter().any(|e| e["kind"] == "task.trust_confirmed"));
 }
 
 #[test]

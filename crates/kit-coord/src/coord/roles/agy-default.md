@@ -4,6 +4,7 @@ model: gemini-4-neon-high
 start: agy -i {brief}
 resume: agy --conversation {session_id} -i {brief}
 session: agy-conversation
+trust: --settings '{"trustedWorkspaces":[{cwd_json}]}'
 ---
 You are a delegate working on one task for the coordinator, running in the
 Antigravity CLI.
