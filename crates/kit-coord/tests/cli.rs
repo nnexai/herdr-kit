@@ -608,15 +608,18 @@ fn up_is_idempotent_with_live_managed_terminals() {
     main["address"] = json!("tc");
     main["labels"] = json!({"coord.managed":"1","coord.role":"coordinator"});
     h.queued("hc", "get", 1, &json!({"error":{"kind":"not_found"}}), 3);
+    // Responses in call order. The second `up` first checks whether the
+    // recorded coordinator is live (6) before it touches the watcher.
     for (n, t) in [
         (2, &watcher),
         (3, &main),
         (4, &watcher),
         (5, &main),
-        (6, &watcher),
-        (7, &main),
-        (8, &watcher),
-        (9, &main),
+        (6, &main),
+        (7, &watcher),
+        (8, &main),
+        (9, &watcher),
+        (10, &main),
     ] {
         h.queued("hc", "get", n, t, 0);
     }
@@ -625,7 +628,8 @@ fn up_is_idempotent_with_live_managed_terminals() {
     h.queued("hc", "run", 2, &json!({"address":"tc"}), 0);
     h.queue("herdr-app","ls",&json!({"spaces":[{"id":"fixture","name":"fixture","folder":h.root(),"machine":null,"tabs":[{"id":"wt","name":"watcher","terminals":[{"terminal":"tw","pane":"p1"}]},{"id":"ct","name":"coordinator","terminals":[{"terminal":"tc","pane":"p2"}]}]}]}));
     h.ok(&["up"]);
-    h.ok(&["up"]);
+    let second = h.run(&["up"]);
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
     let calls = h.calls("hc");
     let runs: Vec<_> = calls.lines().filter(|l| l.contains("\trun\t")).collect();
     assert_eq!(runs.len(), 2);

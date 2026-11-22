@@ -522,6 +522,22 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
     }
     crate::deployment::ensure_current(&ctx.root)?;
     let j = ctx.journal()?;
+    // Decide before changing anything whether a coordinator must be launched
+    // and refuse a missing harness then; a live coordinator needs no check.
+    let mut launch_role = {
+        let rec = j.read_state()?.coordinator;
+        let live = match rec.terminal.as_deref() {
+            Some(id) => ctx.hc.get(id)?.is_some_and(|t| same_coordinator(&t, &rec)),
+            None => false,
+        };
+        let unrecorded =
+            find(ctx, "coordinator")?.is_some_and(|t| rec.terminal.as_deref() != Some(&t.address));
+        if live || unrecorded {
+            None
+        } else {
+            Some(coordinator_role(ctx)?)
+        }
+    };
     let cfg = config_autostart(ctx, &j, true)?;
     let (sp, intent) = space(ctx, &j)?;
     let mut actions = Vec::new();
@@ -571,7 +587,11 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
             )?;
             actions.push("coordinator_recovered".into());
         } else {
-            start_with_tab(ctx, &j, "up", rec.tab.clone(), coordinator_role(ctx)?)?;
+            let role = match launch_role.take() {
+                Some(role) => role,
+                None => coordinator_role(ctx)?,
+            };
+            start_with_tab(ctx, &j, "up", rec.tab.clone(), role)?;
             actions.push("coordinator_started".into());
         }
     }
@@ -1153,6 +1173,17 @@ mod tests {
             cause: None,
             path: crate::coord::stub_path(root),
         };
+        // A cold start with the coordinator harness missing changes nothing.
+        fs::remove_file(root.join("stub-bin/fake")).unwrap();
+        let refused = up(&ctx, false).unwrap_err();
+        assert_eq!(
+            super::super::error::exit_of(&refused).0,
+            "harness_unavailable"
+        );
+        assert!(world.borrow().specs.is_empty());
+        assert!(Config::load(&paths).unwrap().is_none());
+        assert!(ctx.journal().unwrap().read_after(0).unwrap().is_empty());
+        crate::coord::stub_path(root);
         assert_eq!(up(&ctx, false).unwrap()["state"], "running");
         {
             let w = world.borrow();
