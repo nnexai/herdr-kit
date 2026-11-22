@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset, label, errorText } from '../mods/kit-usage/model.js';
+import { decodeSnapshot, usedFraction, credits, pace, groups, views, summary, staleLimit, reset, label, errorText, hoverSummary, limitDescription } from '../mods/kit-usage/model.js';
 const now = 10_000_000;
 const limit = (x={}) => ({id:'a',window:'5h',tier:null,unit:'percent',used_fraction:0.5,used:null,limit:null,remaining:null,unlimited:false,level:'ok',resets_at_ms:now+3600000,...x});
 const provider = (name,limits,extra={}) => ({provider:name,state:'available',error:null,fetched_at_ms:now-1000,stale:false,accounts:[{fetched_at_ms:now-1000,limits}],...extra});
@@ -70,4 +70,64 @@ test('antigravity snapshots decode cleanly, preserve group buckets, and format l
  assert.equal(errorText('source_missing', 'codex'), 'OMP usage source not found');
  assert.throws(() => decodeSnapshot(JSON.stringify({...s, providers:[...s.providers, provider('codex', [limit({id:'codex:5h:0'})])]})));
  assert.throws(() => decodeSnapshot(JSON.stringify({...s, providers:[provider('antigravity', [limit({id:'antigravity:5h:0',tier:'unknown_tier'})])]})));
+});
+test('hoverSummary stays concise while preserving peak provider, credits, stale and accessible name', () => {
+ const agyLimits = [
+  limit({id:'antigravity:weekly:0',window:'weekly',tier:'gemini',used_fraction:0.5623}),
+  limit({id:'antigravity:5h:1',window:'5h',tier:'gemini',used_fraction:0.0252}),
+  limit({id:'antigravity:weekly:2',window:'weekly',tier:'claude_gpt',used_fraction:0}),
+  limit({id:'antigravity:5h:3',window:'5h',tier:'claude_gpt',used_fraction:0}),
+  limit({id:'antigravity:weekly:4',window:'weekly',tier:'gemini_argon',used_fraction:0}),
+ ];
+ const s = {
+  schema_version: 1,
+  generated_at_ms: now,
+  collecting: false,
+  providers: [
+   provider('codex', [limit({id:'codex:7d:0',window:'7d',used_fraction:0.05})]),
+   provider('claude', [limit({id:'claude:5h:0',window:'5h',used_fraction:0.32}), limit({id:'claude:7d:1',window:'7d',used_fraction:0.46})]),
+   provider('copilot', [limit({id:'copilot:monthly:0',window:'monthly',unit:'credits',used_fraction:0.0233,used:35,limit:1500,remaining:1465})]),
+   provider('antigravity', agyLimits),
+  ],
+ };
+ const vm = hoverSummary(views(s, now), s);
+ assert.equal(vm.state, 'ready');
+ assert.equal(vm.provider, 'Antigravity');
+ assert.equal(vm.window, 'Gemini Weekly');
+ assert.equal(vm.amount, '56.23%');
+ assert.equal(vm.providerCount, 4);
+ assert.equal(vm.additional, 3);
+ assert.match(vm.hint, /4 providers/);
+ // Concise summary: does not dump other providers or all windows into hover text.
+ assert.doesNotMatch(vm.tooltip, /Codex|Claude & GPT|Gemini Argon/);
+ assert.ok(vm.tooltip.length < 90);
+ assert.match(vm.accessibilityLabel, /Antigravity Gemini Weekly 56\.23% used/);
+ assert.match(vm.accessibilityLabel, /4 providers/);
+
+ const offlineVm = hoverSummary(views(s, now, true), s, { offline: true });
+ assert.equal(offlineVm.stale, true);
+ assert.match(offlineVm.tooltip, /\(stale\)/);
+ assert.match(offlineVm.accessibilityLabel, /stale/);
+
+ const loadingVm = hoverSummary(views(null, now), null, { failed: false });
+ assert.equal(loadingVm.state, 'loading');
+ assert.match(loadingVm.accessibilityLabel, /Reading subscription limits/);
+
+ const failedVm = hoverSummary(views(null, now), null, { failed: true });
+ assert.equal(failedVm.state, 'unavailable');
+ assert.match(failedVm.accessibilityLabel, /unavailable/);
+});
+test('limitDescription keeps full assistive semantics for credits, resets, stale and pace', () => {
+ const copilot = provider('copilot', [limit({id:'copilot:monthly:0',window:'monthly',unit:'credits',used_fraction:0.0233,used:35,limit:1500,remaining:1465,resets_at_ms:null})]);
+ const copilotDesc = limitDescription(copilot.accounts[0].limits[0], copilot.accounts[0], copilot, now, false, 'Copilot');
+ assert.equal(copilotDesc, 'Copilot, Monthly, 2.33% used, 35 of 1,500 AI credits used');
+
+ const hot = provider('claude', [limit({id:'claude:5h:0',window:'5h',used_fraction:0.85,resets_at_ms:now + 3600000})]);
+ const hotDesc = limitDescription(hot.accounts[0].limits[0], hot.accounts[0], hot, now, false, 'Claude');
+ assert.match(hotDesc, /Claude, 5h, 85% used/);
+ assert.match(hotDesc, /resets /);
+ assert.match(hotDesc, /estimated to run out in /);
+
+ const unlimited = provider('copilot', [limit({id:'copilot:monthly:0',window:'monthly',unit:'credits',used_fraction:null,used:null,limit:null,remaining:null,unlimited:true,resets_at_ms:null})]);
+ assert.equal(limitDescription(unlimited.accounts[0].limits[0], unlimited.accounts[0], unlimited, now, false, 'Copilot'), 'Copilot, Monthly, Unlimited');
 });

@@ -164,10 +164,12 @@ would restart them as part of that cutover.
 
 The named layout preserves the existing 28px Herdr statusbar. Machine, branch
 and agent indicators stay on the left. On the right, the compact Limits
-readout sits beside the coordinator status. Click Limits to view all providers,
-windows, credits and estimates in the native details dialog. Escape/Close
-dismisses it. Narrow bars omit the provider name instead of shrinking the text;
-the command-palette shortcut still works.
+readout sits beside the coordinator status. Resting the pointer on Limits shows
+a compact anchored hover card with the highest window, freshness and provider
+count; click Limits to view all providers, windows, credits and estimates in
+the native details dialog (aligned meters at normal width, stacked meters when
+narrow). Escape/Close dismisses it. Narrow bars omit the provider name instead
+of shrinking the text; the command-palette shortcut still works.
 
 Rust runs `omp usage --json --redact --no-extensions` for Codex, Claude and
 Copilot, and `agy -p /usage --output-format json --print-timeout 25s` for

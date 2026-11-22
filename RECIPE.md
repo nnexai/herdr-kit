@@ -13,10 +13,12 @@ Keep the stock Herdr Spaces/Agents sidebar, tab bar, terminal panes, Files and
 Changes panels. In the existing 28px statusbar, preserve machine, branch and
 agent indicators on the left. Place the compact Limits readout beside the
 coordinator status on the right, with no extra row. Use the current theme and
-normal Herdr UI font. Narrow bars omit the provider name. Click for a native
-subscription-details dialog with all anonymous accounts,
-source timestamps, windows, meters, AIC, resets and conditional exhaustion
-estimates. Unknown/unlimited/zero/unavailable/stale remain distinct.
+normal Herdr UI font. Narrow bars omit the provider name. Hovering shows a
+compact anchored peak-usage card rather than a single-line dump of every
+window; click for a native subscription-details dialog with recessed provider
+sections, aligned full-width meters, all anonymous accounts, source timestamps,
+windows, AIC, resets and conditional exhaustion estimates.
+Unknown/unlimited/zero/unavailable/stale remain distinct.
 
 ## How it behaves
 

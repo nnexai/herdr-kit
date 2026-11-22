@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Redesign the usage statusbar hover treatment and Subscription limits details
+  overlay (`kit-usage`, `herdr-kit-bar`): replace the giant single-line hover
+  tooltip listing every limit with a concise, trigger-anchored `HoverCard`
+  showing the peak provider/window, meter, timestamp and provider count while
+  keeping a concise accessible button name; rework the details dialog into a
+  compact header, recessed provider sections with aligned full-width native
+  `Progress` meters, tabular monospace percentages, clear reset/credit/pace
+  metadata, responsive narrow stacking, and immediate discoverability of all
+  providers (including Antigravity).
 - Improve readability across the Coordinator dialog (`kit-coord-ui`) while
   preserving its Mission Log layout and interactions: harmonize a 3-tier
   contrast ramp and recessed/elevated surfaces for both dark and light themes

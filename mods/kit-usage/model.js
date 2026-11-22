@@ -110,3 +110,78 @@ export function errorText(error, provider = null) {
   }
   return ({source_missing:'OMP usage source not found',not_signed_in:'Not signed in to OMP',usage_unavailable:'Usage unavailable',unsupported:'Not reported for this account',failed:'Usage check failed',timeout:'Usage check timed out',malformed:'Invalid usage report',cache_unavailable:'Shared usage cache unavailable'})[error] || 'Usage unavailable';
 }
+export function providerStatusText(p) {
+  return ({
+    pending: '…',
+    not_signed_in: p.provider === 'antigravity' ? 'Not signed in to Antigravity' : 'Not signed in to OMP',
+    unsupported: 'Not reported for this account',
+    unavailable: errorText(p.error, p.provider),
+  })[p.state] || 'No usage report available';
+}
+export function limitDescription(l, account, p, now, offline = false, providerName = null) {
+  const stale = offline || p.stale || p.error !== null || staleLimit(l, account.fetched_at_ms, now);
+  const used = usedFraction(l);
+  const estimate = pace(l, now, stale);
+  const r = reset(l.resets_at_ms, now);
+  const c = credits(l, true);
+  const prefix = providerName ? `${providerName}, ` : '';
+  const usageText = l.unlimited ? 'Unlimited' : used === null ? 'Usage unknown' : `${value(l)} used`;
+  return `${prefix}${label(l)}, ${usageText}${c ? `, ${c}` : ''}${r ? `, ${r}` : ''}${stale ? ', stale' : ''}${estimate?.runsOutMs ? `, estimated to run out in ${span(estimate.runsOutMs)}` : ''}`;
+}
+export function hoverSummary(all, snapshot, { offline = false, failed = false } = {}) {
+  const visible = all.filter(v => v.provider.state !== 'not_signed_in');
+  const worst = summary(all);
+  const selected = worst && (bestSegment(worst.segments, true) || bestSegment(worst.segments));
+  const state = snapshot ? 'ready' : failed ? 'unavailable' : 'loading';
+  const stale = Boolean(offline || selected?.stale || worst?.provider.stale);
+  const providerCount = visible.length;
+  const updated = snapshot ? formatTime(snapshot.generated_at_ms) : null;
+  const amount = selected ? value(selected.limit) + (selected.stale ? ' ~' : '') : worst?.provider.state === 'unsupported' ? 'n/a' : '—';
+  const role = selected?.used > 0.95 ? 'blocked' : selected?.used > 0.8 ? 'working' : 'dim';
+  const windowLabel = selected ? label(selected.limit) : null;
+  const creditText = selected ? credits(selected.limit, false) : null;
+  const unlimited = Boolean(selected?.limit?.unlimited);
+  const used = selected?.used ?? null;
+  const hint = providerCount > 1 ? `${providerCount} providers · Click for all limits` : 'Click for details';
+  let status = null, tooltip, accessibilityLabel;
+  if (!snapshot) {
+    status = failed ? 'Usage unavailable' : 'Reading local usage…';
+    tooltip = failed ? 'Subscription limits unavailable. Click for details.' : 'Reading subscription limits…';
+    accessibilityLabel = failed ? 'Subscription limits unavailable. Open details' : 'Reading subscription limits. Open details';
+  } else if (!providerCount) {
+    status = 'No providers signed in';
+    tooltip = 'Subscription limits: no providers signed in. Click for details.';
+    accessibilityLabel = 'Subscription limits, no providers signed in. Open details';
+  } else if (selected) {
+    const peakText = unlimited ? 'unlimited' : used === null ? 'usage unknown' : `${value(selected.limit)} used`;
+    const staleTag = stale ? ' (stale)' : '';
+    const countTag = providerCount > 1 ? ` · ${providerCount} providers` : '';
+    tooltip = `${worst.name} ${windowLabel}: ${peakText}${staleTag}${countTag}. Click for details.`;
+    accessibilityLabel = `Subscription limits, highest ${worst.name} ${windowLabel} ${peakText}${creditText ? `, ${creditText}` : ''}${stale ? ', stale' : ''}${providerCount > 1 ? `, ${providerCount} providers` : ''}. Open details`;
+  } else {
+    const stateText = worst ? `${worst.name}: ${providerStatusText(worst.provider)}` : 'No usage report available';
+    status = stateText;
+    tooltip = `Subscription limits: ${stateText}. Click for details.`;
+    accessibilityLabel = `Subscription limits, ${stateText}${offline ? ', stale' : ''}. Open details`;
+  }
+  return {
+    state,
+    provider: worst?.name ?? null,
+    window: windowLabel,
+    amount,
+    used,
+    unlimited,
+    credits: creditText,
+    role,
+    stale,
+    offline: Boolean(offline),
+    collecting: Boolean(snapshot?.collecting),
+    providerCount,
+    additional: Math.max(0, providerCount - 1),
+    updated,
+    status,
+    hint,
+    tooltip,
+    accessibilityLabel,
+  };
+}

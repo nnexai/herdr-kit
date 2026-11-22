@@ -1,5 +1,5 @@
 import { View, div, svg } from 'gpui-kit';
-import { h_flex, Button } from 'gpui-base';
+import { h_flex, v_flex, Button, HoverCard } from 'gpui-base';
 import { agents, spaces, theme, props, shared, run, exec } from 'herdr';
 import { MOD_NAME } from './runtime.js';
 
@@ -11,6 +11,57 @@ let maintaining = false;
 function read(key, mod) {
   const value = mod ? shared(key) : null;
   return value?.schema_version === 1 && value.mod === mod ? value : null;
+}
+
+const hex6 = color => {
+  if (typeof color !== 'string' || !color.startsWith('#')) return null;
+  if (color.length === 4) return '#' + [...color.slice(1)].map(c => c + c).join('');
+  return color.length >= 7 ? color.slice(0, 7) : null;
+};
+const tint = (color, alpha) => {
+  const base = hex6(color);
+  return base ? base + alpha : color;
+};
+const fillPercent = used => used <= 0 ? 0 : Math.min(100, Math.max(1.5, Math.round(used * 10000) / 100));
+
+function usageHoverCard(vm, t) {
+  const hover = vm?.hover;
+  const fg = t.foreground || '#eeeeef';
+  const borderStrong = tint(fg, '22') || t.border;
+  const track = tint(fg, '16') || t.border;
+  const card = v_flex().w(260).p(10).gap(6).rounded(7).border(1).border_color(borderStrong).bg(t.popover || t.chrome).shadow_lg();
+  const stamp = hover?.updated ? (hover.stale ? `Stale · ${hover.updated}` : hover.updated) : (hover?.collecting ? 'Checking…' : '');
+  const header = h_flex().gap(8).items_center().justify_between()
+    .child(div().text_size(12).font_semibold().text_color(fg).child('Subscription limits'));
+  if (stamp) {
+    header.child(div().font_family('JetBrains Mono').flex_shrink_0().text_size(11).text_color(hover?.stale ? t.working : t.muted).child(stamp));
+  }
+  card.child(header);
+  if (hover?.state === 'ready' && hover.provider && hover.window) {
+    const roleColor = hover.role === 'blocked' ? t.blocked : hover.role === 'working' ? t.working : hover.used === 0 ? t.muted : fg;
+    const peak = v_flex().gap(4)
+      .child(h_flex().gap(6).items_baseline().min_w(0)
+        .child(div().flex_shrink_0().text_size(12).font_medium().text_color(fg).child(hover.provider))
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(hover.window))
+        .child(div().font_family('JetBrains Mono').flex_shrink_0().text_size(12).font_semibold().text_color(roleColor).child(hover.amount)));
+    if (hover.used !== null && !hover.unlimited) {
+      const visualPct = fillPercent(hover.used);
+      const barColor = hover.used > 0.95 ? t.blocked : hover.used > 0.8 ? t.working : t.accent;
+      const groove = div().w_full().h(4).rounded(2).bg(track).overflow_hidden();
+      if (visualPct > 0) groove.child(div().w(`${visualPct}%`).h_full().rounded(2).bg(barColor));
+      peak.child(groove);
+    }
+    if (hover.credits) {
+      peak.child(div().text_size(11).text_color(t.muted).child(hover.credits));
+    }
+    card.child(peak);
+  } else {
+    const status = hover?.status
+      || (vm?.state === 'unavailable' ? 'Usage unavailable' : vm?.state === 'ready' ? 'No providers signed in' : 'Reading local usage…');
+    card.child(div().text_size(11.5).text_color(t.muted).child(status));
+  }
+  card.child(div().pt(6).border_t(1).border_color(t.border).text_size(11).text_color(t.muted).child(hover?.hint || 'Click for details'));
+  return card;
 }
 
 export default class KitBar extends View {
@@ -80,7 +131,7 @@ export default class KitBar extends View {
   usage(t) {
     const vm = read(usageKey, this.options.usage_mod);
     const narrow = this.width < 500;
-    const label = vm?.label ?? 'Reading subscription limits';
+    const label = vm?.label ?? 'Reading subscription limits. Open details';
     const content = h_flex().gap(5).items_center().child('Limits');
     if (!vm || vm.state === 'loading') content.child('…');
     else if (vm.state === 'unavailable') content.child('unavailable');
@@ -89,13 +140,15 @@ export default class KitBar extends View {
       content.child(div().text_color(t[vm.role] || t.dim).child(vm.amount));
       if (vm.additional) content.child(`+${vm.additional}`);
     }
-    return Button.new('usage-readout').track_focus(this.usageFocus).tab_index(0)
+    const button = Button.new('usage-readout').track_focus(this.usageFocus).tab_index(0)
       .flex_shrink_0().h(26).px(6).items_center().justify_end().overflow_hidden()
       .bg(t.chrome).rounded(3).border(1)
       .border_color(this.usageFocus.is_focused() ? t.accent : t.chrome)
       .hover(s => s.bg(t.hover).text_color(t.foreground)).text_color(t.dim)
-      .tooltip(label).accessibility_label(label)
+      .accessibility_label(label)
       .on_click(() => run(`${this.options.usage_mod}.show`, {})).child(content);
+    return HoverCard.new('usage-hover').anchor('bottom_right').open_delay(350).close_delay(120)
+      .trigger(button).content(usageHoverCard(vm, t));
   }
   render() {
     const t = theme(), space = spaces().find(s => s.active), list = agents();
