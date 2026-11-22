@@ -1702,3 +1702,481 @@ fn codex_compact_model_option_conflict_is_rejected_and_standalone_compact_model_
     assert_eq!(compact["harness"], "codex");
     assert_eq!(compact["model"], "gpt-6-luna");
 }
+
+#[test]
+fn trust_override_is_confined_to_workstream_repo_checkouts() {
+    let h = Harness::new();
+    let worktree_root = h.root().join("worktrees");
+    fs::create_dir_all(h.root().join("data/coord")).unwrap();
+    fs::write(
+        h.root().join("data/coord/config.json"),
+        json!({"worktree_root": worktree_root}).to_string(),
+    )
+    .unwrap();
+
+    let init_repo = |name: &str| {
+        let repo = h.root().join(name);
+        fs::create_dir_all(&repo).unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ][..],
+        ] {
+            assert!(
+                kit_core::git_env::git()
+                    .env("HOME", h.root())
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        repo
+    };
+
+    let repo_a = init_repo("repo-a");
+    let repo_b = init_repo("repo-b");
+    let wt_a = h.root().join("wt-a");
+    assert!(
+        kit_core::git_env::git()
+            .env("HOME", h.root())
+            .arg("-C")
+            .arg(&repo_a)
+            .args([
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "existing-wt",
+                wt_a.to_str().unwrap(),
+                "HEAD",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Verify trust confinement").unwrap();
+
+    let spaces_snapshot = |tab_term: Option<(&str, &str)>| {
+        let make_tabs = |space_id: &str| match tab_term {
+            Some((sid, tid)) if sid == space_id => {
+                json!([{"id":"tab1","name":"Tab","terminals":[{"terminal":tid,"pane":"p1"}]}])
+            }
+            _ => json!([]),
+        };
+        json!({
+            "spaces": [
+                {"id": "person-a", "name": "Repo A", "folder": repo_a, "machine": null, "tabs": make_tabs("person-a")},
+                {"id": "space-b", "name": "Repo B", "folder": repo_b, "machine": null, "tabs": make_tabs("space-b")},
+                {"id": "space-wt-a", "name": "WT A", "folder": wt_a, "machine": null, "tabs": make_tabs("space-wt-a")}
+            ]
+        })
+    };
+
+    let write_agy_transcript = |conv_id: &str, task_id: &str| {
+        let result_file = h.root().join(format!("data/coord/results/{task_id}.md"));
+        let logs = h.root().join(format!(
+            ".gemini/antigravity-cli/brain/{conv_id}/.system_generated/logs"
+        ));
+        fs::create_dir_all(&logs).unwrap();
+        let line = json!({
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "content": format!(
+                "<USER_REQUEST>\nVerify trust confinement\n\n---\nReporting (fixed by the coordinator system):\n\n- Long results go into {}; add --result {} to the report.\n- After reporting, stop and wait: a follow-up may arrive in this session.\n</USER_REQUEST>",
+                result_file.display(),
+                result_file.display()
+            )
+        });
+        fs::write(logs.join("transcript_full.jsonl"), format!("{line}\n")).unwrap();
+    };
+
+    let write_codex_rollout = |file_name: &str, session_id: &str, cwd: &Path| {
+        let dir = h.root().join(".codex/sessions");
+        fs::create_dir_all(&dir).unwrap();
+        let line = json!({
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "cwd": cwd
+            }
+        });
+        fs::write(dir.join(file_name), format!("{line}\n")).unwrap();
+    };
+
+    let make_term = |addr: &str, space: &str, ws: &str, task: &str, app: &str| {
+        let mut term: Value =
+            serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+        term["address"] = json!(addr);
+        term["state"] = json!("live");
+        term["created_ms"] = json!(0);
+        term["turn"] = json!(1);
+        term["reported"] = json!(true);
+        term["status"] = json!({"app": app, "state": "idle"});
+        term["labels"] = json!({
+            "herdr.space": space,
+            "coord.managed": "1",
+            "coord.role": "delegate",
+            "coord.ws": ws,
+            "coord.task": task
+        });
+        term
+    };
+
+    let open_ws = |title: &str| {
+        h.ok(&[
+            "ws",
+            "open",
+            "--title",
+            title,
+            "--target",
+            "main",
+            "--repo",
+            repo_a.to_str().unwrap(),
+        ])["ws"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    let run_argv = |idx: usize| -> Vec<String> {
+        let line = h
+            .calls("hc")
+            .lines()
+            .filter(|l| l.contains("\trun\t"))
+            .nth(idx)
+            .unwrap()
+            .to_owned();
+        let parts: Vec<_> = line.split('\t').map(str::to_owned).collect();
+        let sep = parts.iter().position(|a| a == "--").unwrap();
+        parts[sep + 1..].to_vec()
+    };
+
+    // 1. Rung-3 into unrelated repo B with agy-default: MUST omit --settings on start AND cold send.
+    let ws_agy_b = open_ws("Agy unrelated B");
+    let task_agy_b = format!("{ws_agy_b}-t1");
+    let conv_agy_b = "33333333-1111-4111-8111-111111111111";
+    write_agy_transcript(conv_agy_b, &task_agy_b);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-b", "t20"))),
+    );
+    h.queue("hc", "run", &json!({"address": "t20"}));
+    h.queue(
+        "hc",
+        "get",
+        &make_term("t20", "space-b", &ws_agy_b, &task_agy_b, "antigravity"),
+    );
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_agy_b,
+        "--rung",
+        "3",
+        "--reason",
+        "existing space",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--space",
+        "space-b",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    assert_eq!(started["session"], conv_agy_b);
+    let argv0 = run_argv(0);
+    assert_eq!(&argv0[..4], &["agy", "--model", "gemini-4-neon-high", "-i"]);
+    assert!(!argv0.iter().any(|a| a == "--settings"));
+
+    h.queued("hc", "get", 1, &json!({"error": {"kind": "not_found"}}), 3);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-b", "t21"))),
+    );
+    h.queued("hc", "run", 1, &json!({"address": "t21"}), 0);
+    h.queued(
+        "hc",
+        "get",
+        2,
+        &make_term("t21", "space-b", &ws_agy_b, &task_agy_b, "antigravity"),
+        0,
+    );
+    h.ok(&["task", "send", &task_agy_b, "--text", "cold resume in B"]);
+    let argv1 = run_argv(1);
+    assert_eq!(&argv1[..4], &["agy", "--conversation", conv_agy_b, "-i"]);
+    assert!(!argv1.iter().any(|a| a == "--settings"));
+
+    // 2. Rung-3 into unrelated repo B with codex-default: MUST omit -c trust override on start AND cold send.
+    let ws_codex_b = open_ws("Codex unrelated B");
+    let task_codex_b = format!("{ws_codex_b}-t1");
+    let sess_codex_b = "codex-session-b";
+    write_codex_rollout("rollout-b.jsonl", sess_codex_b, &repo_b);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-b", "t22"))),
+    );
+    h.queue("hc", "run", &json!({"address": "t22"}));
+    h.queue(
+        "hc",
+        "get",
+        &make_term("t22", "space-b", &ws_codex_b, &task_codex_b, "codex"),
+    );
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_codex_b,
+        "--rung",
+        "3",
+        "--reason",
+        "existing space",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "codex-default",
+        "--space",
+        "space-b",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    assert_eq!(started["session"], sess_codex_b);
+    let argv2 = run_argv(2);
+    assert_eq!(&argv2[..3], &["codex", "-m", "gpt-6-luna"]);
+    assert!(!argv2.iter().any(|a| a == "-c"));
+
+    h.queued("hc", "get", 1, &json!({"error": {"kind": "not_found"}}), 3);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-b", "t23"))),
+    );
+    h.queued("hc", "run", 1, &json!({"address": "t23"}), 0);
+    h.queued(
+        "hc",
+        "get",
+        2,
+        &make_term("t23", "space-b", &ws_codex_b, &task_codex_b, "codex"),
+        0,
+    );
+    h.ok(&[
+        "task",
+        "send",
+        &task_codex_b,
+        "--text",
+        "cold resume codex in B",
+    ]);
+    let argv3 = run_argv(3);
+    assert_eq!(&argv3[..3], &["codex", "resume", sess_codex_b]);
+    assert!(!argv3.iter().any(|a| a == "-c"));
+
+    // 3. Rung-3 into a same-repo worktree of repo A with agy-default: MUST apply --settings for wt_a.
+    let ws_agy_wt = open_ws("Agy same-repo wt");
+    let task_agy_wt = format!("{ws_agy_wt}-t1");
+    let conv_agy_wt = "44444444-2222-4222-8222-222222222222";
+    write_agy_transcript(conv_agy_wt, &task_agy_wt);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-wt-a", "t24"))),
+    );
+    h.queue("hc", "run", &json!({"address": "t24"}));
+    h.queue(
+        "hc",
+        "get",
+        &make_term("t24", "space-wt-a", &ws_agy_wt, &task_agy_wt, "antigravity"),
+    );
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_agy_wt,
+        "--rung",
+        "3",
+        "--reason",
+        "same-repo worktree",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--space",
+        "space-wt-a",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    assert_eq!(started["session"], conv_agy_wt);
+    let expected_wt_settings = json!({"trustedWorkspaces": [wt_a]}).to_string();
+    let argv4 = run_argv(4);
+    assert_eq!(
+        &argv4[..6],
+        &[
+            "agy",
+            "--settings",
+            expected_wt_settings.as_str(),
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
+    );
+
+    h.queued("hc", "get", 1, &json!({"error": {"kind": "not_found"}}), 3);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-wt-a", "t25"))),
+    );
+    h.queued("hc", "run", 1, &json!({"address": "t25"}), 0);
+    h.queued(
+        "hc",
+        "get",
+        2,
+        &make_term("t25", "space-wt-a", &ws_agy_wt, &task_agy_wt, "antigravity"),
+        0,
+    );
+    h.ok(&[
+        "task",
+        "send",
+        &task_agy_wt,
+        "--text",
+        "cold resume in wt_a",
+    ]);
+    let argv5 = run_argv(5);
+    assert_eq!(
+        &argv5[..6],
+        &[
+            "agy",
+            "--settings",
+            expected_wt_settings.as_str(),
+            "--conversation",
+            conv_agy_wt,
+            "-i"
+        ]
+    );
+
+    // 4. Rung-3 into a same-repo worktree of repo A with codex-default: MUST apply -c trust override.
+    let ws_codex_wt = open_ws("Codex same-repo wt");
+    let task_codex_wt = format!("{ws_codex_wt}-t1");
+    let sess_codex_wt = "codex-session-wt";
+    write_codex_rollout("rollout-wt.jsonl", sess_codex_wt, &wt_a);
+    h.queue(
+        "herdr-app",
+        "ls",
+        &spaces_snapshot(Some(("space-wt-a", "t26"))),
+    );
+    h.queue("hc", "run", &json!({"address": "t26"}));
+    h.queue(
+        "hc",
+        "get",
+        &make_term("t26", "space-wt-a", &ws_codex_wt, &task_codex_wt, "codex"),
+    );
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_codex_wt,
+        "--rung",
+        "3",
+        "--reason",
+        "same-repo worktree",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "codex-default",
+        "--space",
+        "space-wt-a",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    assert_eq!(started["session"], sess_codex_wt);
+    let expected_codex_trust = format!(
+        r#"projects={{ "{}" = {{ trust_level = "trusted" }} }}"#,
+        repo_a.display()
+    );
+    let argv6 = run_argv(6);
+    assert_eq!(
+        &argv6[..5],
+        &[
+            "codex",
+            "-c",
+            expected_codex_trust.as_str(),
+            "-m",
+            "gpt-6-luna"
+        ]
+    );
+
+    // 5. Rung-4 coordinator-created worktree of repo A with agy-default: MUST apply --settings.
+    let ws_agy_r4 = open_ws("Agy coord wt");
+    let task_agy_r4 = format!("{ws_agy_r4}-t1");
+    let conv_agy_r4 = "55555555-3333-4333-8333-333333333333";
+    write_agy_transcript(conv_agy_r4, &task_agy_r4);
+    h.queue("herdr-app", "ls", &spaces_snapshot(None));
+    h.queue("hc", "run", &json!({"address": "t27"}));
+    h.queue(
+        "hc",
+        "get",
+        &make_term("t27", "sp-r4", &ws_agy_r4, &task_agy_r4, "antigravity"),
+    );
+    let started = h.ok(&[
+        "task",
+        "start",
+        "--ws",
+        &ws_agy_r4,
+        "--rung",
+        "4",
+        "--reason",
+        "coord worktree",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        "agy-default",
+        "--branch",
+        "feat/coord-wt",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+        "--reject",
+        "3=no",
+    ]);
+    assert_eq!(started["session"], conv_agy_r4);
+    let coord_wt = worktree_root.join("repo-a/feat-coord-wt");
+    let expected_r4_settings = json!({"trustedWorkspaces": [coord_wt]}).to_string();
+    let argv7 = run_argv(7);
+    assert_eq!(
+        &argv7[..6],
+        &[
+            "agy",
+            "--settings",
+            expected_r4_settings.as_str(),
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
+    );
+}

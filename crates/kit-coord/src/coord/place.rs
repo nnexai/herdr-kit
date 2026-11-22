@@ -338,7 +338,7 @@ fn owns_terminal(state: &State, term: &Term, task: &TaskId) -> bool {
 /// A repository is trusted once the person has it open themselves: in a
 /// space the coordinator does not own, either live or adopted earlier.
 fn repo_trusted(state: &State, snapshot: &AppSnapshot, repo: &Path) -> bool {
-    let checkout_of = |folder: &Path| git::main_checkout(folder).ok().as_deref() == Some(repo);
+    let checkout_of = |folder: &Path| git::same_repo(folder, repo);
     let owned_space = |id: &str| {
         state
             .resources
@@ -354,6 +354,20 @@ fn repo_trusted(state: &State, snapshot: &AppSnapshot, repo: &Path) -> bool {
                 && !r.owned
                 && r.r.folder.as_deref().is_some_and(&checkout_of)
         })
+}
+
+/// Apply a role's `trust:` override only when the resolved launch directory is
+/// proven to belong to the workstream's already-trusted repository: either a
+/// coordinator worktree being created for it, or an existing checkout/worktree
+/// whose git identity resolves to the same repository.
+fn launch_trusted(
+    state: &State,
+    snapshot: &AppSnapshot,
+    repo: &Path,
+    cwd: &Path,
+    creating_worktree: bool,
+) -> bool {
+    (creating_worktree || git::same_repo(cwd, repo)) && repo_trusted(state, snapshot, repo)
 }
 
 struct Placement {
@@ -555,10 +569,11 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         space_label,
     } = placement(ctx, target, state, w, previous.as_ref(), &snapshot)?;
     let new_space = target.creates_space();
+    let creating_worktree = matches!(target, Target::Worktree { .. });
     let trusted = w
         .repo
         .as_deref()
-        .is_some_and(|repo| repo_trusted(state, &snapshot, repo));
+        .is_some_and(|repo| launch_trusted(state, &snapshot, repo, &cwd, creating_worktree));
     let repo = w.repo.clone();
     let delivery_branch = w.delivery_branch.clone();
     let session = match &previous {
@@ -963,7 +978,7 @@ fn resume_with_message(
         .ok_or_else(|| refuse("no_space", "task has no space"))?;
     let repo = state.workstreams.get(&t.ws).and_then(|w| w.repo.as_deref());
     let snapshot = ctx.app.ls()?;
-    let trusted = repo.is_some_and(|repo| repo_trusted(state, &snapshot, repo));
+    let trusted = repo.is_some_and(|repo| launch_trusted(state, &snapshot, repo, &cwd, false));
     let arg = brief::for_argv(message.clone(), &path);
     let vars = role::Vars {
         brief: &arg,
@@ -2234,8 +2249,196 @@ mod placement_acceptance_tests {
             a2.folder.as_ref().unwrap(),
             "start",
             second["session"].as_str().unwrap(),
+            false,
+            "Do the work",
+        );
+        let ws3 = open(&ctx, Some(&repo));
+        let third = start_in_space(&ctx, &ws3, &input, "person");
+        let id3 = TaskId::parse(third["task"].as_str().unwrap()).unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[3],
+            &ws3,
+            &id3,
+            "person",
+            &repo,
+            "start",
+            third["session"].as_str().unwrap(),
             true,
             "Do the work",
+        );
+    }
+    #[test]
+    fn trust_is_confined_to_workstream_repo_across_rungs_and_cold_resume() {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, rec) = setup(temp.path());
+        let input = input(temp.path());
+        let mut config = super::super::config::Config::default();
+        config.worktree_root = temp.path().join("trees").to_string_lossy().into_owned();
+        config.save(&ctx.paths).unwrap();
+
+        let repo_a = init_repo(temp.path());
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_b).unwrap();
+        for args in [
+            &["init", "-q"][..],
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ][..],
+        ] {
+            assert!(
+                kit_core::git_env::git()
+                    .env("HOME", temp.path())
+                    .arg("-C")
+                    .arg(&repo_b)
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let wt_a = temp.path().join("manual-wt-a");
+        git::worktree_add(&repo_a, &wt_a, "manual-branch", Some("HEAD")).unwrap();
+
+        space(&rec, "person-a", &repo_a);
+        space(&rec, "space-b", &repo_b);
+        space(&rec, "space-wt-a", &wt_a);
+
+        // Rung-3 placement of repo A's workstream into unrelated repo B must NOT trust,
+        // nor may follow-up rung 2, cold task_send, or rung 1 cold resume.
+        let ws_unrelated = open(&ctx, Some(&repo_a));
+        let r3_b = start_in_space(&ctx, &ws_unrelated, &input, "space-b");
+        let id_b1 = TaskId::parse(r3_b["task"].as_str().unwrap()).unwrap();
+        let sess_b1 = r3_b["session"].as_str().unwrap().to_owned();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[0],
+            &ws_unrelated,
+            &id_b1,
+            "space-b",
+            &repo_b,
+            "start",
+            &sess_b1,
+            false,
+            "Do the work",
+        );
+
+        let r2_b = task_start(&ctx, &person(), &args(&ws_unrelated, 2, &input)).unwrap();
+        let id_b2 = TaskId::parse(r2_b["task"].as_str().unwrap()).unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[1],
+            &ws_unrelated,
+            &id_b2,
+            "space-b",
+            &repo_b,
+            "start",
+            r2_b["session"].as_str().unwrap(),
+            false,
+            "Do the work",
+        );
+
+        task_send(&ctx, &person(), &id_b1, "Cold follow up").unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[2],
+            &ws_unrelated,
+            &id_b1,
+            "space-b",
+            &repo_b,
+            "resume",
+            &sess_b1,
+            false,
+            "Cold follow up",
+        );
+
+        let mut a1_b = args(&ws_unrelated, 1, &input);
+        a1_b.session_of = Some(id_b1.as_str().into());
+        let r1_b = task_start(&ctx, &person(), &a1_b).unwrap();
+        let id_b3 = TaskId::parse(r1_b["task"].as_str().unwrap()).unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[3],
+            &ws_unrelated,
+            &id_b3,
+            "space-b",
+            &repo_b,
+            "resume",
+            &sess_b1,
+            false,
+            "Do the work",
+        );
+
+        // Rung-3 placement into an existing worktree of repo A DOES receive trust on start and cold send.
+        let ws_same_wt = open(&ctx, Some(&repo_a));
+        let r3_wt = start_in_space(&ctx, &ws_same_wt, &input, "space-wt-a");
+        let id_wt = TaskId::parse(r3_wt["task"].as_str().unwrap()).unwrap();
+        let sess_wt = r3_wt["session"].as_str().unwrap().to_owned();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[4],
+            &ws_same_wt,
+            &id_wt,
+            "space-wt-a",
+            &wt_a,
+            "start",
+            &sess_wt,
+            true,
+            "Do the work",
+        );
+        task_send(&ctx, &person(), &id_wt, "Continue in worktree").unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[5],
+            &ws_same_wt,
+            &id_wt,
+            "space-wt-a",
+            &wt_a,
+            "resume",
+            &sess_wt,
+            true,
+            "Continue in worktree",
+        );
+
+        // Rung-4 coordinator-created worktree of repo A DOES receive trust on start and cold send.
+        let ws_coord_wt = open(&ctx, Some(&repo_a));
+        let mut a4 = args(&ws_coord_wt, 4, &input);
+        a4.branch = Some("coord-branch".into());
+        let r4 = task_start(&ctx, &person(), &a4).unwrap();
+        let id_r4 = TaskId::parse(r4["task"].as_str().unwrap()).unwrap();
+        let sess_r4 = r4["session"].as_str().unwrap().to_owned();
+        let coord_tree = temp.path().join("trees/repo/coord-branch");
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[6],
+            &ws_coord_wt,
+            &id_r4,
+            r4["space"].as_str().unwrap(),
+            &coord_tree,
+            "start",
+            &sess_r4,
+            true,
+            "Do the work",
+        );
+        task_send(&ctx, &person(), &id_r4, "Continue in coord worktree").unwrap();
+        assert_spec(
+            &ctx,
+            &rec.borrow().runs[7],
+            &ws_coord_wt,
+            &id_r4,
+            r4["space"].as_str().unwrap(),
+            &coord_tree,
+            "resume",
+            &sess_r4,
+            true,
+            "Continue in coord worktree",
         );
     }
     #[test]

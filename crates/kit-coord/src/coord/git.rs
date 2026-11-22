@@ -49,6 +49,53 @@ pub fn main_checkout(dir: &Path) -> Result<PathBuf> {
     );
     Ok(p.parent().context("missing checkout parent")?.to_path_buf())
 }
+/// Canonicalized `(git_common_dir, toplevel)` for a git work tree directory.
+/// Rejects bare repositories, `.git` directories, and non-git folders.
+fn worktree_identity(dir: &Path) -> Result<(PathBuf, PathBuf)> {
+    let out = checked(
+        dir,
+        &args(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--show-toplevel",
+        ]),
+        120,
+    )?;
+    let mut lines = out.lines();
+    let common = lines.next().context("missing git common dir")?;
+    let toplevel = lines.next().context("missing git toplevel")?;
+    ensure!(
+        !common.is_empty() && !toplevel.is_empty() && lines.next().is_none(),
+        "unexpected git rev-parse output"
+    );
+    Ok((
+        std::fs::canonicalize(common)?,
+        std::fs::canonicalize(toplevel)?,
+    ))
+}
+/// True when `dir` is inside a git work tree of `repo` (either `repo`'s main
+/// checkout or one of its registered worktrees), comparing canonicalized paths.
+pub fn same_repo(dir: &Path, repo: &Path) -> bool {
+    let Ok((dir_common, dir_top)) = worktree_identity(dir) else {
+        return false;
+    };
+    let Ok((repo_common, repo_top)) = worktree_identity(repo) else {
+        return false;
+    };
+    if dir_common != repo_common {
+        return false;
+    }
+    if dir_top == repo_top {
+        return true;
+    }
+    worktree_list(repo).is_ok_and(|trees| {
+        trees
+            .into_iter()
+            .filter_map(|t| std::fs::canonicalize(t.path).ok())
+            .any(|p| p == dir_top)
+    })
+}
 pub fn current_branch(repo: &Path) -> Result<Option<String>> {
     let (code, out, err) = run(
         repo,
@@ -277,5 +324,62 @@ mod tests {
         assert!(is_ancestor(&repo, &second, "refs/heads/main").unwrap());
         delete_branch(&repo, "topic", &second).unwrap();
         assert!(!branch_exists(&repo, "topic").unwrap());
+    }
+    #[test]
+    fn same_repo_matches_checkouts_worktrees_and_symlinks_only() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path();
+        let repo_a = home.join("repo-a");
+        let repo_b = home.join("repo-b");
+        let plain = home.join("plain");
+        fs::create_dir(&repo_a).unwrap();
+        fs::create_dir(&repo_b).unwrap();
+        fs::create_dir(&plain).unwrap();
+        for repo in [&repo_a, &repo_b] {
+            git(home, repo, &["init", "-b", "main"]);
+            git(
+                home,
+                repo,
+                &["config", "user.email", "test@example.invalid"],
+            );
+            git(home, repo, &["config", "user.name", "Test"]);
+            git(home, repo, &["commit", "--allow-empty", "-m", "initial"]);
+        }
+        let sub_a = repo_a.join("sub");
+        fs::create_dir(&sub_a).unwrap();
+        let wt_a = home.join("wt-a");
+        worktree_add(&repo_a, &wt_a, "topic", Some("main")).unwrap();
+        let wt_sub_a = wt_a.join("sub");
+        fs::create_dir(&wt_sub_a).unwrap();
+        let link_a = home.join("link-a");
+        let link_wt_a = home.join("link-wt-a");
+        symlink(&repo_a, &link_a).unwrap();
+        symlink(&wt_a, &link_wt_a).unwrap();
+        let nested_b = repo_a.join("nested-b");
+        fs::create_dir(&nested_b).unwrap();
+        git(home, &nested_b, &["init", "-b", "main"]);
+        let spoof = home.join("spoof");
+        fs::create_dir(&spoof).unwrap();
+        fs::write(
+            spoof.join(".git"),
+            format!("gitdir: {}\n", repo_a.join(".git").display()),
+        )
+        .unwrap();
+
+        assert!(same_repo(&repo_a, &repo_a));
+        assert!(same_repo(&sub_a, &repo_a));
+        assert!(same_repo(&wt_a, &repo_a));
+        assert!(same_repo(&wt_sub_a, &repo_a));
+        assert!(same_repo(&link_a, &repo_a));
+        assert!(same_repo(&link_wt_a, &repo_a));
+        assert!(same_repo(&wt_a, &link_a));
+
+        assert!(!same_repo(&repo_b, &repo_a));
+        assert!(!same_repo(&nested_b, &repo_a));
+        assert!(!same_repo(&repo_a.join(".git"), &repo_a));
+        assert!(!same_repo(&plain, &repo_a));
+        assert!(!same_repo(&home.join("missing"), &repo_a));
+        assert!(!same_repo(&spoof, &repo_a));
     }
 }
