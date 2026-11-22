@@ -26,7 +26,7 @@ use POSIX file modes, symlink checks and process groups. What differs per OS:
 | Data directory | `$XDG_DATA_HOME/herdr-kit`, normally `~/.local/share/herdr-kit` | `~/Library/Application Support/herdr-kit` |
 | Herdr app home (`--app-home`) | usually `~/.config/herdr-app` | the app home your Herdr uses; pass it explicitly |
 | Finding harnesses (`omp`, `copilot`, …) | the `PATH` kit-coord runs with | the same; see the note below |
-| Usage collection (`omp`, `agy`) | `PATH`, then `~/.local/bin`, `~/.bun/bin`, Homebrew and `/usr/local/bin` | the same, including `/opt/homebrew/bin` |
+| Usage collection (`omp`, `agy`) | `PATH`, then harness-specific home directories, `/usr/local/bin` and Linuxbrew | same `PATH` and home lookup, then `/opt/homebrew/bin` and `/usr/local/bin` |
 | Generation cleanup checks running processes | `/proc/*/{exe,cwd}` | `lsof` |
 
 Install from a checkout on that machine, as in the README:
@@ -38,8 +38,9 @@ herdr-app do layout.switch --name herdr-kit
 ```
 
 `--data-dir` or `HERDR_KIT_DATA_DIR` picks another data directory. Nothing in
-it comes from another machine. Then turn the coordinator on with
-`<data-dir>/bin/kit-coord up`, or from the bottom-bar coordinator item.
+it comes from another machine. If you want local roles, configure them
+before starting the coordinator. Otherwise, turn it on with
+`<data-dir>/bin/kit-coord up` or the bottom-bar coordinator item.
 
 Harness detection uses the `PATH` of the process that runs kit-coord, which
 is the environment of the Herdr terminals and of `herdr-app`. If Herdr is
@@ -135,19 +136,24 @@ installed and `agy`, `claude` and `codex` are not.
 
 1. Install as in step 0, with the macOS app home. The data directory is
    `~/Library/Application Support/herdr-kit`.
-2. Before adding roles, run `kit-coord roles`. Both built-ins (`omp`) are
-   available, and the coordinator could already delegate to `coord-default`.
+2. Set `data` to the installed data directory and check the baseline roles.
+   Both built-ins use `omp` and can launch without adding any role files:
+
+   ```sh
+   data="$HOME/Library/Application Support/herdr-kit"
+   "$data/bin/kit-coord" roles
+   ```
 3. Add the example role set in
    [`examples/roles/copilot-only/`](examples/roles/copilot-only/). It covers
    the coordinator, everyday work, complex work, design, review and a
    `copilot` CLI delegate:
 
    ```sh
-   data="$HOME/Library/Application Support/herdr-kit"
+   mkdir -p "$data/coord/roles"
    cp docs/coordinator/examples/roles/copilot-only/*.md "$data/coord/roles/"
-   omp models | grep -A200 github-copilot   # check the model names offered there
-   "$data/bin/kit-coord" roles               # every role available, usage provider copilot
-   "$data/bin/kit-coord" roles --guidance    # what the coordinator will be told
+   omp models                              # check the github-copilot model names
+   "$data/bin/kit-coord" roles               # check availability and usage provider
+   "$data/bin/kit-coord" roles --guidance    # preview the coordinator's guidance
    ```
 
 4. Adapt the model names to what `omp models` lists on that machine.
@@ -157,8 +163,8 @@ installed and `agy`, `claude` and `codex` are not.
    `copilot --model auto --session-id <uuid> -i "<brief>"`. Roles for `agy`,
    `claude` or `codex` would show as not installed and are left out of the
    coordinator's guidance, so do not add them.
-5. Start or restart the coordinator, so its first message carries the new
-   role guidance.
+5. Once the roles are configured, start the coordinator with
+   `"$data/bin/kit-coord" up` so its first message carries the new guidance.
 
 ## 3. Add a local extension
 

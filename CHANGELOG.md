@@ -25,6 +25,8 @@
   is unsupported), harness detection, and a macOS example with `omp` locked to
   Copilot, the `copilot` CLI and no `agy`, using the shipped Copilot-only
   example role set.
+- Search the platform-specific Homebrew path for usage tools only on its
+  matching OS.
 
 - Add `kit-deck` (`crates/kit-deck`), a standalone OpenDeck / OpenAction Rust
   Stream Deck extension (`dev.herdr.kit.sdPlugin`) surfacing live `hc events`

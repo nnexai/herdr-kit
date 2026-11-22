@@ -13,8 +13,10 @@ fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str])
     }
     directories.extend(
         [
+            #[cfg(target_os = "macos")]
             "/opt/homebrew/bin",
             "/usr/local/bin",
+            #[cfg(target_os = "linux")]
             "/home/linuxbrew/.linuxbrew/bin",
         ]
         .into_iter()
