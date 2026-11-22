@@ -12,10 +12,17 @@ This is not a Herdr fork or browser frontend.
 
 ## Build and install
 
-Requirements: Linux or macOS, Rust/Cargo, Git, tar, `hc`, `herdr-app`, OMP for
-Codex/Claude/Copilot usage reports, and Antigravity CLI (`agy`) for Antigravity
-usage reports. The JavaScript runs inside Herdr's GPUI host, not Node. Node is
+Requirements: Linux or macOS (Windows is not supported), Rust/Cargo, Git, tar,
+`hc` and `herdr-app`. Agent harnesses are optional and per machine: OMP runs
+the built-in coordinator and delegate roles and reports Codex/Claude/Copilot
+usage, and the Antigravity CLI (`agy`) reports Antigravity usage when it is
+installed. The JavaScript runs inside Herdr's GPUI host, not Node. Node is
 only needed for the pure model tests.
+
+Each machine is a separate, independent installation with its own data
+directory, local roles and coordinator; nothing is shared between machines.
+[Set up herdr-kit on a new machine](docs/coordinator/machine-setup.md) covers
+the per-OS differences and an example machine with a different harness set.
 
 ```sh
 cargo test --locked

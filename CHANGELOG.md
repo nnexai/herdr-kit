@@ -20,8 +20,11 @@
   `<data-dir>/coord/extensions.json` are listed in the coordinator's startup
   read (with the bounded, concurrent output of `startup: true` helpers) and in
   `kit-coord board`, and run on demand with `kit-coord ext <name>`.
-- Document machine setup with a Copilot-only example role set
-  (`docs/coordinator/machine-setup.md`).
+- Document setting up herdr-kit on a new machine as an independent install
+  (`docs/coordinator/machine-setup.md`): Linux and macOS differences (Windows
+  is unsupported), harness detection, and a macOS example with `omp` locked to
+  Copilot, the `copilot` CLI and no `agy`, using the shipped Copilot-only
+  example role set.
 
 - Add `kit-deck` (`crates/kit-deck`), a standalone OpenDeck / OpenAction Rust
   Stream Deck extension (`dev.herdr.kit.sdPlugin`) surfacing live `hc events`

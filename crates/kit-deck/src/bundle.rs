@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use kit_core::paths::{SymlinkMessage, no_links};
 use serde::Serialize;
 use serde_json::json;
@@ -90,7 +90,7 @@ pub fn default_plugins_dir() -> Result<PathBuf> {
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|s| !s.is_empty()) {
             let xdg = PathBuf::from(xdg);
             if !xdg.is_absolute() {
-                bail!("XDG_CONFIG_HOME must be absolute");
+                anyhow::bail!("XDG_CONFIG_HOME must be absolute");
             }
             return Ok(xdg.join("opendeck/plugins"));
         }

@@ -1,9 +1,11 @@
-# Setting up the coordinator on a machine
+# Set up herdr-kit on a new machine
 
-herdr-kit ships the same coordinator on every machine. Everything that depends
-on what a machine has installed, which subscriptions it uses and which helpers
-the person wants lives in local files under `<data-dir>/coord/` that updates
-never write:
+Every machine runs its own, completely independent installation: its own
+Herdr, its own herdr-kit, its own data directory and its own coordinator.
+Nothing is shared or synchronized between machines, and no coordinator
+drives another machine. A fresh install starts from what kit-coord ships plus
+that machine's own local files under `<data-dir>/coord/`, which updates never
+write:
 
 | Shipped with kit-coord | Local to one machine |
 |---|---|
@@ -12,7 +14,41 @@ never write:
 | Harness support for `omp`, `agy`, `claude`, `codex` and `copilot` (start/resume syntax, session discovery, trust flags, steering) | `config.json`: watcher timings and the coordinator role name |
 
 A fresh machine with only `omp` installed works with the built-ins as they
-are. Everything below is optional.
+are. Everything after step 0 is optional.
+
+## 0. Install on Linux or macOS
+
+herdr-kit supports Linux and macOS. Windows is not supported: the Rust crates
+use POSIX file modes, symlink checks and process groups. What differs per OS:
+
+| | Linux | macOS |
+|---|---|---|
+| Data directory | `$XDG_DATA_HOME/herdr-kit`, normally `~/.local/share/herdr-kit` | `~/Library/Application Support/herdr-kit` |
+| Herdr app home (`--app-home`) | usually `~/.config/herdr-app` | the app home your Herdr uses; pass it explicitly |
+| Finding harnesses (`omp`, `copilot`, …) | the `PATH` kit-coord runs with | the same; see the note below |
+| Usage collection (`omp`, `agy`) | `PATH`, then `~/.local/bin`, `~/.bun/bin`, Homebrew and `/usr/local/bin` | the same, including `/opt/homebrew/bin` |
+| Generation cleanup checks running processes | `/proc/*/{exe,cwd}` | `lsof` |
+
+Install from a checkout on that machine, as in the README:
+
+```sh
+cargo build --locked --release
+./target/release/herdr-kit install --source "$PWD" --app-home "<this machine's Herdr app home>"
+herdr-app do layout.switch --name herdr-kit
+```
+
+`--data-dir` or `HERDR_KIT_DATA_DIR` picks another data directory. Nothing in
+it comes from another machine. Then turn the coordinator on with
+`<data-dir>/bin/kit-coord up`, or from the bottom-bar coordinator item.
+
+Harness detection uses the `PATH` of the process that runs kit-coord, which
+is the environment of the Herdr terminals and of `herdr-app`. If Herdr is
+started without your shell's `PATH` (for example from a desktop launcher
+that does not read your shell profile), harnesses installed in
+`/opt/homebrew/bin`, `~/.local/bin` and similar show as not installed.
+`kit-coord roles` then reports `unavailable_reason`. Start Herdr with a
+`PATH` that contains your harnesses; delegates launched in its terminals need
+the same `PATH` anyway.
 
 ## 1. See what can run here
 
@@ -91,26 +127,38 @@ session: dir
 coordinator reads its instructions and guidance when its session starts, so
 role changes reach it after its next restart or Clear context.
 
-### Example: a Copilot-only machine
+### Example: a macOS machine with omp locked to Copilot, the copilot CLI and no agy
 
-A machine without `agy`, with the `copilot` CLI installed and `omp` limited to
-the GitHub Copilot provider, reaches other model families such as Gemini Neon
-through `omp`. The role set in
-[`examples/roles/copilot-only/`](examples/roles/copilot-only/) covers the
-coordinator, everyday work, complex work, design, review and a `copilot` CLI
-delegate:
+On this machine `omp` uses only the GitHub Copilot provider and reaches other
+model families, such as Gemini Neon, through it. The `copilot` CLI is
+installed and `agy`, `claude` and `codex` are not.
 
-```sh
-cp docs/coordinator/examples/roles/copilot-only/*.md <data-dir>/coord/roles/
-omp models | grep -A200 github-copilot   # check the model names offered there
-kit-coord roles                           # every role available, usage provider copilot
-kit-coord roles --guidance
-```
+1. Install as in step 0, with the macOS app home. The data directory is
+   `~/Library/Application Support/herdr-kit`.
+2. Before adding roles, run `kit-coord roles`. Both built-ins (`omp`) are
+   available, and the coordinator could already delegate to `coord-default`.
+3. Add the example role set in
+   [`examples/roles/copilot-only/`](examples/roles/copilot-only/). It covers
+   the coordinator, everyday work, complex work, design, review and a
+   `copilot` CLI delegate:
 
-Adapt the model names to what `omp models` lists on that machine.
-`kit-coord task start` expands `--role coord-design` to
-`omp --model github-copilot/gemini-4-neon:high --session-dir … "<brief>"` and
-`--role copilot-cli` to `copilot --model auto --session-id <uuid> -i "<brief>"`.
+   ```sh
+   data="$HOME/Library/Application Support/herdr-kit"
+   cp docs/coordinator/examples/roles/copilot-only/*.md "$data/coord/roles/"
+   omp models | grep -A200 github-copilot   # check the model names offered there
+   "$data/bin/kit-coord" roles               # every role available, usage provider copilot
+   "$data/bin/kit-coord" roles --guidance    # what the coordinator will be told
+   ```
+
+4. Adapt the model names to what `omp models` lists on that machine.
+   `kit-coord task start` expands `--role coord-design` to
+   `omp --model github-copilot/gemini-4-neon:high --session-dir … "<brief>"`
+   and `--role copilot-cli` to
+   `copilot --model auto --session-id <uuid> -i "<brief>"`. Roles for `agy`,
+   `claude` or `codex` would show as not installed and are left out of the
+   coordinator's guidance, so do not add them.
+5. Start or restart the coordinator, so its first message carries the new
+   role guidance.
 
 ## 3. Add a local extension
 
@@ -164,9 +212,10 @@ and the coordinator can run `kit-coord ext`; reading the board never runs a
 helper. An invalid `extensions.json` shows as a notice instead of failing the
 board or the coordinator start.
 
-## 4. Moving to another machine
+## 4. Several machines
 
-Copy `<data-dir>/coord/roles/` and `extensions.json` only where the other
-machine has the same harnesses and helpers; otherwise start from the built-ins
-and an example set, and check `kit-coord roles` and `kit-coord roles
---guidance` there.
+Each machine keeps its own role set and extensions, written for what is
+installed there. To give a second machine a similar setup, write its role
+files from an example or by hand. Do not copy another machine's data
+directory or coordinator state. Afterwards, check `kit-coord roles` and
+`kit-coord roles --guidance` on that machine.
