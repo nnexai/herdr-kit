@@ -1,26 +1,28 @@
 //! Local extensions: helper commands the person configures for one machine in
 //! `<data-dir>/coord/extensions.json`. Nothing ships with the product. The
-//! coordinator sees every extension in its startup read and in `kit board`
-//! (with current output for `board: true` ones) and runs one on demand with
-//! `kit ext <name>`.
+//! coordinator's startup read lists every extension with the current output of
+//! `startup: true` ones, `kit board` lists them, and `kit ext <name>` runs one
+//! on demand.
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
-use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use kit_core::paths::{SymlinkMessage, no_links};
+use kit_core::process::{ProcessError, run_bounded};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::error;
-use super::exec;
 use super::paths::CoordPaths;
 
-const MAX_TIMEOUT_SECS: u64 = 30;
-/// Output kept for `kit ext <name>`.
-const MAX_OUTPUT: usize = 64 * 1024;
-/// Output shown per extension in the board and startup read.
+/// Helpers run concurrently at coordinator start, so this bounds the delay.
+const MAX_TIMEOUT_SECS: u64 = 10;
+/// Output kept for `kit ext <name>`; more fails the helper while it runs.
+const MAX_OUTPUT: u64 = 64 * 1024;
+const MAX_STDERR: u64 = 16 * 1024;
+/// Output shown per extension in the startup read.
 const BOARD_OUTPUT: usize = 2000;
 
 #[derive(Debug, Deserialize)]
@@ -30,9 +32,9 @@ pub struct Extension {
     pub description: String,
     /// Program and arguments, run without a shell.
     pub command: Vec<String>,
-    /// Run it for every startup read and `kit board`.
+    /// Run it for the coordinator's startup read.
     #[serde(default)]
-    pub board: bool,
+    pub startup: bool,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
 }
@@ -94,13 +96,27 @@ fn truncate(text: &str, limit: usize) -> String {
     format!("{}…", &text[..end])
 }
 
-pub fn run(name: &str, ext: &Extension) -> Outcome {
-    let mut cmd = Command::new(&ext.command[0]);
-    // The helper never acts with the coordinator's caller identity.
+pub fn run(ext: &Extension) -> Outcome {
+    let mut cmd = tokio::process::Command::new(&ext.command[0]);
+    // The helper never acts with the caller's identity.
     cmd.args(&ext.command[1..]).env_remove("HC_TERMINAL_ID");
-    match exec::run(cmd, &format!("extension {name}"), ext.timeout_secs) {
+    let timeout = Duration::from_secs(ext.timeout_secs);
+    // Its own thread and runtime: callers may already run inside the CLI's runtime.
+    let result = std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(ProcessError::Spawn)?
+                    .block_on(run_bounded(cmd, timeout, MAX_OUTPUT, MAX_STDERR))
+            })
+            .join()
+            .unwrap_or_else(|_| Err(ProcessError::Wait(std::io::Error::other("runner panicked"))))
+    });
+    match result {
         Ok(captured) => {
-            let output = truncate(String::from_utf8_lossy(&captured.stdout).trim(), MAX_OUTPUT);
+            let output = String::from_utf8_lossy(&captured.stdout).trim().to_owned();
             let error = (!captured.status.success()).then(|| {
                 let stderr = String::from_utf8_lossy(&captured.stderr);
                 let line = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
@@ -120,7 +136,7 @@ pub fn run(name: &str, ext: &Extension) -> Outcome {
             ok: false,
             exit_code: None,
             output: String::new(),
-            error: Some(format!("{e:#}")),
+            error: Some(e.to_string()),
         },
     }
 }
@@ -133,7 +149,7 @@ pub fn list(paths: &CoordPaths) -> Result<Value> {
             "name": name,
             "description": ext.description,
             "command": ext.command,
-            "board": ext.board,
+            "startup": ext.startup,
             "timeout_secs": ext.timeout_secs,
         })).collect::<Vec<_>>(),
     }))
@@ -146,7 +162,7 @@ pub fn query(paths: &CoordPaths, name: &str) -> Result<Value> {
     let ext = map.remove(name).ok_or_else(|| {
         error::refused("extension_not_found", format!("unknown extension: {name}"))
     })?;
-    let outcome = run(name, &ext);
+    let outcome = run(&ext);
     let parsed = serde_json::from_str::<Value>(&outcome.output).ok();
     Ok(json!({
         "name": name,
@@ -159,9 +175,10 @@ pub fn query(paths: &CoordPaths, name: &str) -> Result<Value> {
     }))
 }
 
-/// The "Local extensions" section for the startup read and `kit board`;
-/// empty when the machine has none.
-pub fn section(paths: &CoordPaths) -> String {
+/// The "Local extensions" section; empty when the machine has none. With
+/// `run_startup`, `startup: true` helpers run (concurrently) and their output
+/// is shown; the startup read does this, `kit board` only lists them.
+pub fn section(paths: &CoordPaths, run_startup: bool) -> String {
     let map = match load(paths) {
         Ok(map) if map.is_empty() => return String::new(),
         Ok(map) => map,
@@ -171,16 +188,26 @@ pub fn section(paths: &CoordPaths) -> String {
             );
         }
     };
+    let outcomes: BTreeMap<&str, Outcome> = std::thread::scope(|scope| {
+        let running = map
+            .iter()
+            .filter(|(_, ext)| run_startup && ext.startup)
+            .map(|(name, ext)| (name.as_str(), scope.spawn(|| run(ext))))
+            .collect::<Vec<_>>();
+        running
+            .into_iter()
+            .filter_map(|(name, handle)| Some((name, handle.join().ok()?)))
+            .collect()
+    });
     let mut out = String::from("\n## Local extensions\n\n");
     for (name, ext) in &map {
         out.push_str(&format!(
             "- `{name}` (`kit ext {name}`): {}\n",
             ext.description.trim()
         ));
-        if !ext.board {
+        let Some(outcome) = outcomes.get(name.as_str()) else {
             continue;
-        }
-        let outcome = run(name, ext);
+        };
         if let Some(error) = &outcome.error {
             out.push_str(&format!("  Now: unavailable ({error})\n"));
         } else if outcome.output.is_empty() {
@@ -207,22 +234,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let paths = CoordPaths::new(tmp.path());
         paths.ensure().unwrap();
-        assert_eq!(section(&paths), "");
+        assert_eq!(section(&paths, true), "");
         let helper = tmp.path().join("helper");
         fs::write(&helper, "#!/bin/sh\nprintf 'first\\nsecond\\n'\n").unwrap();
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
         let config = json!({
-            "ok": {"description": "Prints two lines.", "command": [helper], "board": true},
+            "ok": {"description": "Prints two lines.", "command": [helper], "startup": true},
             "quiet": {"description": "Only on demand.", "command": ["/nonexistent/x"]},
-            "broken": {"description": "Fails.", "command": ["/nonexistent/y"], "board": true},
+            "broken": {"description": "Fails.", "command": ["/nonexistent/y"], "startup": true},
+            "noisy": {"description": "Floods.", "command": ["/bin/sh", "-c", "yes x"], "startup": true},
+            "slow": {"description": "Hangs.", "command": ["/bin/sleep", "30"], "startup": true, "timeout_secs": 1},
         });
         fs::write(&paths.extensions, config.to_string()).unwrap();
-        let text = section(&paths);
-        assert!(
-            text.contains("- `ok` (`kit ext ok`): Prints two lines.\n  Now: first\n    second\n")
-        );
-        assert!(text.ends_with("- `quiet` (`kit ext quiet`): Only on demand.\n"));
-        assert!(text.contains("- `broken` (`kit ext broken`): Fails.\n  Now: unavailable ("));
+        let started = std::time::Instant::now();
+        let text = section(&paths, true);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let has = |part: &str| assert!(text.contains(part), "{part}\n{text}");
+        has("- `ok` (`kit ext ok`): Prints two lines.\n  Now: first\n    second\n");
+        has("- `quiet` (`kit ext quiet`): Only on demand.\n- `slow`");
+        has("- `broken` (`kit ext broken`): Fails.\n  Now: unavailable (");
+        has("Floods.\n  Now: unavailable (command stdout exceeded 65536 byte limit)\n");
+        has("Hangs.\n  Now: unavailable (command timed out after 1000ms)\n");
+        let listed = section(&paths, false);
+        assert!(listed.contains("- `ok` (`kit ext ok`): Prints two lines.\n- "));
+        assert!(!listed.contains("Now:"));
         let queried = query(&paths, "ok").unwrap();
         assert_eq!(queried["ok"], true);
         assert_eq!(queried["output"], "first\nsecond");
@@ -235,7 +270,7 @@ mod tests {
             r#"{"bad name": {"description": "x", "command": ["x"]}}"#,
         )
         .unwrap();
-        assert!(section(&paths).contains("invalid"));
+        assert!(section(&paths, true).contains("invalid"));
         assert_eq!(
             error::exit_of(&list(&paths).unwrap_err()).0,
             "extensions_invalid"

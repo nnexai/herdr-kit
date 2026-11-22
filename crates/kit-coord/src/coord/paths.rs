@@ -78,7 +78,6 @@ impl CoordPaths {
             &self.heartbeat,
             &self.config,
             &self.computer_config,
-            &self.extensions,
         ] {
             no_links(file, SymlinkMessage::WithPath)?;
         }

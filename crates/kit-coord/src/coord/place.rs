@@ -1057,22 +1057,6 @@ fn resume_with_message(
     let repo = state.workstreams.get(&t.ws).and_then(|w| w.repo.as_deref());
     let snapshot = ctx.app.ls()?;
     let trusted = repo.is_some_and(|repo| launch_trusted(state, &snapshot, repo, &cwd, false));
-    let arg = brief::for_argv(message.clone(), &path);
-    let computer_config = if role.needs_computer_config() {
-        Some(ctx.paths.ensure_computer_config()?)
-    } else {
-        None
-    };
-    let vars = role::Vars {
-        brief: &arg,
-        session_dir: session.dir.as_deref(),
-        session_id: session.id.as_deref(),
-        repo_root: repo,
-        cwd: &cwd,
-        model: None,
-        effort: None,
-        computer_config,
-    };
     let template = role
         .resume
         .as_ref()
@@ -1089,6 +1073,22 @@ fn resume_with_message(
             format!("role '{}' cannot resume here: {reason}", role.name),
         )
     })?;
+    let arg = brief::for_argv(message.clone(), &path);
+    let computer_config = if role.needs_computer_config() {
+        Some(ctx.paths.ensure_computer_config()?)
+    } else {
+        None
+    };
+    let vars = role::Vars {
+        brief: &arg,
+        session_dir: session.dir.as_deref(),
+        session_id: session.id.as_deref(),
+        repo_root: repo,
+        cwd: &cwd,
+        model: None,
+        effort: None,
+        computer_config,
+    };
     let argv = role.expand_resume(&vars, trusted)?;
     fs::write(&path, &message)?;
     let mut intent = ResourceRef::new(ResType::Tab, t.id.as_str());

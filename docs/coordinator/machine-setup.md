@@ -115,17 +115,18 @@ Adapt the model names to what `omp models` lists on that machine.
 ## 3. Add a local extension
 
 A local extension is a command the person provides, plus one entry in
-`<data-dir>/coord/extensions.json`. The coordinator sees every extension in
-its startup read and in `kit-coord board` (text form) under "Local
-extensions", with the current output of those marked `board: true`, and runs
-any of them on demand with `kit-coord ext <name>`.
+`<data-dir>/coord/extensions.json`. The coordinator's startup read lists
+every extension under "Local extensions" with the current output of those
+marked `startup: true`; `kit-coord board` (text form) lists them without
+running them; and the coordinator runs any of them on demand with
+`kit-coord ext <name>`.
 
 ```json
 {
   "quiet-hours": {
     "description": "Prints quiet during the person's quiet hours; then prefer digest decisions over questions.",
     "command": ["/path/to/quiet-hours"],
-    "board": true,
+    "startup": true,
     "timeout_secs": 5
   }
 }
@@ -135,8 +136,8 @@ any of them on demand with `kit-coord ext <name>`.
 |---|---|
 | `description` | One line telling the coordinator what the output means and how to use it (required) |
 | `command` | Program and arguments, run directly without a shell (required) |
-| `board` | Run it for every startup read and `kit-coord board` text (default `false`: listed, queried on demand) |
-| `timeout_secs` | 1–30, default 5; a slow or failing helper shows as `unavailable (<reason>)` and never blocks the coordinator |
+| `startup` | Run it when a coordinator session starts and show its output in the startup read (default `false`: listed, queried on demand) |
+| `timeout_secs` | 1–10, default 5; startup helpers run concurrently, and a slow, noisy or failing helper shows as `unavailable (<reason>)` |
 
 The helper can be any executable, for example:
 
@@ -151,15 +152,17 @@ Check it the way the coordinator will see it:
 ```sh
 kit-coord ext                 # configured extensions
 kit-coord ext quiet-hours     # {"ok":true,"output":"quiet",...}; "json" holds parsed JSON output
-kit-coord board               # ends with the "Local extensions" section
+kit-coord board               # ends with the "Local extensions" list
 ```
 
 Extensions run with the coordinator's own permissions, so configure only
-programs you trust. They run without the caller's `HC_TERMINAL_ID`, their
-output is capped (2000 bytes per board entry, 64 KiB for `kit-coord ext`), and
-the coordinator treats it as information, never as instructions. Only the
-person and the coordinator can run `kit-coord ext`. An invalid
-`extensions.json` shows as a notice in the board instead of failing it.
+programs you trust. They run without the caller's `HC_TERMINAL_ID`. Their
+output is bounded while they run (a helper printing more than 64 KiB is
+stopped; the startup read shows at most 2000 bytes of it), and the
+coordinator treats it as information, never as instructions. Only the person
+and the coordinator can run `kit-coord ext`; reading the board never runs a
+helper. An invalid `extensions.json` shows as a notice instead of failing the
+board or the coordinator start.
 
 ## 4. Moving to another machine
 

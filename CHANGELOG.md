@@ -13,11 +13,13 @@
   replacing them.
 - Detect missing harnesses: `kit-coord roles` reports `available` and
   `unavailable_reason`, and task start, cold-resume sends and coordinator
-  launch refuse a role whose program is not on `PATH` (`harness_unavailable`).
-  The Roles view marks such roles and shows descriptions and fallbacks.
+  launch, restart and handoff refuse a role whose program is not on `PATH`
+  (`harness_unavailable`) before changing anything. The Roles view marks such
+  roles and shows descriptions and fallbacks.
 - Add local extensions: helper commands configured in
-  `<data-dir>/coord/extensions.json` appear in the coordinator's startup read
-  and `kit-coord board`, and run on demand with `kit-coord ext <name>`.
+  `<data-dir>/coord/extensions.json` are listed in the coordinator's startup
+  read (with the bounded, concurrent output of `startup: true` helpers) and in
+  `kit-coord board`, and run on demand with `kit-coord ext <name>`.
 - Document machine setup with a Copilot-only example role set
   (`docs/coordinator/machine-setup.md`).
 

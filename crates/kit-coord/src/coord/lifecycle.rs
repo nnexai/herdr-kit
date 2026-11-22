@@ -275,6 +275,21 @@ fn watcher(
     }
     Ok(())
 }
+
+/// The configured coordinator role, refused with `harness_unavailable` when
+/// its program is not installed. Checked before anything ends or replaces a
+/// running coordinator, so a missing harness never leaves it stopped.
+fn coordinator_role(ctx: &Ctx) -> Result<role::Role> {
+    let role = role::load(&ctx.paths, &ctx.config()?.coordinator_role)?;
+    role.availability(&ctx.path).map_err(|reason| {
+        super::error::refused(
+            "harness_unavailable",
+            format!("coordinator role '{}' cannot start: {reason}", role.name),
+        )
+    })?;
+    Ok(role)
+}
+
 fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> Result<()> {
     let state = j.read_state()?;
     let sp = state
@@ -289,13 +304,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         })
         .map(|r| r.r.name.clone())
         .context("coordinator space missing")?;
-    let role = role::load(&ctx.paths, &ctx.config()?.coordinator_role)?;
-    role.availability(&ctx.path).map_err(|reason| {
-        super::error::refused(
-            "harness_unavailable",
-            format!("coordinator role '{}' cannot start: {reason}", role.name),
-        )
-    })?;
+    let role = coordinator_role(ctx)?;
     let name = format!("coordinator-{}", state.coordinator.sessions_started + 1);
     let dir = ctx.paths.session_dir(&name);
     fs::create_dir_all(&dir)?;
@@ -306,7 +315,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         .filter(|e| state.waking.contains(&e.seq))
         .collect::<Vec<_>>();
     let mut read = views::startup_read(&state, &waking, ctx.now());
-    read.push_str(&super::ext::section(&ctx.paths));
+    read.push_str(&super::ext::section(&ctx.paths, true));
     let msg = brief::coordinator_first(&role, &ctx.cli(), &ctx.role_guidance()?, &read);
     no_links(&path, SymlinkMessage::WithPath)?;
     fs::write(&path, &msg)?;
@@ -386,6 +395,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
     )
 }
 pub fn restart_coordinator(ctx: &Ctx, j: &Journal, reason: &str) -> Result<()> {
+    coordinator_role(ctx)?;
     let address = j
         .read_state()?
         .coordinator
@@ -505,6 +515,7 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
     if if_enabled && !Config::load(&ctx.paths)?.is_some_and(|c| c.autostart) {
         return Ok(json!({"state":"disabled"}));
     }
+    coordinator_role(ctx)?;
     crate::deployment::ensure_current(&ctx.root)?;
     let j = ctx.journal()?;
     let cfg = config_autostart(ctx, &j, true)?;
@@ -1179,6 +1190,32 @@ mod tests {
                 .iter()
                 .any(|entry| entry.kind == "coord.handoff_requested")
         );
+        // A missing coordinator harness refuses the restart before the running
+        // coordinator is ended or killed.
+        let fake = root.join("stub-bin/fake");
+        fs::remove_file(&fake).unwrap();
+        let (specs, calls) = (world.borrow().specs.len(), world.borrow().calls.len());
+        let ended = |ctx: &Ctx| {
+            let entries = ctx.journal().unwrap().read_after(0).unwrap();
+            entries
+                .iter()
+                .filter(|e| e.kind == "coord.session_ended")
+                .count()
+        };
+        let ended_before = ended(&ctx);
+        let refused = restart(&ctx, &Caller::Person { terminal: None }, true).unwrap_err();
+        assert_eq!(
+            super::super::error::exit_of(&refused).0,
+            "harness_unavailable"
+        );
+        assert_eq!(world.borrow().specs.len(), specs);
+        assert!(
+            !world.borrow().calls[calls..]
+                .iter()
+                .any(|c| c.starts_with("kill"))
+        );
+        assert_eq!(ended(&ctx), ended_before);
+        crate::coord::stub_path(root);
         let before = world.borrow().calls.len();
         restart(&ctx, &Caller::Person { terminal: None }, true).unwrap();
         {

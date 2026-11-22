@@ -304,7 +304,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 Output::Json(views::board(&state, None, ctx.now(), all))
             } else {
                 let mut text = views::board_text(&state, ctx.now(), all);
-                text.push_str(&ext::section(&ctx.paths));
+                text.push_str(&ext::section(&ctx.paths, false));
                 Output::Text(text)
             });
         }

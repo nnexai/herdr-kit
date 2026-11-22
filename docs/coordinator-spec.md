@@ -160,10 +160,12 @@ the role's subscription is exhausted; a role cannot fall back to itself).
 
 A role is **available** when the first word of its start command (its resume
 command for a cold resume) is an executable on the `PATH` kit-coord runs
-with. `kit-coord task start`, a cold-resume `task send` and the coordinator
-launch refuse an unavailable role with `harness_unavailable` and the reason
-(for example `agy is not installed (not found on PATH)`) before anything is
-placed or launched.
+with; a first word containing a placeholder is not checked. `kit-coord task
+start`, a cold-resume `task send` and the coordinator launch refuse an
+unavailable role with `harness_unavailable` and the reason (for example
+`agy is not installed (not found on PATH)`) before anything is placed or
+launched. `up`, `restart` and handoffs check the coordinator role before
+ending or replacing the running coordinator.
 
 The coordinator's first message includes "Roles on this machine", derived
 from the effective role files at session start: every available role except
@@ -482,7 +484,7 @@ coordinator space, the watcher, the coordinator agent.
 - The coordinator lives in its own owned space named `coordinator`, in `<data-dir>/coord/home`.
 - Its terminal is named `coordinator`, so `hc send coordinator "..."` always reaches it, and it is pinned to the top of the agents list.
 - Tabs in that space: `coordinator` (the agent) and `watcher` (the watcher's output).
-- Its first message is the built-in coordinator instructions, "Roles on this machine" derived from the local role files, the coordinator role's body as local notes (when not empty), the command reference and a startup read: the latest unconsumed handoff note, Needs you, open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads and questions, and the local extensions with current output for `board: true` ones. Starting the replacement consumes the note, not the blocked items.
+- Its first message is the built-in coordinator instructions, "Roles on this machine" derived from the local role files, the coordinator role's body as local notes (when not empty), the command reference and a startup read: the latest unconsumed handoff note, Needs you, open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads and questions, and the local extensions with the output of `startup: true` ones (run concurrently, at most 10 s). Starting the replacement consumes the note, not the blocked items.
 
 ### Restart
 

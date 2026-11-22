@@ -585,7 +585,7 @@ fn up_is_idempotent_with_live_managed_terminals() {
     fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
     fs::write(
         coord.join("extensions.json"),
-        json!({"quiet-hours":{"description":"Prints quiet during quiet hours.","command":[helper],"board":true}}).to_string(),
+        json!({"quiet-hours":{"description":"Prints quiet during quiet hours.","command":[helper],"startup":true}}).to_string(),
     )
     .unwrap();
     fs::write(
@@ -653,8 +653,11 @@ fn up_is_idempotent_with_live_managed_terminals() {
     );
     assert!(!first.contains("agy-default"));
     assert!(!first.contains("- `test`"));
+    // The board lists extensions without running them: any caller may read it.
     let board = h.run(&["board"]);
-    assert!(String::from_utf8_lossy(&board.stdout).ends_with("  Now: quiet\n"));
+    assert!(String::from_utf8_lossy(&board.stdout).ends_with(
+        "## Local extensions\n\n- `quiet-hours` (`kit ext quiet-hours`): Prints quiet during quiet hours.\n"
+    ));
     assert_eq!(h.ok(&["ext", "quiet-hours"])["output"], "quiet");
 }
 
