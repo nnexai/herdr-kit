@@ -81,6 +81,15 @@ test('receipt actions replace metadata on hover or selection; trace stays scoped
   assert.ok(byId(nodes,'receipt-link-receipt:w-1'));
   assert.ok(!nodes.some(n => n.attributes?.spin),'reduced motion does not animate');
 });
+test('an open trace gets a date separator whenever the day changes',() => {
+  const day = new Date(2020,0,1,23,30).getTime(), next = new Date(2020,0,2,7,15).getTime();
+  const row = {key:'receipt:w',kind:'receipt',title:'Build',text:'',state:'done',ts_ms:day,space:'Repo',duration:'2m',links:[],
+    trace:[{ts_ms:day,text:'Started'},{ts_ms:day+60000,text:'Placed'},{ts_ms:next,text:'Closed'}]};
+  const {view} = fixture({rows:[row]});
+  view.expandedReceipts.add('receipt:w');
+  const texts = all(renderRail(view)).flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.deepEqual(texts.filter(x => /^\w{3} Jan \d, 2020$/.test(x)),['Wed Jan 1, 2020','Thu Jan 2, 2020']);
+});
 test('question clamp measures wrapped lines and expands without truncating text',() => {
   const text = 'A question that wraps over three lines at this width';
   const {view} = fixture({needsYou:[{kind:'question',questionId:'q1',text,title:'Work',ts_ms:1000,options:[]}]});

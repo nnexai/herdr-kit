@@ -38,7 +38,7 @@ The coordinator item in the bottom bar is the only entry point.
   - **Receipt:** one per workstream that has `ws.opened` in the loaded journal or appears on the board; board data wins.
     - Placement: it hangs under the latest person message at most 10 minutes before the workstream opened, with no other message in between. Otherwise it stands alone at its open time.
     - Layout: two lines. Line one has a state glyph (spinner, ✓, !, ?), the title, the space and the duration. Line two is one truncated sentence: progress, outcome, the blocker or "Waiting on you ↑".
-    - Interaction: hover shows "Open terminal" and "Trace". A click toggles the trace, which lists that workstream's events and its terminal and space links.
+    - Interaction: hover shows "Open terminal" and "Trace" in the same fixed-size slot as the space and duration, so the row never shifts. A click toggles the trace, which lists that workstream's events and its terminal and space links. A date separator (Today, Yesterday or a date) precedes the first event of each day.
   - **Echo line:** a workstream gets at most one echo. It is a one-line "✓ title — outcome" that appears only when a person message or reply lies between the receipt and its latest done, blocked or question report. Its ↑ jumps to the receipt.
 - **Working line and composer**
   - **Working line:** the coordinator's real turn step and elapsed time. The pulse stops under reduced motion.

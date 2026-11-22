@@ -2,7 +2,7 @@ import { div, svg } from 'gpui-kit';
 import { h_flex, v_flex, Button, Checkbox, Textarea, TextView, Popover, Input } from 'gpui-base';
 import { theme, settings } from 'herdr';
 import { MOD_NAME } from './runtime.js';
-import { clock, journalRows, journalFields } from './model.js';
+import { clock, dayLabel, journalRows, journalFields } from './model.js';
 
 const tint = (color, alpha) => (color.length === 4 ? '#' + [...color.slice(1)].map(c => c+c).join('') : color.slice(0,7)) + alpha;
 const mono = element => element.font_family('JetBrains Mono');
@@ -96,22 +96,30 @@ function receipt(view,row,t) {
       const next = hovered ? row.key : view.hoveredReceipt === row.key ? null : view.hoveredReceipt;
       if (next !== view.hoveredReceipt) { view.hoveredReceipt = next; cx.notify(); }
     });
-  const top = h_flex().gap(8).items_center().min_w(0);
+  const top = h_flex().gap(8).h(24).items_center().min_w(0);
   top.child(Button.new(`receipt-select-${row.key}`).flex_1().min_w(0).justify_start()
     .accessibility_label(`${open ? 'Hide' : 'Show'} trace for ${row.title || 'workstream'}`)
     .on_click((_e,cx) => { cx.stop_propagation(); view.toggleReceipt(row.key,cx); })
     .child(h_flex().gap(8).items_center().min_w(0).w_full().child(glyph(row.state,t,view))
       .child(div().flex_1().min_w(0).truncate().font_semibold().child(row.title || 'Workstream'))));
-  if (!active) top.child(div().text_size(11).text_color(t.muted).child([row.space,row.duration].filter(Boolean).join('  ')));
+  // One fixed-size slot holds either the meta or the actions, so hovering never moves the row.
+  const slot = h_flex().w(172).h(24).flex_shrink_0().gap(4).items_center().justify_end().overflow_hidden();
+  if (!active) slot.child(div().min_w(0).truncate().text_size(11).text_color(t.muted).child([row.space,row.duration].filter(Boolean).join('  ')));
   else {
-    if (terminal) top.child(button(`terminal-${row.key}`,'Open terminal',cx => view.focusLink(terminal,cx),t,{size:11,px:4}).border(0));
-    top.child(button(`trace-${row.key}`,open ? 'Hide trace' : 'Trace',cx => view.toggleReceipt(row.key,cx),t,{size:11,px:4}).border(0));
+    if (terminal) slot.child(button(`terminal-${row.key}`,'Open terminal',cx => view.focusLink(terminal,cx),t,{size:11,px:4}).border(0));
+    slot.child(button(`trace-${row.key}`,open ? 'Hide trace' : 'Trace',cx => view.toggleReceipt(row.key,cx),t,{size:11,px:4}).border(0));
   }
+  top.child(slot);
   box.child(top).child(div().pl(22).min_w(0).truncate().text_size(12).text_color(row.state === 'question' ? t.blocked : row.state === 'blocked' ? t.working : t.muted).child(row.text || ''));
   if (open) {
-    for (const line of (row.trace || [])) box.child(h_flex().gap(8).pl(22).text_size(12)
-      .child(div().w(40).flex_shrink_0().text_color(t.muted).child(clock(line.ts_ms)))
-      .child(div().flex_1().min_w(0).child(line.text || '')));
+    let day = null;
+    for (const line of (row.trace || [])) {
+      const label = dayLabel(line.ts_ms);
+      if (label !== day) { day = label; box.child(div().pl(22).pt(4).text_size(11).font_semibold().text_color(t.muted).child(label)); }
+      box.child(h_flex().gap(8).pl(22).text_size(12)
+        .child(div().w(40).flex_shrink_0().text_color(t.muted).child(clock(line.ts_ms)))
+        .child(div().flex_1().min_w(0).child(line.text || '')));
+    }
     if (row.text && !(row.trace || []).some(line => line.text?.includes(row.text)))
       box.child(div().pl(70).text_size(12).text_color(t.muted).child(row.text));
     const links = h_flex().gap(8).pl(22).flex_wrap();
