@@ -617,6 +617,18 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
     };
     if let Some(term) = &live_previous {
         send_guard(term)?;
+    } else {
+        // A new or resumed session runs the role's own program on this machine.
+        let program = match (&previous, &role.resume) {
+            (Some(_), Some(resume)) => &resume[0],
+            _ => &role.start[0],
+        };
+        role::program_available(program, &ctx.path).map_err(|reason| {
+            refuse(
+                "harness_unavailable",
+                format!("role '{}' cannot start here: {reason}", role.name),
+            )
+        })?;
     }
     let Placement {
         space,
@@ -1071,6 +1083,12 @@ fn resume_with_message(
             "role resume command must include {brief}",
         ));
     }
+    role::program_available(&template[0], &ctx.path).map_err(|reason| {
+        refuse(
+            "harness_unavailable",
+            format!("role '{}' cannot resume here: {reason}", role.name),
+        )
+    })?;
     let argv = role.expand_resume(&vars, trusted)?;
     fs::write(&path, &message)?;
     let mut intent = ResourceRef::new(ResType::Tab, t.id.as_str());
@@ -1484,6 +1502,7 @@ mod tests {
             clock: Box::new(|| 1000),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         }
     }
     fn person() -> Caller {
@@ -1523,7 +1542,7 @@ mod tests {
             rung: 3,
             reason: "reason".into(),
             brief: "unused".into(),
-            role: Some("coord-light".into()),
+            role: Some("coord-default".into()),
             rejected: vec!["1=no".into()],
             title: None,
             session_of: None,
@@ -1630,6 +1649,7 @@ mod placement_failure_tests {
             clock: Box::new(|| 1000),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(temp.path()),
         };
         let c = Caller::Person { terminal: None };
         let opened = ws_open(
@@ -1653,7 +1673,7 @@ mod placement_failure_tests {
             rung: 5,
             reason: "new project".into(),
             brief: input,
-            role: Some("coord-light".into()),
+            role: Some("coord-default".into()),
             rejected: (1..5).map(|n| format!("{n}=not suitable")).collect(),
             title: None,
             session_of: None,
@@ -1863,6 +1883,7 @@ mod placement_acceptance_tests {
                     clock: Box::new(|| 1000),
                     op: "report".into(),
                     cause: None,
+                    path: Vec::new(),
                 };
                 super::report(
                     &ctx,
@@ -1891,6 +1912,7 @@ mod placement_acceptance_tests {
         });
         ctx.app = Box::new(RecordingApp(shared.clone()));
         ctx.clock = Box::new(|| 1000);
+        ctx.path = crate::coord::stub_path(root);
         (ctx, shared)
     }
     fn person() -> Caller {

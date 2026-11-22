@@ -527,6 +527,7 @@ mod tests {
             clock: Box::new(|| 0),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(tmp.path()),
         };
         let ws = WsId::parse("ws-abcdef").unwrap();
         let task = TaskId::new(&ws, 1);
@@ -626,6 +627,7 @@ mod tests {
             clock: Box::new(|| 0),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(tmp.path()),
         };
         let plan = LaunchPlan {
             name: "identity-test".into(),

@@ -290,6 +290,12 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         .map(|r| r.r.name.clone())
         .context("coordinator space missing")?;
     let role = role::load(&ctx.paths, &ctx.config()?.coordinator_role)?;
+    role.availability(&ctx.path).map_err(|reason| {
+        super::error::refused(
+            "harness_unavailable",
+            format!("coordinator role '{}' cannot start: {reason}", role.name),
+        )
+    })?;
     let name = format!("coordinator-{}", state.coordinator.sessions_started + 1);
     let dir = ctx.paths.session_dir(&name);
     fs::create_dir_all(&dir)?;
@@ -299,11 +305,9 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         .into_iter()
         .filter(|e| state.waking.contains(&e.seq))
         .collect::<Vec<_>>();
-    let msg = brief::coordinator_first(
-        &role,
-        &ctx.cli(),
-        &views::startup_read(&state, &waking, ctx.now()),
-    );
+    let mut read = views::startup_read(&state, &waking, ctx.now());
+    read.push_str(&super::ext::section(&ctx.paths));
+    let msg = brief::coordinator_first(&role, &ctx.cli(), &ctx.role_guidance()?, &read);
     no_links(&path, SymlinkMessage::WithPath)?;
     fs::write(&path, &msg)?;
     let id = if role.session == SessionMode::Preset {
@@ -754,6 +758,7 @@ mod tests {
             clock: Box::new(|| 100_000),
             op: "testop".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         }
     }
 
@@ -886,6 +891,7 @@ mod tests {
                 clock: Box::new(|| 100_000),
                 op: "testop".into(),
                 cause: None,
+                path: crate::coord::stub_path(dir.path()),
             };
             Config::default().save(&ctx.paths).unwrap();
             let j = ctx.journal().unwrap();
@@ -1013,6 +1019,7 @@ mod tests {
                         clock: Box::new(|| 500_000),
                         op: "race".into(),
                         cause: None,
+                        path: crate::coord::stub_path(&self.root),
                     };
                     super::super::reconcile::reconcile(
                         &ctx,
@@ -1129,6 +1136,7 @@ mod tests {
             clock: Box::new(|| 100_000),
             op: "testop".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         };
         assert_eq!(up(&ctx, false).unwrap()["state"], "running");
         {
@@ -1225,6 +1233,7 @@ mod tests {
                 clock: Box::new(|| 100_000),
                 op: "testop".into(),
                 cause: None,
+                path: crate::coord::stub_path(root),
             };
             up(&ctx, false).unwrap();
             let state = ctx.journal().unwrap().read_state().unwrap();
@@ -1314,6 +1323,7 @@ mod tests {
             clock: Box::new(|| 100_000),
             op: "testop".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         };
         up(&ctx, false).unwrap();
         let state = ctx.journal().unwrap().read_state().unwrap();

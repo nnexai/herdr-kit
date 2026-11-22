@@ -288,6 +288,8 @@ function roleDetail(view, t) {
       {height: 26, color: removable === 'reset' ? t.working : t.blocked}));
   }
   const fields = [
+    ...(role.description ? [['About', role.description, false]] : []),
+    ...(role.available === false ? [['Status', role.unavailable_reason || 'Cannot start on this machine', false]] : []),
     ['Harness', role.harness || '—', false],
     ['Model', role.model || '—', true],
     ['Effort', role.effort || '—', false],
@@ -295,6 +297,7 @@ function roleDetail(view, t) {
     ['Start', role.start || '—', true],
     ['Resume', role.resume || '—', true],
     ...(role.trust ? [['Trust', role.trust, true]] : []),
+    ...(role.fallback?.length ? [['Fallback', role.fallback.join(' → '), false]] : []),
   ];
   const body = v_flex().id('roles-detail').flex_1().min_h(0).overflow_y_scrollbar().px(12).pt(12).pb(12).gap(10);
   const meta = v_flex().gap(6);

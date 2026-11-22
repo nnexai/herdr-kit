@@ -671,6 +671,7 @@ mod tests {
             clock: Box::new(|| 100),
             op: "test".into(),
             cause: None,
+            path: Vec::new(),
         }
     }
     #[test]

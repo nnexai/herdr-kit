@@ -20,6 +20,7 @@ pub struct CoordPaths {
     pub results: PathBuf,
     pub sessions: PathBuf,
     pub roles: PathBuf,
+    pub extensions: PathBuf,
     pub computer_config: PathBuf,
     pub home: PathBuf,
 }
@@ -39,6 +40,7 @@ impl CoordPaths {
             results: dir.join("results"),
             sessions: dir.join("sessions"),
             roles: dir.join("roles"),
+            extensions: dir.join("extensions.json"),
             computer_config: dir.join("omp-computer.yml"),
             home: dir.join("home"),
             dir,
@@ -76,6 +78,7 @@ impl CoordPaths {
             &self.heartbeat,
             &self.config,
             &self.computer_config,
+            &self.extensions,
         ] {
             no_links(file, SymlinkMessage::WithPath)?;
         }

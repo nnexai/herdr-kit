@@ -15,6 +15,15 @@ struct Harness {
     /// A repository exported to kit-coord the way a git hook exports its own.
     inherited_git: Option<PathBuf>,
 }
+/// Programs the fake `hc` script and kit-coord itself run, linked into the
+/// isolated test `PATH`.
+const TOOLS: [&str; 9] = [
+    "basename", "mkdir", "ls", "grep", "sort", "head", "cat", "rm", "git",
+];
+/// Agent programs the tests pretend are installed: the known harnesses and
+/// the `runner` used by test role files.
+const PROGRAMS: [&str; 6] = ["omp", "agy", "claude", "codex", "copilot", "runner"];
+
 impl Harness {
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
@@ -28,6 +37,20 @@ impl Harness {
             .unwrap();
             fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let search = std::env::var_os("PATH").unwrap();
+        for tool in TOOLS {
+            let found = std::env::split_paths(&search)
+                .map(|dir| dir.join(tool))
+                .find(|p| p.is_file())
+                .unwrap_or_else(|| panic!("{tool} not found on PATH"));
+            std::os::unix::fs::symlink(found, bin.join(tool)).unwrap();
+        }
+        for program in PROGRAMS {
+            fs::write(bin.join(program), "#!/bin/sh\nexit 0\n").unwrap();
+            fs::set_permissions(bin.join(program), fs::Permissions::from_mode(0o755)).unwrap();
+        }
         Self {
             tmp,
             hc,
@@ -38,9 +61,21 @@ impl Harness {
     fn root(&self) -> &Path {
         self.tmp.path()
     }
+    /// Copy the multi-harness test role set into the data dir's local roles.
+    fn install_roles(&self) {
+        install_roles(
+            self,
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/roles"),
+        );
+    }
+    /// Make `program` uninstalled on the test `PATH`.
+    fn uninstall(&self, program: &str) {
+        fs::remove_file(self.root().join("bin").join(program)).unwrap();
+    }
     fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_kit-coord"));
         c.env("HOME", self.root())
+            .env("PATH", self.root().join("bin"))
             .env("FAKE_DIR", self.root().join("fake"))
             .env("KIT_COORD_HC", &self.hc)
             .env("KIT_COORD_HERDR_APP", &self.app)
@@ -105,6 +140,15 @@ impl Harness {
             .as_str()
             .unwrap()
             .to_owned()
+    }
+}
+
+fn install_roles(h: &Harness, from: &str) {
+    let roles = h.root().join("data/coord/roles");
+    fs::create_dir_all(&roles).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        fs::copy(&path, roles.join(path.file_name().unwrap())).unwrap();
     }
 }
 
@@ -531,9 +575,19 @@ fn empty_status_is_schema_versioned() {
 #[test]
 fn up_is_idempotent_with_live_managed_terminals() {
     let h = Harness::new();
+    h.install_roles();
+    h.uninstall("agy");
     let coord = h.root().join("data/coord");
     fs::create_dir_all(coord.join("roles")).unwrap();
     fs::write(coord.join("roles/test.md"),"---\nharness: omp\nstart: runner {session_id} {brief}\nsession: preset\n---\nCoordinator\n").unwrap();
+    let helper = h.root().join("quiet-hours");
+    fs::write(&helper, "#!/bin/sh\necho quiet\n").unwrap();
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        coord.join("extensions.json"),
+        json!({"quiet-hours":{"description":"Prints quiet during quiet hours.","command":[helper],"board":true}}).to_string(),
+    )
+    .unwrap();
     fs::write(
         coord.join("config.json"),
         json!({"coordinator_role":"test"}).to_string(),
@@ -577,6 +631,31 @@ fn up_is_idempotent_with_live_managed_terminals() {
     assert_eq!(runs.len(), 2);
     assert!(runs[0].contains("coord.role=watcher"));
     assert!(runs[1].contains("coord.role=coordinator"));
+    // The first message: product instructions, role guidance derived from this
+    // machine's role files, the coordinator role body as local notes, and the
+    // startup read ending with the local extensions.
+    let first = fs::read_to_string(coord.join("briefs/coordinator-1.md")).unwrap();
+    let at = |text: &str| {
+        first
+            .find(text)
+            .unwrap_or_else(|| panic!("{text}\n{first}"))
+    };
+    assert!(at("You are the coordinator") < at("## Roles on this machine"));
+    assert!(
+        at("- `coord-light`: Quick, mechanical")
+            < at("## Local coordinator notes\n\nCoordinator\n")
+    );
+    assert!(
+        at("## Startup read")
+            < at(
+                "## Local extensions\n\n- `quiet-hours` (`kit ext quiet-hours`): Prints quiet during quiet hours.\n  Now: quiet\n"
+            )
+    );
+    assert!(!first.contains("agy-default"));
+    assert!(!first.contains("- `test`"));
+    let board = h.run(&["board"]);
+    assert!(String::from_utf8_lossy(&board.stdout).ends_with("  Now: quiet\n"));
+    assert_eq!(h.ok(&["ext", "quiet-hours"])["output"], "quiet");
 }
 
 fn init_repo(h: &Harness, name: &str) -> PathBuf {
@@ -1034,6 +1113,7 @@ fn rail_send_obeys_terminal_lock_and_size_bound() {
 #[test]
 fn agy_delegate_discovers_conversation_reports_and_resumes() {
     let h = Harness::new();
+    h.install_roles();
     let roles = h.ok(&["roles"])["roles"].as_array().unwrap().clone();
     let agy_role = roles.iter().find(|r| r["name"] == "agy-default").unwrap();
     assert_eq!(agy_role["harness"], "agy");
@@ -1156,7 +1236,7 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
             "-i"
         ]
     );
-    assert!(argv[sep + 7].starts_with("You are a delegate working on one task"));
+    assert!(argv[sep + 7].starts_with("You are an Antigravity CLI delegate"));
     assert!(calls.contains("Implement harness support"));
 
     // Startup (turn 0): refused as agent_not_ready.
@@ -1405,6 +1485,7 @@ fn claude_roles_expand_model_effort_and_resume_cleanly() {
 #[test]
 fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed() {
     let h = Harness::new();
+    h.install_roles();
     let worktree_root = h.root().join("worktrees");
     fs::create_dir_all(h.root().join("data/coord")).unwrap();
     fs::write(
@@ -1736,6 +1817,7 @@ fn codex_compact_model_option_conflict_is_rejected_and_standalone_compact_model_
 #[test]
 fn trust_override_is_confined_to_workstream_repo_checkouts() {
     let h = Harness::new();
+    h.install_roles();
     let worktree_root = h.root().join("worktrees");
     fs::create_dir_all(h.root().join("data/coord")).unwrap();
     fs::write(
@@ -2232,9 +2314,10 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
     use std::process::Stdio;
 
     let h = Harness::new();
+    h.install_roles();
     let roles_dir = h.root().join("data/coord/roles");
 
-    // 1. View list and single built-in role as JSON with source, resolved fields, and prompt body.
+    // 1. View list and a single local role as JSON with source, resolved fields, and prompt body.
     let list = h.ok(&["roles"]);
     let agy_item = list["roles"]
         .as_array()
@@ -2242,10 +2325,19 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
         .iter()
         .find(|r| r["name"] == "agy-default")
         .unwrap();
-    assert_eq!(agy_item["source"], "builtin");
+    assert_eq!(agy_item["source"], "file");
     assert_eq!(agy_item["overrides_builtin"], false);
     assert_eq!(agy_item["harness"], "agy");
     assert_eq!(agy_item["model"], "gemini-4-neon-high");
+    assert_eq!(agy_item["available"], true);
+    assert!(agy_item["unavailable_reason"].is_null());
+    assert_eq!(agy_item["fallback"], json!(["coord-deep"]));
+    assert!(
+        agy_item["description"]
+            .as_str()
+            .unwrap()
+            .contains("second opinions")
+    );
     assert!(
         agy_item["body"]
             .as_str()
@@ -2255,7 +2347,7 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
 
     let agy_one = h.ok(&["roles", "agy-default"]);
     assert_eq!(agy_one["name"], "agy-default");
-    assert_eq!(agy_one["source"], "builtin");
+    assert_eq!(agy_one["source"], "file");
     assert_eq!(agy_one["start"], "agy -i {brief}");
     assert_eq!(
         agy_one["resume"],
@@ -2366,44 +2458,76 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
     );
 
     // 6. Edit a built-in role -> creates override file, source becomes "override", --defaults still shows original.
-    let overridden = h.ok(&["roles", "edit", "agy-default", "--effort", "high"]);
+    let overridden = h.ok(&[
+        "roles",
+        "edit",
+        "coord-default",
+        "--model",
+        "@task",
+        "--description",
+        "Everyday work; generous subscription.",
+        "--fallback",
+        "coord-light,agy-default",
+    ]);
     assert_eq!(overridden["action"], "updated");
     assert_eq!(overridden["role"]["source"], "override");
     assert_eq!(overridden["role"]["overrides_builtin"], true);
-    assert_eq!(overridden["role"]["effort"], "high");
-    assert!(roles_dir.join("agy-default.md").is_file());
+    assert_eq!(overridden["role"]["model"], "@task");
+    assert_eq!(
+        overridden["role"]["description"],
+        "Everyday work; generous subscription."
+    );
+    assert_eq!(
+        overridden["role"]["fallback"],
+        json!(["coord-light", "agy-default"])
+    );
+    assert!(roles_dir.join("coord-default.md").is_file());
+    rail_error(
+        h.run(&[
+            "roles",
+            "edit",
+            "coord-default",
+            "--fallback",
+            "coord-default",
+        ]),
+        "role_invalid",
+        3,
+    );
+    let cleared = h.ok(&["roles", "edit", "coord-default", "--clear-fallback"]);
+    assert_eq!(cleared["role"]["fallback"], json!([]));
+    assert_eq!(cleared["role"]["model"], "@task");
 
     let listed_override = h.ok(&["roles"])["roles"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|r| r["name"] == "agy-default")
+        .find(|r| r["name"] == "coord-default")
         .unwrap()
         .clone();
     assert_eq!(listed_override["source"], "override");
-    assert_eq!(listed_override["effort"], "high");
+    assert_eq!(listed_override["model"], "@task");
 
-    let default_view = h.ok(&["roles", "--defaults", "agy-default"]);
+    let default_view = h.ok(&["roles", "--defaults", "coord-default"]);
     assert_eq!(default_view["source"], "builtin");
-    assert!(default_view["effort"].is_null());
+    assert!(default_view["model"].is_null());
 
     // Delete on built-in override is refused with guidance to use reset.
     rail_error(
-        h.run(&["roles", "delete", "agy-default"]),
+        h.run(&["roles", "delete", "coord-default"]),
         "cannot_delete_builtin",
         3,
     );
 
     // 7. Reset built-in override -> removes override file, source returns to "builtin".
-    let reset = h.ok(&["roles", "reset", "agy-default"]);
+    let reset = h.ok(&["roles", "reset", "coord-default"]);
     assert_eq!(reset["action"], "reset");
     assert_eq!(reset["role"]["source"], "builtin");
-    assert!(reset["role"]["effort"].is_null());
-    assert!(!roles_dir.join("agy-default.md").exists());
+    assert!(reset["role"]["model"].is_null());
+    assert!(!roles_dir.join("coord-default.md").exists());
 
     // Reset again when not overridden -> refused.
     rail_error(
-        h.run(&["roles", "reset", "agy-default"]),
+        h.run(&["roles", "reset", "coord-default"]),
         "role_not_overridden",
         3,
     );
@@ -2417,7 +2541,7 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
     assert!(!roles_dir.join("agy-fast.md").exists());
     rail_error(h.run(&["roles", "agy-fast"]), "role_not_found", 3);
     rail_error(
-        h.run(&["roles", "delete", "agy-default"]),
+        h.run(&["roles", "delete", "coord-default"]),
         "cannot_delete_builtin",
         3,
     );
@@ -2582,6 +2706,7 @@ fn roles_usage_task_start_exhausted_refusal_override_and_computer_overlay() {
     use std::os::unix::fs::PermissionsExt;
 
     let h = Harness::new();
+    h.install_roles();
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -2699,7 +2824,7 @@ fn roles_usage_task_start_exhausted_refusal_override_and_computer_overlay() {
     assert!(roles_out.status.success());
     let roles: Value = serde_json::from_slice(&roles_out.stdout).unwrap();
     let list = roles["roles"].as_array().unwrap();
-    assert_eq!(list.len(), 8);
+    assert_eq!(list.len(), 7, "two built-ins and five local test roles");
     let deep = list.iter().find(|r| r["name"] == "coord-deep").unwrap();
     assert_eq!(deep["resolved_model"], "anthropic/claude-opus-5-5:high");
     assert_eq!(deep["usage"]["provider"], "claude");
@@ -2891,4 +3016,191 @@ fn roles_usage_task_start_exhausted_refusal_override_and_computer_overlay() {
         "steering_unsupported",
         4,
     );
+}
+
+/// Start `role` as a rung-3 task in a fake existing space and return the
+/// command output and the launched argv (the brief is the last element).
+fn start_role(h: &Harness, ws: &str, role: &str) -> (Output, Vec<String>) {
+    let n = h
+        .journal()
+        .iter()
+        .filter(|e| e["kind"] == "task.placed")
+        .count()
+        + 1;
+    let task = format!("{ws}-t{n}");
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Do the work").unwrap();
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+    let out = h.run(&[
+        "task",
+        "start",
+        "--ws",
+        ws,
+        "--rung",
+        "3",
+        "--reason",
+        "work",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--role",
+        role,
+        "--space",
+        "existing",
+        "--reject",
+        "1=no",
+        "--reject",
+        "2=no",
+    ]);
+    let calls = h.calls("hc");
+    let argv = calls
+        .split("\trun\t")
+        .nth(n)
+        .and_then(|run| run.split_once("\t--\t"))
+        .map(|(_, argv)| argv.split('\t').map(str::to_owned).collect())
+        .unwrap_or_default();
+    (out, argv)
+}
+
+fn guidance(h: &Harness) -> String {
+    let out = h.run(&["roles", "--guidance"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+#[test]
+fn roles_of_a_missing_harness_are_not_startable_and_left_out_of_guidance() {
+    let h = Harness::new();
+    h.install_roles();
+    h.uninstall("agy");
+    let roles = h.ok(&["roles"]);
+    let role = |name: &str| {
+        roles["roles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    for name in ["agy-default", "coord-design"] {
+        assert_eq!(role(name)["available"], false);
+        assert_eq!(
+            role(name)["unavailable_reason"],
+            "agy is not installed (not found on PATH)"
+        );
+    }
+    assert_eq!(role("coord-light")["available"], true);
+
+    let text = guidance(&h);
+    assert!(!text.contains("agy"), "{text}");
+    assert!(!text.contains("coord-design"), "{text}");
+    assert!(!text.contains("coord-main"), "{text}");
+    assert!(
+        text.contains("- `coord-light`: Quick, mechanical"),
+        "{text}"
+    );
+    assert!(text.contains("- `coord-computer`: Computer use"), "{text}");
+    assert!(text.contains("Fallback: `coord-default`."), "{text}");
+    assert!(text.contains("2 more role(s) cannot start here"), "{text}");
+
+    let ws = h.open();
+    let (out, argv) = start_role(&h, &ws, "agy-default");
+    rail_error(out, "harness_unavailable", 3);
+    assert!(argv.is_empty());
+    assert!(!h.calls("hc").contains("\trun\t"));
+    assert!(h.journal().iter().all(|e| e["kind"] != "task.placed"));
+
+    let (out, argv) = start_role(&h, &ws, "coord-light");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        argv[..3],
+        ["omp", "--model", "openai-codex/gpt-6-luna:medium"]
+    );
+}
+
+#[test]
+fn copilot_only_role_set_lists_guides_and_expands_start_commands() {
+    let h = Harness::new();
+    for program in ["agy", "claude", "codex"] {
+        h.uninstall(program);
+    }
+    install_roles(
+        &h,
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/coordinator/examples/roles/copilot-only"
+        ),
+    );
+    let roles = h.ok(&["roles"])["roles"].as_array().unwrap().clone();
+    let names: Vec<_> = roles.iter().map(|r| r["name"].as_str().unwrap()).collect();
+    assert_eq!(
+        names,
+        [
+            "coord-deep",
+            "coord-default",
+            "coord-design",
+            "coord-main",
+            "coord-review",
+            "copilot-cli"
+        ]
+    );
+    for role in &roles {
+        assert_eq!(role["available"], true, "{role}");
+        assert_eq!(role["usage"]["provider"], "copilot", "{role}");
+    }
+    let design = roles.iter().find(|r| r["name"] == "coord-design").unwrap();
+    assert_eq!(design["model"], "github-copilot/gemini-4-neon:high");
+    assert_eq!(design["steering"], true);
+
+    let text = guidance(&h);
+    assert!(!text.contains("coord-main"), "{text}");
+    assert!(!text.contains("cannot start here"), "{text}");
+    assert!(text.contains(
+        "- `coord-design`: UI/UX, interaction and visual design on Gemini Neon through the Copilot provider.\n  `omp`, model `github-copilot/gemini-4-neon:high`, `copilot` subscription, steering. Fallback: `coord-deep`.\n"
+    ), "{text}");
+    assert!(text.contains(
+        "- `copilot-cli`: GitHub Copilot CLI delegate for a second opinion from another harness; no mid-turn steering.\n  `copilot`, model `auto`, `copilot` subscription. Fallback: `coord-default`.\n"
+    ), "{text}");
+
+    let ws = h.open();
+    let (out, argv) = start_role(&h, &ws, "coord-design");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        argv[..4],
+        [
+            "omp",
+            "--model",
+            "github-copilot/gemini-4-neon:high",
+            "--session-dir"
+        ]
+    );
+    assert!(argv[5].starts_with("You are a UI/UX and visual design delegate"));
+    let (out, argv) = start_role(&h, &ws, "copilot-cli");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(argv[..4], ["copilot", "--model", "auto", "--session-id"]);
+    assert_eq!(argv[5], "-i");
+    assert!(argv[6].starts_with("You are a delegate working on one task"));
 }

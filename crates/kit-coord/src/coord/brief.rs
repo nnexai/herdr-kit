@@ -29,7 +29,13 @@ pub fn follow_up(brief: &str, cli: &str, result: &Path) -> String {
     format!("{}\n\n{}", brief, footer(cli, result))
 }
 
-pub fn coordinator_first(role: &Role, cli: &str, startup_read: &str) -> String {
+/// The coordinator's product instructions; the same on every machine.
+pub const COORDINATOR: &str = include_str!("coordinator.md");
+
+/// The coordinator's first message: the product instructions, the role
+/// guidance derived from this machine's role files, the coordinator role's
+/// body as local notes, the command reference and the startup read.
+pub fn coordinator_first(role: &Role, cli: &str, guidance: &str, startup_read: &str) -> String {
     const LIMIT: usize = 32 * 1024;
     let read = if startup_read.len() > LIMIT {
         let notice = format!("\n\nStartup read truncated; run `{cli} board` for the full board.");
@@ -41,17 +47,25 @@ pub fn coordinator_first(role: &Role, cli: &str, startup_read: &str) -> String {
     } else {
         startup_read.to_owned()
     };
+    let notes = if role.body.is_empty() {
+        String::new()
+    } else {
+        format!("## Local coordinator notes\n\n{}\n\n", role.body)
+    };
     format!(
         r#"{}
 
-## Commands
+{}
+
+{notes}## Commands
 `kit` is: {cli}
-Read commands: kit board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | roles | stats --json [--since DURATION]
+Read commands: kit board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | roles [NAME] | ext [NAME] | stats --json [--since DURATION]
 Coordinator commands (optional global --cause SEQ): kit inbox ack <SEQ> | ws open --title TEXT --target TEXT [--request TEXT] [--repo PATH] [--delivery-branch REF] [--purpose TEXT] | ws close <WS> --summary TEXT [--outcome delivered|partial|abandoned] | ws list [--all] | task start --ws WS --rung 1..5 --reason TEXT --brief FILE [--request TEXT] [--follows TASK --relation follow_up|rework|escalation] [--role NAME] [--reject N=REASON]... [--title TEXT] [--session-of TASK] [--space ID] [--branch NAME] [--base REF] [--folder PATH] | task send <TASK> (--text TEXT | --file FILE) | task close <TASK> --reason TEXT --outcome accepted|rejected|superseded|abandoned | release <WS> | decide --what TEXT --why TEXT --tier silent|digest|ask [--ws WS] [--task TASK] [--…
 
 ## Startup read
 {read}"#,
-        role.body
+        COORDINATOR.trim_end(),
+        guidance.trim_end(),
     )
 }
 
@@ -100,9 +114,27 @@ mod tests {
             for_argv("x".repeat(96 * 1024 + 1), result),
             "Read your full brief in /tmp/result.md before doing anything else."
         );
-        let startup = coordinator_first(&role, "kit", &"é".repeat(20_000));
+        let guidance = "## Roles on this machine\n\n- `coord-default`: General.\n";
+        let startup = coordinator_first(&role, "kit", guidance, &"é".repeat(20_000));
         assert!(startup.contains("run `kit board`"));
         assert!(!startup.contains(&"é".repeat(20_000)));
+        let order = [
+            "You are the coordinator",
+            "## Roles on this machine",
+            "## Commands",
+            "## Startup read",
+        ]
+        .map(|h| startup.find(h).unwrap());
+        assert!(order.is_sorted(), "{order:?}");
+        assert!(!startup.contains("## Local coordinator notes"));
+        let local = Role {
+            body: "Prefer the person's own space.".into(),
+            ..role
+        };
+        let noted = coordinator_first(&local, "kit", guidance, "read");
+        assert!(noted.contains(
+            "- `coord-default`: General.\n\n## Local coordinator notes\n\nPrefer the person's own space.\n\n## Commands"
+        ));
         assert_eq!(title_of("\n  hello  \nmore"), "hello");
         assert_eq!(title_of(&"é".repeat(90)).chars().count(), 80);
     }

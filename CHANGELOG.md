@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Make the coordinator machine-neutral. kit-coord now ships only the
+  coordinator instructions and two portable built-in roles (`coord-main`,
+  `coord-default`, both `omp` on the harness default model); a machine's role
+  set, models, subscriptions and fallbacks are local files in
+  `<data-dir>/coord/roles/`. Roles gain `description` and `fallback` fields,
+  and the coordinator's first message lists the roles that can start on the
+  machine, derived from them (`kit-coord roles --guidance`). The coordinator
+  role's body is added to the built-in instructions as local notes instead of
+  replacing them.
+- Detect missing harnesses: `kit-coord roles` reports `available` and
+  `unavailable_reason`, and task start, cold-resume sends and coordinator
+  launch refuse a role whose program is not on `PATH` (`harness_unavailable`).
+  The Roles view marks such roles and shows descriptions and fallbacks.
+- Add local extensions: helper commands configured in
+  `<data-dir>/coord/extensions.json` appear in the coordinator's startup read
+  and `kit-coord board`, and run on demand with `kit-coord ext <name>`.
+- Document machine setup with a Copilot-only example role set
+  (`docs/coordinator/machine-setup.md`).
+
 - Add `kit-deck` (`crates/kit-deck`), a standalone OpenDeck / OpenAction Rust
   Stream Deck extension (`dev.herdr.kit.sdPlugin`) surfacing live `hc events`
   agents, Agent Inbox / Coordinator needs-you items with hold-to-reply actions,

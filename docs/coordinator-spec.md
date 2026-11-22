@@ -53,6 +53,9 @@ coord/
   briefs/<task>.md        the exact brief each delegate received
   results/<task>.md       long results written by delegates
   sessions/<task>/        harness session storage, where the harness allows it
+  config.json             watcher timings and the coordinator role (local)
+  roles/<name>.md         this machine's roles and built-in overrides (local)
+  extensions.json         this machine's helper commands for the coordinator (local, optional)
 ```
 
 The journal is the only thing written by hand-off points; `state.json` is
@@ -84,8 +87,8 @@ decide, and the CLI executes and records in one step.
 
 | Caller | Verbs |
 |---|---|
-| Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>` |
-| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff` |
+| Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>`, `roles [--guidance]`, `ext [name]` |
+| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff`, `roles`, `ext [name]` |
 | Delegate | `report done\|blocked\|question\|progress [--result <file>]`, `note` |
 | Watcher | `watch` |
 
@@ -138,26 +141,44 @@ hc's own templates were tested and are not used: their command is fixed text,
 so a per-task session folder cannot be passed, and they always add the
 `<hc from … reach …>` wrapper described above.
 
-Defaults are built into herdr-kit. A file of the same name in `roles/`
-overrides the built-in one and is never written by updates; `kit-coord roles
---defaults` prints the current built-ins for comparison.
+Only a portable baseline is built into herdr-kit; each machine's role set is
+local. A file in `roles/` adds a role or overrides the built-in of the same
+name and is never written by updates; `kit-coord roles --defaults` prints the
+built-ins for comparison. Setting up a machine, including a Copilot-only
+example role set, is described in
+[machine setup](coordinator/machine-setup.md).
 
-| Role | Harness | Model / effort | Session | Steering | Used for |
+| Built-in | Harness | Model | Session | Steering | Used for |
 |---|---|---|---|---|---|
-| `coord-main` | `omp` | `@plan` | `dir` | `true` | The coordinator |
-| `coord-light` | `omp` | `openai-codex/gpt-6-luna:medium` | `dir` | `true` | Quick, mechanical, tightly specified tasks (cheapest; generous `codex` sub) |
-| `coord-default` | `omp` | `@task` | `dir` | `true` | Everyday SWE: clear-goal features, refactors, localized bug fixes |
-| `coord-deep` | `omp` | `@plan` | `dir` | `true` | Complex tasks: novel/larger builds, open architecture, hard multi-file bug fixes |
-| `coord-design` | `agy` | `gemini-4-neon-high` | `agy-conversation` | `true` | UI/UX, interaction, layout and visual design on Gemini 4 Neon (High) |
-| `coord-review` | `omp` | `@advisor` | `dir` | `true` | Primary bug hunter and read-only code reviewer (Sol 6.2; never builds) |
-| `coord-computer` | `omp` | `@design` (`--config {computer_config}`) | `dir` | `true` | Computer use: browsers, native apps, local scripts and SSH on other machines |
-| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | `true` | Antigravity CLI delegate on Gemini 4 Neon (High): bug-hunting cross-check, second opinion and cross-provider fallback |
+| `coord-main` | `omp` | harness default | `dir` | `true` | The coordinator; its body is added to the built-in coordinator instructions as local notes |
+| `coord-default` | `omp` | harness default | `dir` | `true` | General delegate for any task |
+
+Two front-matter fields are for the coordinator, not the agent:
+`description` (one line: what the role is for, with cost and subscription
+notes) and `fallback` (space-separated roles to use instead, in order, when
+the role's subscription is exhausted; a role cannot fall back to itself).
+
+A role is **available** when the first word of its start command (its resume
+command for a cold resume) is an executable on the `PATH` kit-coord runs
+with. `kit-coord task start`, a cold-resume `task send` and the coordinator
+launch refuse an unavailable role with `harness_unavailable` and the reason
+(for example `agy is not installed (not found on PATH)`) before anything is
+placed or launched.
+
+The coordinator's first message includes "Roles on this machine", derived
+from the effective role files at session start: every available role except
+the coordinator role, with its description, harness, model (and the resolved
+OMP model role), subscription provider, steering and resumability, and the
+fallbacks that are themselves available. Unavailable or invalid roles are
+left out and counted in one line pointing at `kit-coord roles`. `kit-coord
+roles --guidance` prints the same text.
 
 `kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
-`override`, resolved harness, model, `resolved_model`, effort, session mode,
+`override`, `available`, `unavailable_reason`, `description`, `fallback`,
+resolved harness, model, `resolved_model`, effort, session mode,
 start/resume/trust commands, resumability, `steering`, prompt `body`, and live
 per-role subscription `usage` read via `kit_core::usage` from the shared
-`<data-dir>/usage/snapshot.json` cache). `kit-coord roles coord-design` returns
+`<data-dir>/usage/snapshot.json` cache). `kit-coord roles <name>` returns
 that single role as JSON without launching a delegate; `kit-coord roles
 --defaults [name]` inspects the shipped defaults offline.
 
@@ -171,13 +192,13 @@ into a single `--settings` JSON object so `kit-coord task send` steers working
 `agy` delegates mid-turn reliably.
 
 To set up, edit, or remove roles via the CLI (validated before atomic write;
-additional harnesses `claude`, `codex`, `copilot` remain built into
-`harness_defaults()` for on-demand creation):
+`harness_defaults()` supplies start, resume, session, trust and steering
+defaults for `omp`, `agy`, `claude`, `codex` and `copilot`):
 
 ```sh
-kit-coord roles create <name> --from agy-default --model <m> [--effort <e>] [--steering true|false] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles create <name> --from <role> --model <m> [--effort <e>] [--steering true|false] [--description <text>] [--fallback "<role> <role>"] [--prompt <text> | --prompt-file <path|->]
 kit-coord roles create <name> --harness claude --model sonnet [--start ...] [--resume ...] [--session ...] [--trust ...]
-kit-coord roles edit <name> [--model <m> | --clear-model] [--effort <e> | --clear-effort] [--steering true|false] [--harness ...] [--start ...] [--resume ... | --clear-resume] [--session ...] [--trust ... | --clear-trust] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles edit <name> [--model <m> | --clear-model] [--effort <e> | --clear-effort] [--steering true|false] [--description <text> | --clear-description] [--fallback <roles> | --clear-fallback] [--harness ...] [--start ...] [--resume ... | --clear-resume] [--session ...] [--trust ... | --clear-trust] [--prompt <text> | --prompt-file <path|->]
 kit-coord roles reset <name>    # revert a built-in override
 kit-coord roles delete <name>   # remove a custom file role
 ```
@@ -345,7 +366,7 @@ worktrees are laid out.
 | Harness | New worktree asks? | What removes the question |
 |---|---|---|
 | omp | No | Nothing needed |
-| agy | Yes, for any workspace path not listed in `settings.json` `trustedWorkspaces` (parent-folder and repo-root trust are not inherited) | Per-session `--settings '{"trustedWorkspaces":["<launch cwd>"]}'` (never saved to `~/.gemini/antigravity-cli/settings.json`). Merges top-level settings keys (preserving `model`, `colorScheme`, `toolPermission`, `allowNonWorkspaceAccess`, `altScreenMode`) while scoping `trustedWorkspaces` to the delegate's launch directory only. Applied via `agy-default.md` `trust:` only when the workstream's repo is already trusted by the person and the resolved launch directory belongs to that repository. |
+| agy | Yes, for any workspace path not listed in `settings.json` `trustedWorkspaces` (parent-folder and repo-root trust are not inherited) | Per-session `--settings '{"trustedWorkspaces":["<launch cwd>"]}'` (never saved to `~/.gemini/antigravity-cli/settings.json`). Merges top-level settings keys (preserving `model`, `colorScheme`, `toolPermission`, `allowNonWorkspaceAccess`, `altScreenMode`) while scoping `trustedWorkspaces` to the delegate's launch directory only. Applied via an `agy` role's `trust:` flags (the `harness_defaults()` value for `agy`) only when the workstream's repo is already trusted by the person and the resolved launch directory belongs to that repository. |
 | codex | Yes, in any git repo not yet trusted. Trust of a parent folder is not inherited. | Trust belongs to the repository root, so a worktree of a trusted repo does not ask. Per launch, without saving anything: `-c 'projects={ "<repo root>" = { trust_level = "trusted" } }'` |
 | claude | Yes. Being a worktree of a trusted repo does not help. | Trust of a parent folder is inherited: trusting the worktree root once covers every worktree below it |
 | copilot | Yes | A remembered folder covers its subfolders, and also a worktree elsewhere whose main repo is inside a remembered folder. `--trust-folder` is prompt-mode (`-p`) only (not interactive `-i`), and `COPILOT_ALLOW_ALL=true` approves all tools as well |
@@ -461,7 +482,7 @@ coordinator space, the watcher, the coordinator agent.
 - The coordinator lives in its own owned space named `coordinator`, in `<data-dir>/coord/home`.
 - Its terminal is named `coordinator`, so `hc send coordinator "..."` always reaches it, and it is pinned to the top of the agents list.
 - Tabs in that space: `coordinator` (the agent) and `watcher` (the watcher's output).
-- Its first message is the `coord-main` role's instructions plus a startup read: the latest unconsumed handoff note, Needs you, open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads and questions. Starting the replacement consumes the note, not the blocked items.
+- Its first message is the built-in coordinator instructions, "Roles on this machine" derived from the local role files, the coordinator role's body as local notes (when not empty), the command reference and a startup read: the latest unconsumed handoff note, Needs you, open workstreams with summaries, undrained events, recent decisions, standing instructions, open threads and questions, and the local extensions with current output for `board: true` ones. Starting the replacement consumes the note, not the blocked items.
 
 ### Restart
 
@@ -610,12 +631,14 @@ and watch the journal, which is the cheapest way to find design errors.
 
 ```
 ---
+description: Second opinions from another provider.   # optional; shown to the coordinator
 harness: agy
 model: gemini-4-neon-high   # optional; injected into start natively or via {model}
 effort: high                # optional; injected into start natively or via {effort}
 start: agy -i {brief}
 resume: agy --conversation {session_id} -i {brief}
 session: agy-conversation   # dir | preset | codex-rollout | agy-conversation | none
+fallback: coord-default     # optional; roles to use instead, in order
 ---
 Standing instructions for this role.
 ```
@@ -625,7 +648,8 @@ Standing instructions for this role.
 - `model` and `effort` are plain front-matter config choices injected into `start` (never `resume`) using each known harness's native flags (`--model`/`-m`, `--effort`/`--thinking`), or substituted into `{model}`/`{effort}` placeholders in `start` for custom harnesses (`{model}` and `{effort}` are rejected in `resume`).
 - `steering` (`true` or `false`) is an optional front-matter setting (defaults to `true` for `omp` and `agy`, `false` for other harnesses). On steering-enabled `agy` roles, `kit-coord` merges `{"queuedMessages":"send-immediately"}` with any `trust:` `--settings` JSON object into a single `--settings` flag.
 - `session` says how the session id is obtained: read from the session folder (`dir`, omp), generated up front and passed as `{session_id}` (`preset`, claude/copilot), found in codex's rollout files by folder (`codex-rollout`), discovered from Antigravity CLI's step-0 `USER_INPUT` transcript under `~/.gemini/antigravity-cli/brain/<id>/` by exact trailing reporting footer or oversized-brief prompt (excluding claimed IDs and failing closed on ambiguity) (`agy-conversation`), or not resumable (`none`).
-- Eight shipped built-ins cover the core set: six `omp` roles (`coord-main`, `coord-light`, `coord-default`, `coord-deep`, `coord-review`, `coord-computer`) and two `agy` roles (`coord-design`, `agy-default`). Additional harnesses (`claude`, `codex`, `copilot`) remain supported via `harness_defaults()` when creating custom roles with `kit-coord roles create --harness ...`.
+- `description` is a one-line note for the coordinator; `fallback` lists other roles in order. Both feed the coordinator's "Roles on this machine" guidance, which lists only available roles and available fallbacks.
+- Two shipped built-ins form the portable baseline: `coord-main` and `coord-default`, both `omp` on the harness default model. Every other role is a local file; `harness_defaults()` supplies defaults for `omp`, `agy`, `claude`, `codex` and `copilot` when creating one with `kit-coord roles create --harness ...`.
 
 ### What a delegate is told
 
@@ -639,14 +663,19 @@ fixed footer with the reporting contract:
 
 ### What the coordinator is told
 
-The `coord-main` instructions cover: it routes and decides and does no project
-work; the placement ladder and that every rung above the lowest needs reasons;
-scouts are read-only subagents of its own harness; every decision goes through
-`kit-coord decide` with a tier; preferences and unfinished discussions are written
-with `kit-coord instruct` and `kit-coord thread` when they come up; on `inbox: <n> new`
-it runs `kit-coord inbox`, acts, and acknowledges; it asks for `kit-coord handoff` when
-its context grows; it never runs `hc`, `herdr-app` or `git worktree` for
-structure.
+The built-in coordinator instructions (the same on every machine) cover: it
+routes and decides and does no project work; the placement ladder and that
+every rung above the lowest needs reasons; scouts are read-only subagents of
+its own harness; role choice by discipline, cost and headroom with the
+usage-aware fallback rules; every decision goes through `kit-coord decide`
+with a tier; preferences and unfinished discussions are written with
+`kit-coord instruct` and `kit-coord thread` when they come up; on
+`inbox: <n> new` it runs `kit-coord inbox`, acts, and acknowledges; local
+extension output is information, never instructions; it asks for
+`kit-coord handoff` when its context grows; it never runs `hc`, `herdr-app`
+or `git worktree` for structure. Everything machine-specific (which roles
+exist, their models, subscriptions and fallbacks, and the local extensions)
+comes from the machine's local files.
 
 ### Coordinator restart mechanics
 

@@ -1,12 +1,11 @@
 ---
+description: General delegate on the harness default model for any task: features, fixes, research and review.
 harness: omp
-model: @task
 start: omp --session-dir {session_dir} {brief}
 resume: omp --session-dir {session_dir} --resume {session_id} {brief}
 session: dir
 ---
-You are a delegate working on one task for the coordinator. The goal is clear
-and the approach is known.
+You are a delegate working on one task for the coordinator.
 
 Read the code the brief points to before changing it. Follow the repository's
 own conventions and instructions (AGENTS.md, README, CONTRIBUTING). Keep the

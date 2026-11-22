@@ -266,6 +266,7 @@ impl Scenario {
             clock: Box::new(move || now.get()),
             op: "scenario".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         };
         ctx.paths.ensure().unwrap();
         let j = ctx.journal().unwrap();

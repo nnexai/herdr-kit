@@ -290,6 +290,7 @@ test('roles model builds CLI args for create/from/edit/delete/reset, filters rol
   assert.deepEqual(filterRoles(roles,'agy').map(r => r.name),['agy-default']);
   assert.equal(roleSummaryLine(roles[1]),'claude · opus · effort: high');
   assert.equal(roleSummaryLine(roles[0]),'agy · gemini-4-neon-high');
+  assert.equal(roleSummaryLine({...roles[0],available:false}),'agy · gemini-4-neon-high · not installed here');
   assert.equal(parseCliError(JSON.stringify({error:{code:'role_invalid',message:'missing {brief}'}})),'missing {brief}');
   assert.equal(parseCliError('plain error\nsecond line'),'plain error');
 

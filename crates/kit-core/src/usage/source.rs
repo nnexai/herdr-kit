@@ -6,13 +6,7 @@ fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str])
     if let Some(path) = override_path {
         return std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
     }
-    let mut directories: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| {
-            std::env::split_paths(&p)
-                .filter(|p| !p.as_os_str().is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut directories = crate::paths::path_dirs();
     if let Some(home) = std::env::var_os("HOME") {
         let home = PathBuf::from(home);
         directories.extend(home_subdirs.iter().map(|sub| home.join(sub)));
@@ -26,13 +20,7 @@ fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str])
         .into_iter()
         .map(PathBuf::from),
     );
-    use std::os::unix::fs::PermissionsExt;
-    directories
-        .into_iter()
-        .map(|p| p.join(binary))
-        .find(|p| {
-            std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
+    crate::paths::find_executable(binary, &directories)
         .map(|p| std::fs::canonicalize(&p).unwrap_or(p))
         .unwrap_or_else(|| PathBuf::from(binary))
 }

@@ -95,6 +95,7 @@ export function roleSummaryLine(role) {
     role.harness || '',
     role.model || 'default',
     role.effort ? `effort: ${role.effort}` : '',
+    role.available === false ? 'not installed here' : '',
   ].filter(Boolean).join(' · ');
 }
 export function roleCreateArgs(form) {

@@ -77,6 +77,37 @@ pub fn agy_data_dir() -> Result<PathBuf> {
     Ok(home()?.join(".gemini/antigravity-cli"))
 }
 
+/// Directories of `$PATH` in order, skipping empty entries.
+pub fn path_dirs() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|p| {
+            std::env::split_paths(&p)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The first executable regular file named `program` in `dirs`, the way a
+/// shell resolves a bare command name. A `program` containing `/` is checked
+/// as given instead of searched.
+pub fn find_executable(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = |p: &Path| {
+        fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if program.is_empty() {
+        return None;
+    }
+    if program.contains('/') {
+        let path = PathBuf::from(program);
+        return executable(&path).then_some(path);
+    }
+    dirs.iter()
+        .map(|dir| dir.join(program))
+        .find(|p| executable(p))
+}
+
 /// Atomically write `bytes` to `path` after verifying no symlink components.
 /// The parent directory must already exist.
 pub fn write_atomic(path: &Path, bytes: &[u8], message: SymlinkMessage) -> Result<()> {

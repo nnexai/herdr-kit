@@ -584,6 +584,7 @@ mod tests {
             clock: Box::new(|| 121_001),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(dir.path()),
         };
         let mut facts = Facts::default();
         reconcile(&ctx, &j, &mut facts).unwrap();
@@ -648,6 +649,7 @@ mod tests {
             clock: Box::new(|| 121_001),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(dir.path()),
         };
         reconcile(&ctx, &j, &mut Facts::default()).unwrap();
         assert!(j.read_state().unwrap().resources[0].released);
@@ -710,6 +712,7 @@ mod tests {
             clock: Box::new(|| 121_001),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(dir.path()),
         };
         let mut facts = Facts::default();
         for _ in 0..4 {
@@ -814,6 +817,7 @@ mod tests {
                 clock: Box::new(|| 121_001),
                 op: "test".into(),
                 cause: None,
+                path: crate::coord::stub_path(dir.path()),
             };
             reconcile(&ctx, &j, &mut Facts::default()).unwrap();
             let state = j.read_state().unwrap();
@@ -949,6 +953,7 @@ mod tests {
             clock: Box::new(|| 121_001),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(dir.path()),
         };
         reconcile(&ctx, &j, &mut Facts::default()).unwrap();
         let state = j.read_state().unwrap();
@@ -1075,6 +1080,7 @@ mod tests {
             clock: Box::new(|| 121_001),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(dir.path()),
         };
         let mut facts = Facts::default();
         reconcile(&ctx, &j, &mut facts).unwrap();

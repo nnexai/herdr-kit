@@ -8,6 +8,7 @@ pub mod config;
 pub mod conversation;
 pub mod error;
 pub mod exec;
+pub mod ext;
 pub mod fold;
 pub mod git;
 pub mod ids;
@@ -38,6 +39,8 @@ pub struct Ctx {
     pub clock: Box<dyn Fn() -> u64>,
     pub op: String,
     pub cause: Option<u64>,
+    /// Directories searched for role programs: the process `PATH`.
+    pub path: Vec<PathBuf>,
 }
 
 impl Ctx {
@@ -54,6 +57,7 @@ impl Ctx {
             app: Box::new(adapter::ProcApp::from_env()),
             op: new_op()?,
             cause: None,
+            path: kit_core::paths::path_dirs(),
             clock: Box::new(|| {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -101,6 +105,16 @@ impl Ctx {
     pub fn config(&self) -> Result<config::Config> {
         Ok(config::Config::load(&self.paths)?.unwrap_or_default())
     }
+
+    /// The role guidance the coordinator is given on this machine.
+    pub fn role_guidance(&self) -> Result<String> {
+        Ok(role::guidance(
+            &self.paths,
+            &self.path,
+            &self.config()?.coordinator_role,
+            kit_core::usage::resolve::default_omp_config_path().as_deref(),
+        ))
+    }
 }
 
 pub fn new_op() -> Result<String> {
@@ -111,6 +125,21 @@ pub fn new_op() -> Result<String> {
         .rev()
         .map(|i| alphabet[((bits >> (i * 5)) & 31) as usize] as char)
         .collect())
+}
+
+/// Test `PATH`: a `stub-bin` directory under `root` holding stub executables
+/// for every known harness and the `runner` and `fake` test programs.
+#[cfg(test)]
+pub fn stub_path(root: &Path) -> Vec<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = root.join("stub-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in role::KNOWN_HARNESSES.iter().chain(&["runner", "fake"]) {
+        let program = bin.join(name);
+        std::fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    vec![bin]
 }
 
 fn shell_quote(s: &str) -> String {
@@ -274,7 +303,9 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             return Ok(if json {
                 Output::Json(views::board(&state, None, ctx.now(), all))
             } else {
-                Output::Text(views::board_text(&state, ctx.now(), all))
+                let mut text = views::board_text(&state, ctx.now(), all);
+                text.push_str(&ext::section(&ctx.paths));
+                Output::Text(text)
             });
         }
         C::Log {
@@ -317,18 +348,24 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 Output::Text(views::explain_text(&value))
             });
         }
+        C::Ext { name } => match name {
+            Some(name) => ext::query(&ctx.paths, &name)?,
+            None => ext::list(&ctx.paths)?,
+        },
+        C::Roles { guidance: true, .. } => return Ok(Output::Text(ctx.role_guidance()?)),
         C::Roles {
             defaults,
             name,
             command,
+            ..
         } => match command {
             Some(RolesCommand::Create(args)) => {
                 let created = role::create(&ctx.paths, &args)?;
-                json!({"action": "created", "role": role::to_json(&created)})
+                json!({"action": "created", "role": role::to_json(&created, &ctx.path)})
             }
             Some(RolesCommand::Edit(args)) => {
                 let updated = role::edit(&ctx.paths, &args)?;
-                json!({"action": "updated", "role": role::to_json(&updated)})
+                json!({"action": "updated", "role": role::to_json(&updated, &ctx.path)})
             }
             Some(RolesCommand::Delete { name }) => {
                 role::delete(&ctx.paths, &name)?;
@@ -336,7 +373,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             }
             Some(RolesCommand::Reset { name }) => {
                 let restored = role::reset(&ctx.paths, &name)?;
-                json!({"action": "reset", "role": role::to_json(&restored)})
+                json!({"action": "reset", "role": role::to_json(&restored, &ctx.path)})
             }
             None => {
                 let usage_snap = (!defaults)
@@ -353,7 +390,13 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                     } else {
                         role::load_or_not_found(&ctx.paths, &name)?
                     };
-                    role::to_json_with_usage(&r, usage_snap.as_ref(), omp_cfg.as_deref(), ctx.now())
+                    role::to_json_with_usage(
+                        &r,
+                        &ctx.path,
+                        usage_snap.as_ref(),
+                        omp_cfg.as_deref(),
+                        ctx.now(),
+                    )
                 } else {
                     let roles = if defaults {
                         role::BUILTIN
@@ -376,6 +419,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                         };
                         out.push(role::to_json_with_usage(
                             &r,
+                            &ctx.path,
                             usage_snap.as_ref(),
                             omp_cfg.as_deref(),
                             ctx.now(),

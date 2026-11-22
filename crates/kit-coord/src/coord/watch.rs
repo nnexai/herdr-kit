@@ -645,6 +645,7 @@ mod tests {
             clock: Box::new(|| 42_000),
             op: "test".into(),
             cause: None,
+            path: crate::coord::stub_path(root),
         }
     }
     #[test]

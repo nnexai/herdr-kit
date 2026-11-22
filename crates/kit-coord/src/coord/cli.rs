@@ -115,11 +115,19 @@ pub enum CoordCommand {
         /// Print built-in role defaults.
         #[arg(long)]
         defaults: bool,
+        /// Print the role guidance the coordinator is given on this machine.
+        #[arg(long, conflicts_with_all = ["defaults", "name"])]
+        guidance: bool,
         /// Show details for one role.
         name: Option<String>,
         /// Role management operation.
         #[command(subcommand)]
         command: Option<RolesCommand>,
+    },
+    /// List this machine's local extensions, or run one and print its output.
+    Ext {
+        /// Extension to run.
+        name: Option<String>,
     },
     /// Manage workstreams.
     Ws {
@@ -269,12 +277,40 @@ pub struct RoleCreate {
     /// Whether this role supports mid-turn steering (true or false).
     #[arg(long)]
     pub steering: Option<bool>,
+    #[command(flatten)]
+    pub meta: RoleMeta,
     /// Standing instructions prompt body.
     #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
     /// Read the standing instructions prompt body from a file (or - for stdin).
     #[arg(long)]
     pub prompt_file: Option<PathBuf>,
+}
+
+/// Coordinator-facing role metadata shared by `roles create` and `roles edit`.
+#[derive(Debug, Args)]
+pub struct RoleMeta {
+    /// One line telling the coordinator what the role is for (cost and subscription notes included).
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_description")]
+    pub description: Option<String>,
+    /// Remove the description.
+    #[arg(long)]
+    pub clear_description: bool,
+    /// Ordered fallback roles for when this role's subscription is out (space- or comma-separated).
+    #[arg(long, conflicts_with = "clear_fallback")]
+    pub fallback: Option<String>,
+    /// Remove the fallback list.
+    #[arg(long)]
+    pub clear_fallback: bool,
+}
+
+impl RoleMeta {
+    pub fn changes(&self) -> bool {
+        self.description.is_some()
+            || self.clear_description
+            || self.fallback.is_some()
+            || self.clear_fallback
+    }
 }
 
 #[derive(Debug, Args)]
@@ -317,6 +353,8 @@ pub struct RoleEdit {
     /// Whether this role supports mid-turn steering (true or false).
     #[arg(long)]
     pub steering: Option<bool>,
+    #[command(flatten)]
+    pub meta: RoleMeta,
     /// Replace the standing instructions prompt body.
     #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
@@ -885,5 +923,27 @@ mod tests {
             "--prompt-file",
             "-",
         ]));
+        assert!(parses(&["roles", "--guidance"]));
+        assert!(!parses(&["roles", "--guidance", "agy-default"]));
+        assert!(!parses(&["roles", "--guidance", "--defaults"]));
+        assert!(parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--description",
+            "- second opinions",
+            "--fallback",
+            "coord-deep coord-default",
+        ]));
+        assert!(!parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--fallback",
+            "x",
+            "--clear-fallback",
+        ]));
+        assert!(parses(&["ext"]));
+        assert!(parses(&["ext", "quiet-hours"]));
     }
 }

@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail, ensure};
 use kit_core::paths::{SymlinkMessage, no_links, write_atomic};
 use serde_json::{Value, json};
 
-use super::cli::{RoleCreate, RoleEdit};
+use super::cli::{RoleCreate, RoleEdit, RoleMeta};
 use super::error;
 pub use super::kinds::SessionMode;
 use super::paths::CoordPaths;
@@ -29,6 +29,10 @@ pub struct Role {
     pub session: SessionMode,
     pub trust: Vec<String>,
     pub steering: Option<bool>,
+    /// One line telling the coordinator what the role is for.
+    pub description: Option<String>,
+    /// Roles to use instead, in order, when this role's subscription is out.
+    pub fallback: Vec<String>,
     pub body: String,
     pub source: RoleSource,
 }
@@ -44,15 +48,11 @@ pub struct Vars<'a> {
     pub computer_config: Option<&'a Path>,
 }
 
-pub const BUILTIN: [(&str, &str); 8] = [
+/// The portable baseline: the coordinator and one general delegate, both on
+/// the harness default model. Machine-specific roles live in `coord/roles/`.
+pub const BUILTIN: [(&str, &str); 2] = [
     ("coord-main", include_str!("roles/coord-main.md")),
-    ("coord-light", include_str!("roles/coord-light.md")),
     ("coord-default", include_str!("roles/coord-default.md")),
-    ("coord-deep", include_str!("roles/coord-deep.md")),
-    ("coord-design", include_str!("roles/coord-design.md")),
-    ("coord-review", include_str!("roles/coord-review.md")),
-    ("coord-computer", include_str!("roles/coord-computer.md")),
-    ("agy-default", include_str!("roles/agy-default.md")),
 ];
 
 pub fn builtin(name: &str) -> Option<&'static str> {
@@ -254,6 +254,13 @@ impl Role {
                 .is_some_and(|r| r.iter().any(|a| a.contains("{computer_config}")))
     }
 
+    /// Whether this machine can run the role's start command: its program
+    /// must be an executable on `dirs` (the `PATH` the agents are launched
+    /// with). The error is a short reason for people and the coordinator.
+    pub fn availability(&self, dirs: &[PathBuf]) -> std::result::Result<(), String> {
+        program_available(&self.start[0], dirs)
+    }
+
     pub fn expand_start(&self, vars: &Vars<'_>, trusted: bool) -> Result<Vec<String>> {
         let model = vars.model.or(self.model.as_deref());
         let effort = vars.effort.or(self.effort.as_deref());
@@ -343,6 +350,17 @@ impl Role {
     }
 }
 
+/// Whether `program` (the first word of a role command) can be executed here.
+pub fn program_available(program: &str, dirs: &[PathBuf]) -> std::result::Result<(), String> {
+    if program.contains('{') || kit_core::paths::find_executable(program, dirs).is_some() {
+        Ok(())
+    } else if program.contains('/') {
+        Err(format!("{program} is not an executable file"))
+    } else {
+        Err(format!("{program} is not installed (not found on PATH)"))
+    }
+}
+
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -362,18 +380,22 @@ pub fn source_label(source: &RoleSource, overrides_builtin: bool) -> &'static st
     }
 }
 
-pub fn to_json(role: &Role) -> Value {
+pub fn to_json(role: &Role, dirs: &[PathBuf]) -> Value {
     let overrides = matches!(role.source, RoleSource::File(_)) && builtin(&role.name).is_some();
     let source = source_label(&role.source, overrides);
     let path = match &role.source {
         RoleSource::Builtin => None,
         RoleSource::File(p) => Some(p.to_string_lossy().into_owned()),
     };
+    let availability = role.availability(dirs);
     json!({
         "name": role.name,
         "source": source,
         "overrides_builtin": overrides,
         "path": path,
+        "description": role.description,
+        "available": availability.is_ok(),
+        "unavailable_reason": availability.err(),
         "harness": role.harness,
         "model": role.effective_model(),
         "effort": role.effective_effort(),
@@ -386,17 +408,19 @@ pub fn to_json(role: &Role) -> Value {
         "trust_argv": role.trust,
         "resumable": role.resumable(),
         "steering": role.supports_steering(),
+        "fallback": role.fallback,
         "body": role.body,
     })
 }
 
 pub fn to_json_with_usage(
     role: &Role,
+    dirs: &[PathBuf],
     snapshot: Option<&kit_core::usage::Snapshot>,
     omp_config: Option<&Path>,
     now_ms: u64,
 ) -> Value {
-    let mut value = to_json(role);
+    let mut value = to_json(role, dirs);
     if let (Some(snap), Some(map)) = (snapshot, value.as_object_mut()) {
         let (resolved_model, usage) = kit_core::usage::resolve::evaluate_role(
             snap,
@@ -409,6 +433,81 @@ pub fn to_json_with_usage(
         map.insert("usage".into(), json!(usage));
     }
     value
+}
+
+/// The "Roles on this machine" section of the coordinator's first message,
+/// derived from the effective role files. Only roles that can start here are
+/// listed, and fallbacks name only those roles.
+pub fn guidance(
+    paths: &CoordPaths,
+    dirs: &[PathBuf],
+    coordinator_role: &str,
+    omp_config: Option<&Path>,
+) -> String {
+    use kit_core::usage::resolve::{provider_for, resolve_model};
+    let mut usable = Vec::new();
+    let mut unusable = 0usize;
+    for (name, _, _) in list(paths).unwrap_or_default() {
+        if name == coordinator_role {
+            continue;
+        }
+        match load(paths, &name) {
+            Ok(role) if role.availability(dirs).is_ok() => usable.push(role),
+            _ => unusable += 1,
+        }
+    }
+    let names: BTreeSet<&str> = usable.iter().map(|r| r.name.as_str()).collect();
+    let mut out = String::from("## Roles on this machine\n\n");
+    if usable.is_empty() {
+        out.push_str(
+            "No delegate role can start on this machine. Tell the person: they can install a harness or add a role with `kit roles create`.\n",
+        );
+    }
+    for role in &usable {
+        let model = role.effective_model();
+        let resolved = resolve_model(&role.harness, model.as_deref(), omp_config);
+        let mut facts = vec![format!("`{}`", role.harness)];
+        facts.push(match (&model, &resolved) {
+            (None, _) => "harness default model".to_owned(),
+            (Some(m), Some(r)) if r != m => format!("model `{m}` (`{r}`)"),
+            (Some(m), _) => format!("model `{m}`"),
+        });
+        if let Some((provider, _)) = provider_for(&role.harness, resolved.as_deref())
+            && let Ok(Value::String(provider)) = serde_json::to_value(provider)
+        {
+            facts.push(format!("`{provider}` subscription"));
+        }
+        if role.supports_steering() {
+            facts.push("steering".into());
+        }
+        if !role.resumable() {
+            facts.push("not resumable".into());
+        }
+        out.push_str(&format!(
+            "- `{}`: {}\n  {}.",
+            role.name,
+            role.description
+                .as_deref()
+                .unwrap_or("no description; inspect it with `kit roles <name>`."),
+            facts.join(", ")
+        ));
+        let fallback = role
+            .fallback
+            .iter()
+            .filter(|f| names.contains(f.as_str()))
+            .map(|f| format!("`{f}`"))
+            .collect::<Vec<_>>();
+        if !fallback.is_empty() {
+            out.push_str(&format!(" Fallback: {}.", fallback.join(" → ")));
+        }
+        out.push('\n');
+    }
+    if unusable > 0 {
+        out.push_str(&format!(
+            "\n{unusable} more role(s) cannot start here; `kit roles` shows why.\n"
+        ));
+    }
+    out
 }
 
 pub fn load(paths: &CoordPaths, name: &str) -> Result<Role> {
@@ -490,6 +589,8 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
                     | "session"
                     | "trust"
                     | "steering"
+                    | "description"
+                    | "fallback"
             ),
             "unknown role key: {key}"
         );
@@ -552,6 +653,8 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
             "harness {harness} does not support mid-turn steering"
         );
     }
+    let description = optional_nonempty("description")?;
+    let fallback = parse_fallback(name, fields.get("fallback").map_or("", String::as_str))?;
     let session = parse_session_mode(required("session")?)?;
     let start_placeholders = collect_placeholders(&start)?;
     ensure!(
@@ -654,9 +757,26 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         session,
         trust,
         steering,
+        description,
+        fallback,
         body: lines.collect::<String>().trim().to_owned(),
         source,
     })
+}
+
+/// Parse a space-separated, ordered list of fallback role names.
+fn parse_fallback(name: &str, value: &str) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for item in value.split_whitespace() {
+        ensure!(valid_name(item), "invalid fallback role name: {item}");
+        ensure!(item != name, "role {name} cannot fall back to itself");
+        ensure!(
+            !out.iter().any(|seen| seen == item),
+            "duplicate fallback role: {item}"
+        );
+        out.push(item.to_owned());
+    }
+    Ok(out)
 }
 
 fn collect_placeholders(argv: &[String]) -> Result<BTreeSet<String>> {
@@ -757,8 +877,14 @@ pub fn format_markdown(role: &Role) -> Result<String> {
     if let Some(t) = &trust_line {
         check_frontmatter_value("trust", t)?;
     }
+    if let Some(d) = &role.description {
+        check_frontmatter_value("description", d)?;
+    }
 
     let mut out = String::from("---\n");
+    if let Some(d) = &role.description {
+        out.push_str(&format!("description: {d}\n"));
+    }
     out.push_str(&format!("harness: {}\n", role.harness));
     if let Some(m) = &role.model {
         out.push_str(&format!("model: {m}\n"));
@@ -776,6 +902,9 @@ pub fn format_markdown(role: &Role) -> Result<String> {
     }
     if let Some(s) = role.steering {
         out.push_str(&format!("steering: {s}\n"));
+    }
+    if !role.fallback.is_empty() {
+        out.push_str(&format!("fallback: {}\n", role.fallback.join(" ")));
     }
     out.push_str("---\n");
     let body = role.body.trim();
@@ -795,6 +924,8 @@ pub fn format_markdown(role: &Role) -> Result<String> {
             && parsed.session == role.session
             && parsed.trust == role.trust
             && parsed.steering == role.steering
+            && parsed.description == role.description
+            && parsed.fallback == role.fallback
             && parsed.body == body,
         "formatted role front matter did not round-trip cleanly"
     );
@@ -1007,6 +1138,8 @@ pub fn create(paths: &CoordPaths, args: &RoleCreate) -> Result<Role> {
             session,
             trust,
             steering: defaults.as_ref().and_then(|d| d.steering),
+            description: None,
+            fallback: Vec::new(),
             body: String::new(),
             source: RoleSource::File(target.clone()),
         }
@@ -1015,6 +1148,7 @@ pub fn create(paths: &CoordPaths, args: &RoleCreate) -> Result<Role> {
     if let Some(s) = args.steering {
         role.steering = Some(s);
     }
+    apply_meta(&mut role, &args.meta)?;
 
     if args.from.is_some() {
         if let Some(h) = &args.harness {
@@ -1096,6 +1230,7 @@ pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
         || args.trust.is_some()
         || args.clear_trust
         || args.steering.is_some()
+        || args.meta.changes()
         || args.prompt.is_some()
         || args.prompt_file.is_some();
     if !any_change {
@@ -1138,6 +1273,7 @@ pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
     if let Some(s) = args.steering {
         role.steering = Some(s);
     }
+    apply_meta(&mut role, &args.meta)?;
 
     if args.clear_model {
         role.model = None;
@@ -1176,6 +1312,25 @@ pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
     }
 
     write_validated(paths, &role)
+}
+
+fn apply_meta(role: &mut Role, meta: &RoleMeta) -> Result<()> {
+    if meta.clear_description {
+        role.description = None;
+    } else if let Some(d) = &meta.description {
+        let d = d.trim();
+        if d.is_empty() {
+            return Err(error::refused("role_invalid", "empty role description"));
+        }
+        role.description = Some(d.to_owned());
+    }
+    if meta.clear_fallback {
+        role.fallback.clear();
+    } else if let Some(f) = &meta.fallback {
+        role.fallback = parse_fallback(&role.name, &f.replace(',', " "))
+            .map_err(|e| error::refused("role_invalid", e.to_string()))?;
+    }
+    Ok(())
 }
 
 pub fn delete(paths: &CoordPaths, name: &str) -> Result<()> {
@@ -1400,11 +1555,16 @@ pub fn effort_of(argv: &[String]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const AGY: &str = "---\ndescription: Second opinions.\nharness: agy\nmodel: gemini-4-neon-high\nstart: agy -i {brief}\nresume: agy --conversation {session_id} -i {brief}\nsession: agy-conversation\ntrust: --settings '{\"trustedWorkspaces\":[{cwd_json}]}'\nsteering: true\n---\nAgy instructions.\n";
+    const COMPUTER: &str = "---\nharness: omp\nmodel: @design\nstart: omp --config {computer_config} --session-dir {session_dir} {brief}\nresume: omp --config {computer_config} --session-dir {session_dir} --resume {session_id} {brief}\nsession: dir\n---\nComputer use.\n";
+
     #[test]
     fn builtins_and_split() {
         for (name, text) in BUILTIN {
             let role = parse(name, text, RoleSource::Builtin).unwrap();
-            assert!(role.effective_model().is_some(), "{name} missing model");
+            assert!(role.model.is_none(), "{name} pins a machine-specific model");
+            assert!(role.description.is_some(), "{name} has no description");
         }
         let trust = split_words(r#"-c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'"#)
             .unwrap();
@@ -1471,12 +1631,7 @@ mod tests {
             effort: None,
             computer_config: Some(Path::new("/coord/omp-computer.yml")),
         };
-        let agy = parse(
-            "agy-default",
-            builtin("agy-default").unwrap(),
-            RoleSource::Builtin,
-        )
-        .unwrap();
+        let agy = parse("agy-default", AGY, RoleSource::Builtin).unwrap();
         assert_eq!(agy.harness, "agy");
         assert_eq!(agy.session, SessionMode::AgyConversation);
         assert!(agy.resumable());
@@ -1570,22 +1725,7 @@ mod tests {
         assert_eq!(model_of(&argv).as_deref(), Some("gemini-4-neon-high"));
         assert_eq!(effort_of(&argv).as_deref(), Some("xhigh"));
 
-        let design = parse(
-            "coord-design",
-            builtin("coord-design").unwrap(),
-            RoleSource::Builtin,
-        )
-        .unwrap();
-        assert_eq!(design.harness, "agy");
-        assert_eq!(design.effective_model().as_deref(), Some("gemini-4-neon-high"));
-        assert!(design.supports_steering());
-
-        let computer = parse(
-            "coord-computer",
-            builtin("coord-computer").unwrap(),
-            RoleSource::Builtin,
-        )
-        .unwrap();
+        let computer = parse("coord-computer", COMPUTER, RoleSource::Builtin).unwrap();
         assert!(computer.needs_computer_config());
         assert_eq!(
             computer.expand_start(&vars, false).unwrap(),
@@ -1643,14 +1783,7 @@ mod tests {
         assert!(omp.supports_steering());
         assert_eq!(
             omp.expand_start(&vars, false).unwrap(),
-            [
-                "omp",
-                "--model",
-                "@task",
-                "--session-dir",
-                "/sessions/t1",
-                "do the work"
-            ]
+            ["omp", "--session-dir", "/sessions/t1", "do the work"]
         );
         assert_eq!(
             omp.expand_resume(&vars, false).unwrap(),
@@ -1934,9 +2067,90 @@ mod tests {
             session: SessionMode::Dir,
             trust: Vec::new(),
             steering: None,
+            description: None,
+            fallback: Vec::new(),
             body: "body".into(),
             source: RoleSource::Builtin,
         };
         assert!(format_markdown(&bad_role).is_err());
+    }
+
+    #[test]
+    fn description_and_fallback_parse_and_round_trip() {
+        let role = parse("agy-default", AGY, RoleSource::Builtin).unwrap();
+        assert_eq!(role.description.as_deref(), Some("Second opinions."));
+        let text = "---\nharness: omp\nstart: omp --session-dir {session_dir} {brief}\nsession: dir\nfallback: b  c\n---\n";
+        let role = parse("a", text, RoleSource::Builtin).unwrap();
+        assert_eq!(role.fallback, ["b", "c"]);
+        let formatted = format_markdown(&role).unwrap();
+        assert!(formatted.contains("fallback: b c\n"));
+        assert_eq!(
+            parse("a", &formatted, RoleSource::Builtin)
+                .unwrap()
+                .fallback,
+            ["b", "c"]
+        );
+        for bad in ["a", "b b", "../x"] {
+            let text = text.replace("b  c", bad);
+            assert!(parse("a", &text, RoleSource::Builtin).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn guidance_lists_only_startable_roles_and_their_fallbacks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = CoordPaths::new(dir.path());
+        paths.ensure().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let omp = bin.join("omp");
+        fs::write(&omp, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&omp, fs::Permissions::from_mode(0o755)).unwrap();
+        let dirs = vec![bin.clone()];
+        fs::write(
+            paths.roles.join("agy-default.md"),
+            AGY.replace(
+                "steering: true\n",
+                "steering: true\nfallback: coord-default\n",
+            ),
+        )
+        .unwrap();
+        fs::write(
+            paths.roles.join("coord-light.md"),
+            "---\ndescription: Quick edits; cheap.\nharness: omp\nmodel: openai-codex/gpt-6-luna:medium\nstart: omp --session-dir {session_dir} {brief}\nsession: dir\nfallback: agy-default coord-default\n---\n",
+        )
+        .unwrap();
+        let text = guidance(&paths, &dirs, "coord-main", None);
+        assert!(!text.contains("agy"), "{text}");
+        assert!(!text.contains("coord-main"), "{text}");
+        assert!(text.contains(
+            "- `coord-light`: Quick edits; cheap.\n  `omp`, model `openai-codex/gpt-6-luna:medium`, `codex` subscription, steering, not resumable. Fallback: `coord-default`.\n"
+        ), "{text}");
+        assert!(
+            text.contains("- `coord-default`: General delegate"),
+            "{text}"
+        );
+        assert!(text.contains("1 more role(s) cannot start here"), "{text}");
+        let agy = load(&paths, "agy-default").unwrap();
+        assert_eq!(
+            agy.availability(&dirs).unwrap_err(),
+            "agy is not installed (not found on PATH)"
+        );
+        let agy_bin = bin.join("agy");
+        fs::write(&agy_bin, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&agy_bin, fs::Permissions::from_mode(0o755)).unwrap();
+        let text = guidance(&paths, &dirs, "coord-main", None);
+        assert!(
+            text.contains("Fallback: `agy-default` → `coord-default`."),
+            "{text}"
+        );
+        assert!(text.contains("`agy-default`: Second opinions."), "{text}");
+        assert!(!text.contains("cannot start here"), "{text}");
+        let none = guidance(&paths, &[], "coord-main", None);
+        assert!(
+            none.contains("No delegate role can start on this machine"),
+            "{none}"
+        );
     }
 }

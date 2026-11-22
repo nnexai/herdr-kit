@@ -302,30 +302,33 @@ The mod itself reads only coordinator CLI JSON. If kit-coord or the
 coordinator is unavailable, it keeps the draft and shows a clear state.
 
 State lives under `<data-dir>/coord/`, including the append-only journal,
-configuration, roles and task files. Built-in roles cover everyday SWE,
-design, review and computer use without overlap:
-`coord-main` (coordinator, `omp` `@plan`), `coord-light` (quick mechanical
-tasks, `omp` `openai-codex/gpt-6-luna:medium`), `coord-default` (everyday SWE
-and routine bug fixes, `omp` `@task`), `coord-deep` (complex/novel builds and
-hard bug fixes, `omp` `@plan`), `coord-design` (UI/UX and visual design, `agy`
-`gemini-4-neon-high`), `coord-review` (primary read-only bug hunter/reviewer,
-`omp` `@advisor`), `coord-computer` (browser, native app, local/remote script
-automation, `omp` `@design` with per-session `computer.enabled` overlay), and
-`agy-default` (`agy` `gemini-4-neon-high` for bug-hunting cross-checks and
-second opinions). Both `omp` and steering-enabled `agy` roles (`steering: true`,
-launching with merged `--settings '{"queuedMessages":"send-immediately",...}'`)
-support mid-turn steering.
+configuration, roles and task files. The product is machine-neutral: it ships
+the coordinator instructions and two portable built-in roles, `coord-main`
+(the coordinator) and `coord-default` (a general delegate), both `omp` on the
+harness default model. A machine's own role set, models, subscriptions and
+fallbacks are local role files in `<data-dir>/coord/roles/`, and optional
+helper commands for the coordinator are local extensions in
+`<data-dir>/coord/extensions.json` (`kit-coord ext [NAME]`). The coordinator's
+first message lists the roles that can start on the machine, derived from the
+role files' `description` and `fallback` fields (`kit-coord roles --guidance`
+previews it). See [setting up a machine](docs/coordinator/machine-setup.md),
+including a Copilot-only example role set and a local extension.
 
 `kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
-`override`, resolved fields, `resolved_model`, `steering`, prompt `body`, and
-per-role subscription `usage` read via `kit-core` from the shared `kit-usage`
-cache). `kit-coord task start` refuses roles whose subscription is `exhausted`
-or `not_signed_in` (`subscription_exhausted` / `subscription_not_signed_in`)
-unless `--allow-exhausted` is explicitly passed. Create, edit, reset and delete
-roles with `kit-coord roles create|edit|reset|delete` (additional harnesses
-`claude`, `codex`, `copilot` can be created on demand via `--harness`), or
-manage them from the Coordinator dialog's `⋯` → **Roles** view. See [roles and models](docs/coordinator-spec.md#roles-and-models)
-for role-file examples, usage-aware fallback rules, resume rules, steering limits and statistics details.
+`override`, `available` with `unavailable_reason` when the role's program is
+not on `PATH`, `description`, `fallback`, resolved fields, `resolved_model`,
+`steering`, prompt `body`, and per-role subscription `usage` read via
+`kit-core` from the shared `kit-usage` cache). `kit-coord task start` refuses
+roles whose harness is not installed (`harness_unavailable`) and roles whose
+subscription is `exhausted` or `not_signed_in` (`subscription_exhausted` /
+`subscription_not_signed_in`) unless `--allow-exhausted` is explicitly passed.
+Harness support for `omp`, `agy`, `claude`, `codex` and `copilot` is built in;
+`omp` and steering-enabled `agy` roles support mid-turn steering. Create,
+edit, reset and delete roles with `kit-coord roles create|edit|reset|delete`,
+or manage them from the Coordinator dialog's `⋯` → **Roles** view. See
+[roles and models](docs/coordinator-spec.md#roles-and-models) for role-file
+details, usage-aware fallback rules, resume rules, steering limits and
+statistics.
 Autostart is controlled by coordinator configuration. The watcher is a
 `kit-coord watch` subcommand running in an hc terminal, not a hidden service.
 
