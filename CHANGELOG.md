@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Improve readability across the Coordinator dialog (`kit-coord-ui`) while
+  preserving its Mission Log layout and interactions: harmonize a 3-tier
+  contrast ramp and recessed/elevated surfaces for both dark and light themes
+  (fixing light-mode input surfaces and dark Needs You AA contrast), refine
+  typography, vertical turn rhythm, framed open traces/journal fields,
+  transparent ghost row actions, live composer focus cues, and adaptive
+  narrow-width margins and slots.
 - Make the coordinator machine-neutral. kit-coord now ships only the
   coordinator instructions and two portable built-in roles (`coord-main`,
   `coord-default`, both `omp` on the harness default model); a machine's role

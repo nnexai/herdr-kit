@@ -32,17 +32,20 @@ export const Button={new:id=>{const e=globalThis.railElement('button');e.id(id);
 TextView={markdown:()=>globalThis.railElement('markdown')},Popover={new:()=>globalThis.railElement('popover')};
 `);
 const hostUrl = 'data:text/javascript,'+encodeURIComponent(`
-export const settings=()=>({dark:true});
+export const settings=()=>({dark:globalThis.railDark ?? true});
 export const props=()=>({}),shared=()=>null,setShared=()=>{},run=()=>{},openOverlay=()=>'',closeOverlay=()=>{};
 export const nextCommand=()=>new Promise(()=>{}),exec=()=>{throw new Error('unexpected native exec in renderer test');};
-export const theme=()=>({foreground:'#e6e7e9',muted:'#9a9ea5',accent:'#8fa9dc',accent_foreground:'#14181f',
-popover:'#24272b',canvas:'#101214',raised:'#2d3035',hover:'#34373c',selected:'#3b3e44',border:'#44474d',input:'#2a2d31',done:'#6fcf97',working:'#e2b94e',blocked:'#ef6a67'});
+export const theme=()=>globalThis.railDark === false
+  ? {foreground:'#1b1b1e',muted:'#69696b',accent:'#1f62d0',accent_foreground:'#ffffff',
+     popover:'#ffffff',surface:'#ffffff',canvas:'#fafaf9',raised:'#f6f6f6',hover:'#0000000c',selected:'#00000012',border:'#00000017',input:'#00000026',done:'#2f6fe4',working:'#9a6700',blocked:'#c93c2c'}
+  : {foreground:'#eeeeef',muted:'#98999b',accent:'#96b2d7',accent_foreground:'#17191d',
+     popover:'#25272b',surface:'#17191d',canvas:'#131518',raised:'#2c2e31',hover:'#ffffff0e',selected:'#ffffff17',border:'#ffffff18',input:'#ffffff24',done:'#76a8ff',working:'#e5c07b',blocked:'#f0705f'};
 `);
 registerHooks({resolve(specifier,context,next) {
   const url = ['gpui-kit','gpui-base'].includes(specifier) ? nativeUrl : specifier === 'herdr' ? hostUrl : null;
   return url ? {url,shortCircuit:true} : next(specifier,context);
 }});
-const {renderRail} = await import('../mods/kit-coord-ui/render.js');
+const {renderRail, palette} = await import('../mods/kit-coord-ui/render.js');
 function all(node) {return typeof node === 'object' && node ? [node,...node.nodes.flatMap(all)] : [];}
 function fixture(overrides = {}) {
   const vm = {rows:[],questions:[],needsYou:[],available:true,canSend:true,working:false,status:'running',elapsed:'0:00',...overrides};
@@ -96,18 +99,18 @@ test('question clamp measures wrapped lines and expands without truncating text'
   const cx = {notify(){}};
   let nodes = all(renderRail(view));
   const content = nodes.find(n => n.nodes?.includes(text));
-  assert.equal(content.attributes.line_height,'18px');
-  assert.ok(nodes.some(n => n.attributes?.max_h === 54 && n.attributes?.overflow_hidden));
-  content.attributes.on_size_change({height:18},cx);
+  assert.equal(content.attributes.line_height,'20px');
+  assert.ok(nodes.some(n => n.attributes?.max_h === 60 && n.attributes?.overflow_hidden));
+  content.attributes.on_size_change({height:20},cx);
   nodes = all(renderRail(view));
   assert.ok(nodes.some(n => n.nodes?.includes(text)));
   assert.equal(byId(nodes,'needs-more-text-0'),undefined);
-  content.attributes.on_size_change({height:72},cx);
+  content.attributes.on_size_change({height:80},cx);
   nodes = all(renderRail(view));
   assert.ok(byId(nodes,'needs-more-text-0'));
   view.expandedQuestions.add('q1');
   nodes = all(renderRail(view));
-  assert.ok(!nodes.some(n => n.attributes?.max_h === 54));
+  assert.ok(!nodes.some(n => n.attributes?.max_h === 60));
   assert.ok(nodes.some(n => n.nodes?.includes(text)));
 });
 test('off state replaces the composer with Start',() => {
@@ -283,4 +286,64 @@ test('roles menu item opens Roles list with fixed hover slot, no bottom buttons,
   const editTexts = all(editRoot).flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
   assert.ok(editTexts.includes('Saves as override'));
   assert.equal(editRoot.nodes[1].nodes.at(-1).attributes.id,'roles-form');
+});
+
+test('readability refinements: dark/light contrast, transparent ghost actions, narrow adaptation and focus cues',() => {
+  const lum = hex => {
+    const ch = i => {
+      const v = parseInt(hex.slice(i,i+2),16)/255;
+      return v <= 0.03928 ? v/12.92 : ((v+0.055)/1.055)**2.4;
+    };
+    return 0.2126*ch(1) + 0.7152*ch(3) + 0.0722*ch(5);
+  };
+  const contrast = (a,b) => {
+    const la = lum(a), lb = lum(b);
+    return (Math.max(la,lb)+0.05)/(Math.min(la,lb)+0.05);
+  };
+
+  // Dark palette: 3-tier ink and WCAG AA contrast on popover & cards
+  globalThis.railDark = true;
+  const dark = palette();
+  assert.ok(contrast(dark.secondary, dark.popover) >= 7.0, 'secondary text meets high contrast on dark popover');
+  assert.ok(contrast(dark.muted, dark.popover) >= 5.5, 'muted text meets AA on dark popover');
+  assert.ok(contrast(dark.blocked, '#33292d') >= 4.5, 'blocked label meets AA on needs-you tint');
+  assert.notEqual(dark.input, dark.popover, 'dark input surface separates from dialog popover');
+
+  // Light palette: fixes translucent black input bug (#00000026) and preserves AA ink
+  globalThis.railDark = false;
+  const light = palette();
+  assert.equal(light.input, '#ffffff', 'light input uses clean surface instead of muddy alpha overlay');
+  assert.ok(contrast(light.secondary, light.popover) >= 7.0, 'secondary text meets high contrast on light popover');
+  assert.ok(contrast(light.muted, light.popover) >= 5.5, 'muted text meets AA on light popover');
+  globalThis.railDark = true;
+
+  // Ghost actions inside hovered/tinted rows stay transparent (no opaque popover cutout)
+  const row = {key:'receipt:w',kind:'receipt',title:'Build',text:'Working',state:'running',ts_ms:1000,space:'Repo',duration:'2m',
+    trace:[],links:[{kind:'terminal',target:'t'}]};
+  const {view} = fixture({rows:[row],needsYou:[{kind:'question',questionId:'q1',text:'Long text',title:'Work',ts_ms:1000,options:['Yes']}]});
+  view.hoveredReceipt = 'receipt:w';
+  view.clampedQuestions.add('q1');
+  view.inputFocused = true;
+  const stdNodes = all(renderRail(view));
+  assert.equal(byId(stdNodes,'terminal-receipt:w').attributes.bg, '#00000000');
+  assert.equal(byId(stdNodes,'needs-more-text-0').attributes.bg, '#00000000');
+  assert.ok(stdNodes.some(n => n.attributes?.border_color === dark.accent && n.attributes?.bg === dark.input), 'focused composer highlights border');
+
+  // Narrow width (< 460px): adapts horizontal margins and compact fixed slot while keeping Stream/Roles headers aligned
+  view.width = 380;
+  const narrowStream = renderRail(view);
+  assert.equal(narrowStream.nodes[0].attributes.px, 12);
+  const narrowNodes = all(narrowStream);
+  assert.ok(narrowNodes.some(n => n.attributes?.w === 132 && n.attributes?.flex_shrink_0), 'narrow receipt slot stays fixed at 132px');
+  assert.ok(byId(narrowNodes,'terminal-receipt:w').nodes.includes('Terminal'));
+
+  view.page = 'roles';
+  view.rolesMode = 'create';
+  view.store.roles = [];
+  const makeInput = () => ({value:() => '',set_value(){},focus(){}});
+  view.roleFilter = makeInput();
+  view.roleFields = {name:makeInput(),harness:makeInput(),model:makeInput(),effort:makeInput(),session:makeInput(),start:makeInput(),resume:makeInput(),trust:makeInput(),body:makeInput()};
+  const narrowRoles = renderRail(view);
+  assert.equal(narrowRoles.nodes[0].attributes.h, narrowStream.nodes[0].attributes.h);
+  assert.equal(narrowRoles.nodes[0].attributes.px, narrowStream.nodes[0].attributes.px);
 });

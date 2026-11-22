@@ -51,8 +51,8 @@ export default class CoordinatorDialog extends View {
     for (const input of [this.idleInput,this.busyInput]) {
       input.set_auto_grow(1,6);
       input.on('change',(_event,cx) => { if (input === this.input) this.draft = input.value(); cx.notify(); });
-      input.on('focus',() => { this.inputFocused = true; });
-      input.on('blur',() => { this.inputFocused = false; });
+      input.on('focus',(_event,cx) => { this.inputFocused = true; cx?.notify?.(); });
+      input.on('blur',(_event,cx) => { this.inputFocused = false; cx?.notify?.(); });
     }
     this.rowHeights = new Map(); this.logHeight = 0; this.scrollTop = 0; this.lastAvailable = null;
     this.draft = ''; this.question = null; this.follow = true; this.windowStart = 0; this.lastRows = '';
