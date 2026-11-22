@@ -360,7 +360,9 @@ name = "kit-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "fs2",
  "rustix",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -401,12 +403,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "fs2",
  "kit-core",
- "rustix",
- "serde",
  "serde_json",
- "tempfile",
  "tokio",
 ]
 

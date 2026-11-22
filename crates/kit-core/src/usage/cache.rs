@@ -17,6 +17,45 @@ fn regular(file: &File) -> Result<(), ()> {
 }
 
 impl Cache {
+    /// Read the validated cached snapshot without creating directories or taking the collector lock.
+    pub fn read_only(root: &Path, now: u64) -> Option<PersistedQuota> {
+        let parent = root.parent()?;
+        let name = root.file_name()?;
+        let base = File::open(parent).ok()?;
+        let dir = File::from(
+            fs::openat(
+                &base,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .ok()?,
+        );
+        if dir.metadata().ok()?.uid() != rustix::process::geteuid().as_raw() {
+            return None;
+        }
+        let fd = fs::openat(
+            &dir,
+            "snapshot.json",
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .ok()?;
+        let file = File::from(fd);
+        let meta = file.metadata().ok()?;
+        if !meta.is_file() || meta.nlink() != 1 || meta.uid() != rustix::process::geteuid().as_raw() {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_CACHE + 1).read_to_end(&mut bytes).ok()?;
+        if bytes.len() as u64 > MAX_CACHE {
+            return None;
+        }
+        serde_json::from_slice::<PersistedQuota>(&bytes)
+            .ok()
+            .filter(|v| valid_snapshot(v, now))
+    }
+
     pub fn open(root: &Path, now: u64) -> Result<Self, ()> {
         let parent = root.parent().ok_or(())?;
         std::fs::create_dir_all(parent).map_err(|_| ())?;

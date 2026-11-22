@@ -1,8 +1,6 @@
-mod usage;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use kit_core::paths::data_root;
+use kit_core::{paths::data_root, usage};
 use std::path::PathBuf;
 
 #[derive(Parser)]

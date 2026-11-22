@@ -1,5 +1,5 @@
 use super::*;
-use kit_core::process::{ProcessError, run_bounded};
+use crate::process::{ProcessError, run_bounded};
 use tokio::process::Command;
 
 fn executable(override_path: Option<&Path>, binary: &str, home_subdirs: &[&str]) -> PathBuf {

@@ -1,6 +1,7 @@
 //! Identity-free, bounded subscription usage collection.
 mod cache;
 mod parse;
+pub mod resolve;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -175,6 +176,13 @@ fn begin_attempt(record: &mut SourceRecord, providers: &[QuotaProvider], started
             })
             .collect();
     }
+}
+
+/// Read the shared cached snapshot without spawning collectors.
+/// Returns a `Snapshot` with `Pending` providers when no valid cache exists yet.
+pub fn read_cached(cache_dir: &Path, now_ms: u64) -> Snapshot {
+    let value = cache::Cache::read_only(cache_dir, now_ms).unwrap_or_default();
+    response(&value, now_ms, false)
 }
 
 /// Return the shared anonymous snapshot, collecting once when due.

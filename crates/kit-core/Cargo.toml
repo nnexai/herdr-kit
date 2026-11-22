@@ -7,7 +7,9 @@ description = "Shared Rust functionality for standalone Herdr kit packages"
 
 [dependencies]
 anyhow.workspace = true
+fs2.workspace = true
 rustix.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

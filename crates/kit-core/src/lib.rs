@@ -3,3 +3,4 @@ pub mod error;
 pub mod git_env;
 pub mod paths;
 pub mod process;
+pub mod usage;
