@@ -173,3 +173,114 @@ test('collapsed past-day summary and echo link are present',() => {
   assert.ok(nodes.some(n => n.nodes?.includes('Build — Finished') && n.attributes?.truncate),'echo text stays on one line');
   assert.ok(byId(nodes,'echo-echo:1'));
 });
+
+test('roles menu item opens Roles list with fixed hover slot, no bottom buttons, and consistent header/margins',() => {
+  const roles = [
+    {name:'agy-default',source:'builtin',harness:'agy',model:'gemini-4-neon-high',effort:null,session:'agy-conversation',start:'agy -i {brief}',resume:'agy --conversation {session_id} -i {brief}',resumable:true,steering:false,body:'Antigravity delegate.'},
+    {name:'claude-opus',source:'override',harness:'claude',model:'opus',effort:'high',session:'preset',start:'claude --session-id {session_id} {brief}',resume:'claude --resume {session_id} {brief}',resumable:true,steering:false,body:'Opus override.'},
+    {name:'my-custom',source:'file',harness:'omp',model:'@advisor',effort:null,session:'dir',start:'omp --session-dir {session_dir} {brief}',resume:null,resumable:false,steering:true,body:'Custom reviewer.'},
+  ];
+  const makeInput = (initial = '') => { let v = initial; return {value:() => v,set_value(x){v=x;},focus(){}}; };
+  const {view} = fixture();
+  view.store.roles = roles;
+  view.roleFilter = makeInput('');
+  view.rolesMode = 'list';
+  view.hoveredRole = null;
+  view.confirmRoleAction = null;
+  view.selectedRole = null;
+  view.roleFrom = '';
+  view.fromMenuOpen = false;
+  view.roleFields = {
+    name:makeInput(''),harness:makeInput(''),model:makeInput(''),effort:makeInput(''),
+    session:makeInput(''),start:makeInput(''),resume:makeInput(''),trust:makeInput(''),body:makeInput(''),
+  };
+  view.roleByName = name => roles.find(r => r.name === name) || null;
+  view.openRoles = cx => { view.page = 'roles'; view.rolesMode = 'list'; cx.notify(); };
+  view.openRoleDetail = (name,cx) => { view.rolesMode = 'detail'; view.selectedRole = name; cx.notify(); };
+  view.openRoleEdit = (name,cx) => { view.rolesMode = 'edit'; view.selectedRole = name; cx.notify(); };
+  view.openRoleCreate = (from,cx) => { view.rolesMode = 'create'; view.roleFrom = from || ''; cx.notify(); };
+  view.confirmRemoveRole = (name,action,cx) => { view.confirmRoleAction = {name,action}; cx.notify(); };
+  view.rolesBack = cx => { view.rolesMode = 'list'; cx.notify(); };
+  view.saveRole = () => {};
+  view.applyRoleTemplate = () => {};
+  view.pickRoleHarness = () => {};
+  view.runRemoveRole = () => {};
+
+  const cx = {notify(){},stop_propagation(){}};
+  // 1. Stream header and menu item for Roles
+  const streamRoot = renderRail(view);
+  const streamHeader = streamRoot.nodes[0];
+  assert.ok(byId(all(streamRoot),'rail-roles'),'Roles menu item exists in header menu');
+
+  // 2. Switch to Roles list: header geometry matches timeline
+  view.page = 'roles';
+  const rolesRoot = renderRail(view);
+  const rolesHeader = rolesRoot.nodes[0];
+  assert.equal(rolesHeader.attributes.h, streamHeader.attributes.h);
+  assert.equal(rolesHeader.attributes.px, streamHeader.attributes.px);
+  const listNodes = all(rolesRoot);
+  assert.ok(byId(listNodes,'roles-new'),'+ New role is in the top bar');
+  assert.ok(byId(listNodes,'role-row-agy-default'));
+  assert.ok(byId(listNodes,'role-row-claude-opus'));
+  assert.ok(byId(listNodes,'role-row-my-custom'));
+  // Idle: source labels shown, hover buttons hidden
+  const idleTexts = listNodes.flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.ok(idleTexts.includes('builtin') && idleTexts.includes('override') && idleTexts.includes('file'));
+  assert.equal(byId(listNodes,'role-edit-my-custom'),undefined);
+
+  // Hover on custom file role: shows Edit, Copy, Delete inside fixed 188x24 slot without shifting layout
+  byId(listNodes,'role-row-my-custom').attributes.on_hover(true,cx);
+  let hoverNodes = all(renderRail(view));
+  assert.ok(byId(hoverNodes,'role-edit-my-custom'));
+  assert.ok(byId(hoverNodes,'role-copy-my-custom'));
+  assert.ok(byId(hoverNodes,'role-delete-my-custom'));
+  assert.equal(byId(hoverNodes,'role-reset-my-custom'),undefined);
+
+  // Hover on built-in override: shows Edit, Copy, Reset (not Delete)
+  byId(hoverNodes,'role-row-claude-opus').attributes.on_hover(true,cx);
+  hoverNodes = all(renderRail(view));
+  assert.ok(byId(hoverNodes,'role-edit-claude-opus'));
+  assert.ok(byId(hoverNodes,'role-copy-claude-opus'));
+  assert.ok(byId(hoverNodes,'role-reset-claude-opus'));
+  assert.equal(byId(hoverNodes,'role-delete-claude-opus'),undefined);
+
+  // Hover on pure built-in: shows Edit, Copy (no Delete or Reset)
+  byId(hoverNodes,'role-row-agy-default').attributes.on_hover(true,cx);
+  hoverNodes = all(renderRail(view));
+  assert.ok(byId(hoverNodes,'role-edit-agy-default'));
+  assert.ok(byId(hoverNodes,'role-copy-agy-default'));
+  assert.equal(byId(hoverNodes,'role-delete-agy-default'),undefined);
+  assert.equal(byId(hoverNodes,'role-reset-agy-default'),undefined);
+
+  // 3. Detail view shows resolved fields and prompt body, with actions at top (no bottom bar)
+  view.openRoleDetail('claude-opus',cx);
+  const detailRoot = renderRail(view);
+  const detailNodes = all(detailRoot);
+  assert.ok(byId(detailNodes,'role-detail-edit'));
+  assert.ok(byId(detailNodes,'role-detail-copy'));
+  assert.ok(byId(detailNodes,'role-detail-reset'));
+  const detailTexts = detailNodes.flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.ok(detailTexts.includes('Opus override.'));
+  assert.ok(detailTexts.includes('claude --session-id {session_id} {brief}'));
+  // Last child of roles detail view is the scrollable detail container, never a bottom button bar
+  const detailPage = detailRoot.nodes[1];
+  assert.equal(detailPage.nodes.at(-1).attributes.id,'roles-detail');
+
+  // 4. Create view supports blank and copy-from templates, Save/Cancel at top
+  view.openRoleCreate('agy-default',cx);
+  view.roleFields.name.set_value('agy-fast');
+  const createRoot = renderRail(view);
+  const createNodes = all(createRoot);
+  assert.ok(byId(createNodes,'role-from-blank'));
+  assert.ok(byId(createNodes,'role-from-trigger'));
+  assert.ok(byId(createNodes,'role-form-save'));
+  assert.ok(byId(createNodes,'role-form-cancel'));
+  assert.equal(createRoot.nodes[1].nodes.at(-1).attributes.id,'roles-form');
+
+  // 5. Edit view on built-in notes override and keeps Save/Cancel at top
+  view.openRoleEdit('agy-default',cx);
+  const editRoot = renderRail(view);
+  const editTexts = all(editRoot).flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.ok(editTexts.includes('Saves as override'));
+  assert.equal(editRoot.nodes[1].nodes.at(-1).attributes.id,'roles-form');
+});

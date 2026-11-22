@@ -1,6 +1,6 @@
 # Coordinator dialog
 
-`kit-coord-ui` shows one dialog for talking to the coordinator and reviewing its work. It reads only the coordinator CLI (`status`, `conversation`, `log`, `board --all`), and it sends messages only with `say`.
+`kit-coord-ui` shows one dialog for talking to the coordinator, reviewing its work, and managing roles. It reads and writes only through the coordinator CLI (`status`, `conversation`, `log`, `board --all`, `roles`), and it sends messages only with `say`.
 
 ## What it answers, in order
 
@@ -24,7 +24,7 @@ The coordinator item in the bottom bar is the only entry point.
 
 - **Header**
   - The title "Coordinator" and a state word: Idle, Working · 0:12, Off or Degraded.
-  - A ⋯ menu with Journal, Show raw coordinator, Clear context and Reduce motion. Clear context is the graceful restart; it is hidden while the coordinator is off. While a restart is pending, the menu instead offers "Restart now…" behind a confirmation.
+  - A ⋯ menu with Journal, Roles, Show raw coordinator, Clear context and Reduce motion. Clear context is the graceful restart; it is hidden while the coordinator is off. While a restart is pending, the menu instead offers "Restart now…" behind a confirmation.
   - A close ×.
 - **Needs you**
   - One block per item: the workstream title, age, the text (clamped to 3 lines), option chips and "Reply…".
@@ -50,5 +50,11 @@ The coordinator item in the bottom bar is the only entry point.
   - Each row is "time · glyph · sentence" on one line, in plain language with no tiers, rungs or ids. Click a row for the full sentence, the reason, the task and raw fields.
   - "System events" (off by default) adds watcher, inbox, resource, nudge, turn and coordinator-session events.
   - "Load older" pages backwards.
+- **Roles** (from ⋯, back arrow to return)
+  - Keeps the same dialog header and horizontal margins as the stream.
+  - Lists effective roles with name, harness, model, effort and source (`builtin`, `file`, `override`), filterable with a top search input and "+ New role" button at the top.
+  - Hovering a role swaps its right-hand source slot for per-role actions (`Edit`, `Copy`, and `Delete` or `Reset`) inside the same fixed-size slot so rows never shift.
+  - Clicking a role opens its detail view (all resolved fields and prompt body); actions (`Edit`, `Copy`, `Delete`/`Reset`, `Save`/`Cancel`) sit in the top bar with no bottom-anchored buttons.
+  - All creates, edits, overrides, resets and deletes go through `kit-coord roles`.
 
 There are no keyboard shortcuts. Enter (newline in the composer, or activating a focused control) and Esc (close the menu, then the dialog) are the only key handling.

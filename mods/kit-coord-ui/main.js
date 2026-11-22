@@ -2,7 +2,7 @@ import { View, div } from 'gpui-kit';
 import { ScrollHandle, TextareaState, InputState } from 'gpui-base';
 import { props, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { MOD_NAME, DEPENDENCY_MOD } from './runtime.js';
-import { railModel, focusAction, clock } from './model.js';
+import { railModel, focusAction, clock, HARNESS_DEFAULTS, roleCreateArgs, roleEditArgs, roleDeleteArgs, roleResetArgs } from './model.js';
 import { RailStore } from './store.js';
 import { renderRail } from './render.js';
 import { systemReducedMotion } from './motion.js';
@@ -23,11 +23,28 @@ export default class CoordinatorDialog extends View {
     }
     if (p.overlay) dialog = p.overlay;
     this.store = new RailStore(); this.scroll = ScrollHandle.new(); this.logFocus = cx.focus_handle();
-    this.page = 'stream'; this.expandedDays = new Set(); this.expandedReceipts = new Set();
+    this.page = p.page || 'stream'; this.expandedDays = new Set(); this.expandedReceipts = new Set();
     this.expandedQuestions = new Set(); this.clampedQuestions = new Set(); this.expandedJournal = new Set(); this.needsAll = false;
     this.hoveredReceipt = null;
     this.showSystem = false; this.filter = InputState.new({placeholder:'Filter journal',value:''});
     this.filter.on('change',(_event,cx) => cx.notify());
+    this.rolesMode = p.rolesMode || 'list'; this.selectedRole = p.selectedRole || null; this.hoveredRole = p.hoveredRole || null;
+    this.confirmRoleAction = null; this.fromMenuOpen = false; this.roleFrom = p.roleFrom || '';
+    this.roleFormSeeded = false;
+    this.roleFilter = InputState.new({placeholder:'Filter roles',value:''});
+    this.roleFilter.on('change',(_event,cx) => cx.notify());
+    this.roleFields = {
+      name: InputState.new({placeholder:'e.g. agy-fast',value:''}),
+      harness: InputState.new({placeholder:'omp, agy, claude, codex, copilot',value:''}),
+      model: InputState.new({placeholder:'e.g. gemini-4-neon-high or @task',value:''}),
+      effort: InputState.new({placeholder:'optional (e.g. high)',value:''}),
+      session: InputState.new({placeholder:'dir, preset, codex-rollout, agy-conversation, none',value:''}),
+      start: InputState.new({placeholder:'command with {brief}',value:''}),
+      resume: InputState.new({placeholder:'optional resume command with {session_id} {brief}',value:''}),
+      trust: InputState.new({placeholder:'optional per-launch trust flags',value:''}),
+      body: TextareaState.new({placeholder:'Standing instructions for this role…',value:'',rows:8}),
+    };
+    for (const field of Object.values(this.roleFields)) field.on('change',(_event,cx) => cx.notify());
     this.idleInput = TextareaState.new({placeholder:'Tell the coordinator…',value:''});
     this.busyInput = TextareaState.new({placeholder:'Coordinator working…',value:''});
     this.input = this.idleInput;
@@ -45,7 +62,8 @@ export default class CoordinatorDialog extends View {
       if (!this.closed && shared(MOTION_KEY) == null) { this.reducedMotion = reduced; cx.notify(); }
     });
     this.input.focus(); this.store.refresh(cx,this);
-    cx.spawn(async cx => { await cx.sleep(50); if (!this.closed) this.input.focus(); });
+    if (this.page === 'roles') this.store.loadRoles(cx,this);
+    cx.spawn(async cx => { await cx.sleep(50); if (!this.closed && this.page === 'stream') this.input.focus(); });
     // A timer refreshes data and elapsed time, never manufactures a working turn or animation.
     cx.timer.every(2000,cx => { if (!this.closed) this.store.refresh(cx,this); });
     cx.timer.every(1000,cx => { if (!this.closed && this.model().working) cx.notify(); });
@@ -129,10 +147,137 @@ export default class CoordinatorDialog extends View {
     cx.notify();
   }
   toggleMotion(cx) { this.reducedMotion = !this.reducedMotion; setShared(MOTION_KEY,this.reducedMotion); cx.notify(); }
+  openRoles(cx) {
+    this.page = 'roles'; this.rolesMode = 'list'; this.selectedRole = null;
+    this.hoveredRole = null; this.confirmRoleAction = null; this.fromMenuOpen = false;
+    this.menuOpen = false; this.store.rolesError = ''; this.roleFormSeeded = true;
+    this.store.loadRoles(cx,this); cx.notify();
+  }
+  didLoadRoles(cx) {
+    if (this.roleFormSeeded) return;
+    this.roleFormSeeded = true;
+    if (this.rolesMode === 'edit' && this.selectedRole) {
+      const role = this.roleByName(this.selectedRole);
+      if (role) this.fillRoleForm(role, {keepName: false});
+    } else if (this.rolesMode === 'create' && this.roleFrom) {
+      const base = this.roleByName(this.roleFrom);
+      if (base) { this.fillRoleForm(base, {keepName: false}); this.roleFields.name.set_value(`${base.name}-custom`); }
+    }
+    cx.notify();
+  }
+  roleByName(name) { return (this.store.roles || []).find(r => r.name === name) || null; }
+  openRoleDetail(name, cx) {
+    this.rolesMode = 'detail'; this.selectedRole = name; this.confirmRoleAction = null;
+    this.fromMenuOpen = false; this.store.rolesError = ''; cx.notify();
+  }
+  fillRoleForm(role, {keepName = false} = {}) {
+    if (!keepName) this.roleFields.name.set_value(role?.name || '');
+    this.roleFields.harness.set_value(role?.harness || '');
+    this.roleFields.model.set_value(role?.model || '');
+    this.roleFields.effort.set_value(role?.effort || '');
+    this.roleFields.session.set_value(role?.session || '');
+    this.roleFields.start.set_value(role?.start || '');
+    this.roleFields.resume.set_value(role?.resume || '');
+    this.roleFields.trust.set_value(role?.trust || '');
+    this.roleFields.body.set_value(role?.body || '');
+  }
+  readRoleForm() {
+    return {
+      name: this.roleFields.name.value(),
+      from: this.roleFrom,
+      harness: this.roleFields.harness.value(),
+      model: this.roleFields.model.value(),
+      effort: this.roleFields.effort.value(),
+      session: this.roleFields.session.value(),
+      start: this.roleFields.start.value(),
+      resume: this.roleFields.resume.value(),
+      trust: this.roleFields.trust.value(),
+      body: this.roleFields.body.value(),
+    };
+  }
+  openRoleCreate(fromName, cx) {
+    const base = fromName ? this.roleByName(fromName) : null;
+    this.rolesMode = 'create'; this.selectedRole = null; this.confirmRoleAction = null;
+    this.fromMenuOpen = false; this.store.rolesError = '';
+    this.roleFrom = base ? base.name : '';
+    this.fillRoleForm(base, {keepName: false});
+    this.roleFields.name.set_value(base ? `${base.name}-custom` : '');
+    this.roleFields.name.focus(); cx.notify();
+  }
+  applyRoleTemplate(fromName, cx) {
+    const base = fromName ? this.roleByName(fromName) : null;
+    this.fromMenuOpen = false; this.roleFrom = base ? base.name : '';
+    this.fillRoleForm(base, {keepName: true});
+    this.store.rolesError = ''; cx.notify();
+  }
+  pickRoleHarness(harness, cx) {
+    const prev = HARNESS_DEFAULTS[this.roleFields.harness.value().trim()];
+    const next = HARNESS_DEFAULTS[harness];
+    this.roleFields.harness.set_value(harness);
+    if (next) {
+      const replaceIfDefault = (key, prevVal) => {
+        const cur = this.roleFields[key].value().trim();
+        if (!cur || (prev && cur === (prevVal || ''))) this.roleFields[key].set_value(next[key] || '');
+      };
+      replaceIfDefault('start', prev?.start);
+      replaceIfDefault('resume', prev?.resume);
+      replaceIfDefault('session', prev?.session);
+      replaceIfDefault('trust', prev?.trust);
+    }
+    cx.notify();
+  }
+  openRoleEdit(name, cx) {
+    const role = this.roleByName(name);
+    if (!role) return;
+    this.rolesMode = 'edit'; this.selectedRole = role.name; this.confirmRoleAction = null;
+    this.fromMenuOpen = false; this.roleFrom = ''; this.store.rolesError = '';
+    this.fillRoleForm(role, {keepName: false});
+    this.roleFields.model.focus(); cx.notify();
+  }
+  saveRole(cx) {
+    const form = this.readRoleForm();
+    if (this.rolesMode === 'create') {
+      const argv = roleCreateArgs(form);
+      if (!argv) { this.store.rolesError = 'Role name is required.'; cx.notify(); return; }
+      this.store.mutateRole(cx, this, argv, {
+        notice: `Created role ${form.name.trim()}.`,
+        onSuccess: outcome => { this.selectedRole = outcome.role?.name || form.name.trim(); this.rolesMode = 'detail'; },
+      });
+    } else if (this.rolesMode === 'edit' && this.selectedRole) {
+      const name = this.selectedRole, argv = roleEditArgs(name, form);
+      this.store.mutateRole(cx, this, argv, {
+        notice: `Saved role ${name}.`,
+        onSuccess: outcome => { this.selectedRole = outcome.role?.name || name; this.rolesMode = 'detail'; },
+      });
+    }
+  }
+  confirmRemoveRole(name, action, cx) {
+    this.confirmRoleAction = {name, action}; cx.notify();
+  }
+  runRemoveRole(name, action, cx) {
+    const argv = action === 'reset' ? roleResetArgs(name) : roleDeleteArgs(name);
+    if (!argv) return;
+    this.confirmRoleAction = null;
+    this.store.mutateRole(cx, this, argv, {
+      notice: action === 'reset' ? `Reset ${name} to built-in default.` : `Deleted role ${name}.`,
+      onSuccess: () => {
+        if (action === 'delete' && this.selectedRole === name) { this.selectedRole = null; this.rolesMode = 'list'; }
+      },
+    });
+  }
+  rolesBack(cx) {
+    this.confirmRoleAction = null; this.fromMenuOpen = false; this.store.rolesError = '';
+    if (this.rolesMode === 'edit' && this.selectedRole) this.rolesMode = 'detail';
+    else if (this.rolesMode !== 'list') { this.rolesMode = 'list'; this.selectedRole = null; }
+    else { this.page = 'stream'; this.follow = true; this.latest(cx); return; }
+    cx.notify();
+  }
   key(event,cx) {
     if (event.modifiers?.control || event.modifiers?.alt || event.modifiers?.platform) return;
     if (event.key === 'escape') {
-      if (this.confirmRestart) this.confirmRestart = false;
+      if (this.fromMenuOpen) this.fromMenuOpen = false;
+      else if (this.confirmRoleAction) this.confirmRoleAction = null;
+      else if (this.confirmRestart) this.confirmRestart = false;
       else if (this.menuOpen) { this.menuOpen = false; this.menuFocus.focus(); }
       else this.dismiss();
       cx.stop_propagation(); cx.notify();

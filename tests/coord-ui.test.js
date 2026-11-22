@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,journalFields} from '../mods/kit-coord-ui/model.js';
+import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,journalFields,
+  decodeRoles,parseCliError,filterRoles,roleSummaryLine,roleCreateArgs,roleEditArgs,roleDeleteArgs,roleResetArgs} from '../mods/kit-coord-ui/model.js';
 
 const status = {enabled:true,state:'running',coordinator:{terminal:'c1'},counts:{open_workstreams:2},generated_at_ms:1000};
 const entry = (seq,kind,data,more = {}) => ({seq,ts_ms:seq*1000,kind,data,...more});
@@ -276,4 +277,40 @@ test('echo needs a later message and uses only the latest report for the workstr
   assert.equal(echoes.length,1);
   assert.equal(echoes[0].ws,'mission'); assert.equal(echoes[0].text,'Final result'); assert.equal(echoes[0].seq,undefined);
   assert.equal(echoes[0].source.seq,8);
+});
+
+test('roles model builds CLI args for create/from/edit/delete/reset, filters roles, and extracts CLI errors',() => {
+  const roles = decodeRoles(JSON.stringify({roles:[
+    {name:'agy-default',harness:'agy',model:'gemini-4-neon-high',effort:null,source:'builtin',session:'agy-conversation'},
+    {name:'claude-opus',harness:'claude',model:'opus',effort:'high',source:'override',session:'preset'},
+    {name:'my-review',harness:'omp',model:'@advisor',effort:null,source:'file',session:'dir'},
+  ]}));
+  assert.equal(roles.length,3);
+  assert.deepEqual(filterRoles(roles,'override').map(r => r.name),['claude-opus']);
+  assert.deepEqual(filterRoles(roles,'agy').map(r => r.name),['agy-default']);
+  assert.equal(roleSummaryLine(roles[1]),'claude · opus · effort: high');
+  assert.equal(roleSummaryLine(roles[0]),'agy · gemini-4-neon-high');
+  assert.equal(parseCliError(JSON.stringify({error:{code:'role_invalid',message:'missing {brief}'}})),'missing {brief}');
+  assert.equal(parseCliError('plain error\nsecond line'),'plain error');
+
+  assert.equal(roleCreateArgs({name:'  '}),null);
+  assert.deepEqual(roleCreateArgs({
+    name:'agy-fast',from:'agy-default',harness:'agy',model:'gemini-4-neon-medium',effort:'',
+    session:'agy-conversation',start:'agy -i {brief}',resume:'',trust:'',body:'Fast delegate.',
+  }),['roles','create','agy-fast','--from','agy-default','--harness','agy','--model','gemini-4-neon-medium',
+    '--clear-effort','--session','agy-conversation','--start','agy -i {brief}','--clear-resume','--clear-trust',
+    '--prompt','Fast delegate.']);
+  assert.deepEqual(roleCreateArgs({
+    name:'blank-omp',from:'',harness:'omp',model:'@task',effort:'',session:'dir',
+    start:'omp --session-dir {session_dir} {brief}',resume:'',trust:'',body:'Prompt',
+  }),['roles','create','blank-omp','--harness','omp','--model','@task','--session','dir',
+    '--start','omp --session-dir {session_dir} {brief}','--prompt','Prompt']);
+  assert.deepEqual(roleEditArgs('agy-default',{
+    harness:'agy',model:'gemini-4-neon-high',effort:'high',session:'agy-conversation',
+    start:'agy -i {brief}',resume:'agy --conversation {session_id} -i {brief}',trust:'',body:'Updated',
+  }),['roles','edit','agy-default','--harness','agy','--model','gemini-4-neon-high','--effort','high',
+    '--session','agy-conversation','--start','agy -i {brief}',
+    '--resume','agy --conversation {session_id} -i {brief}','--clear-trust','--prompt','Updated']);
+  assert.deepEqual(roleDeleteArgs('my-review'),['roles','delete','my-review']);
+  assert.deepEqual(roleResetArgs('claude-opus'),['roles','reset','claude-opus']);
 });

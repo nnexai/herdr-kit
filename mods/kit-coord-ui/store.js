@@ -1,6 +1,6 @@
 import { exec } from 'herdr';
 import { BINARY, DATA_DIR } from './runtime.js';
-import { decode, sayArgs } from './model.js';
+import { decode, decodeRoles, parseCliError, sayArgs } from './model.js';
 
 const prefix = () => DATA_DIR ? ['--data-dir', DATA_DIR] : [];
 const firstLine = error => String(error?.message || error || 'Unavailable').split('\n')[0].slice(0,240);
@@ -9,6 +9,8 @@ export class RailStore {
     this.status = null; this.log = null; this.board = null; this.conversation = null;
     this.reading = false; this.sending = false; this.error = ''; this.notice = '';
     this.journal = null; this.loadingOlder = false; this.journalError = '';
+    this.roles = null; this.loadingRoles = false; this.savingRole = false;
+    this.rolesError = ''; this.rolesNotice = ''; this.rolesNoticeUntil = 0;
   }
   async read(kind, beforeSeq = null) {
     const result = await exec(BINARY,[...prefix(),kind,'--json',...(kind === 'board' ? ['--all'] : []),...(kind === 'log' ? ['--limit','200',...(beforeSeq == null ? [] : ['--before-seq',String(beforeSeq)])] : [])],{timeout:20000});
@@ -73,6 +75,42 @@ export class RailStore {
         view.follow = true;
       } catch (error) { this.notice = firstLine(error); this.noticeUntil = 0; }
       finally { this.sending = false; this.pending = null; this.refresh(cx,view); if (!view.closed) cx.notify(); }
+    });
+  }
+  async readRoles() {
+    const result = await exec(BINARY,[...prefix(),'roles'],{timeout:20000});
+    if (result.code !== 0) throw new Error(parseCliError(result.stderr,'Could not read roles'));
+    return decodeRoles(result.stdout);
+  }
+  loadRoles(cx, view) {
+    if (this.loadingRoles || view.closed) return;
+    this.loadingRoles = true; this.rolesError = ''; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const roles = await this.readRoles();
+        if (view.closed) return;
+        this.roles = roles; this.rolesError = '';
+        view.didLoadRoles?.(cx);
+      } catch (error) { this.rolesError = firstLine(error); }
+      finally { this.loadingRoles = false; if (!view.closed) cx.notify(); }
+    });
+  }
+  mutateRole(cx, view, argv, {notice = '', onSuccess} = {}) {
+    if (!argv || this.savingRole || view.closed) return;
+    this.savingRole = true; this.rolesError = ''; this.rolesNotice = ''; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const result = await exec(BINARY,[...prefix(),...argv],{timeout:20000});
+        if (result.code !== 0) throw new Error(parseCliError(result.stderr,'Role update failed'));
+        const outcome = JSON.parse(result.stdout);
+        const roles = await this.readRoles();
+        if (view.closed) return;
+        this.roles = roles; this.rolesError = '';
+        view.didLoadRoles?.(cx);
+        this.rolesNotice = notice; this.rolesNoticeUntil = notice ? Date.now()+5000 : 0;
+        if (onSuccess) onSuccess(outcome, cx);
+      } catch (error) { this.rolesError = firstLine(error); }
+      finally { this.savingRole = false; if (!view.closed) cx.notify(); }
     });
   }
 }

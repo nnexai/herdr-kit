@@ -2,7 +2,7 @@ import { div, svg } from 'gpui-kit';
 import { h_flex, v_flex, Button, Checkbox, Textarea, TextView, Popover, Input } from 'gpui-base';
 import { theme, settings } from 'herdr';
 import { MOD_NAME } from './runtime.js';
-import { clock, dayLabel, journalRows, journalFields } from './model.js';
+import { clock, dayLabel, journalRows, journalFields, filterRoles, roleSummaryLine, ROLE_HARNESSES, ROLE_SESSIONS } from './model.js';
 
 const tint = (color, alpha) => (color.length === 4 ? '#' + [...color.slice(1)].map(c => c+c).join('') : color.slice(0,7)) + alpha;
 const mono = element => element.font_family('JetBrains Mono');
@@ -40,6 +40,7 @@ function menu(view,vm,t) {
     .on_click((_e,cx) => { cx.stop_propagation(); action(cx); }).child(label));
   const separator = () => panel.child(div().h(1).mx(6).my(3).bg(t.border));
   item('rail-journal','Journal',cx => { view.page='journal'; view.menuOpen=false; view.journalStart=0; view.store.journal=view.store.log; cx.notify(); });
+  item('rail-roles','Roles',cx => view.openRoles(cx));
   if (view.store.status?.coordinator?.terminal) item('rail-show','Show raw coordinator',cx => view.showCoordinator(cx));
   if (vm.status !== 'off') {
     separator();
@@ -200,13 +201,214 @@ function journal(view,t) {
       .child(h_flex().gap(6).items_center().text_size(11.5).text_color(t.muted).child(indicator).child('System events'))))
     .child(body);
 }
+const roleSourceColor = (source, t) => source === 'override' ? t.working : source === 'file' ? t.accent : t.muted;
+function roleNoticeBar(view, t) {
+  const notice = view.store.rolesNoticeUntil && Date.now() > view.store.rolesNoticeUntil ? '' : view.store.rolesNotice;
+  const error = view.store.rolesError;
+  if (!error && !notice) return null;
+  return div().px(12).pt(8).text_size(11.5).text_color(error ? t.blocked : t.done).child(error || notice);
+}
+function roleRow(view, role, t) {
+  const confirming = view.confirmRoleAction?.name === role.name ? view.confirmRoleAction.action : null;
+  const active = !!confirming || view.hoveredRole === role.name;
+  const removable = role.source === 'file' ? 'delete' : role.source === 'override' ? 'reset' : null;
+  const row = v_flex().id(`role-row-${role.name}`).px(8).py(6).rounded(5).gap(2).flex_shrink_0()
+    .bg(active ? t.hover : t.popover)
+    .on_hover((hovered, cx) => {
+      const next = hovered ? role.name : view.hoveredRole === role.name ? null : view.hoveredRole;
+      if (next !== view.hoveredRole) { view.hoveredRole = next; cx.notify(); }
+    });
+  const top = h_flex().h(24).gap(8).items_center().min_w(0);
+  top.child(Button.new(`role-open-${role.name}`).flex_1().min_w(0).h(24).justify_start()
+    .accessibility_label(`View role ${role.name}`)
+    .on_click((_e, cx) => { cx.stop_propagation(); view.openRoleDetail(role.name, cx); })
+    .child(div().min_w(0).truncate().font_semibold().child(role.name)));
+  // One fixed-size slot holds either the source label or hover/confirm actions, so hovering never shifts layout.
+  const slot = h_flex().w(188).h(24).flex_shrink_0().gap(4).items_center().justify_end().overflow_hidden();
+  if (confirming) {
+    slot.child(button(`role-confirm-${role.name}`, confirming === 'reset' ? 'Confirm reset' : 'Confirm delete',
+      cx => view.runRemoveRole(role.name, confirming, cx), t,
+      {size: 11, px: 6, height: 22, color: confirming === 'reset' ? t.working : t.blocked, disabled: view.store.savingRole}).border(0));
+    slot.child(button(`role-cancel-${role.name}`, 'Cancel',
+      cx => { view.confirmRoleAction = null; cx.notify(); }, t, {size: 11, px: 5, height: 22}).border(0));
+  } else if (active) {
+    slot.child(button(`role-edit-${role.name}`, 'Edit',
+      cx => view.openRoleEdit(role.name, cx), t, {size: 11, px: 6, height: 22}).border(0));
+    slot.child(button(`role-copy-${role.name}`, 'Copy',
+      cx => view.openRoleCreate(role.name, cx), t, {size: 11, px: 6, height: 22}).border(0));
+    if (removable) slot.child(button(`role-${removable}-${role.name}`, removable === 'reset' ? 'Reset' : 'Delete',
+      cx => view.confirmRemoveRole(role.name, removable, cx), t,
+      {size: 11, px: 6, height: 22, color: removable === 'reset' ? t.working : t.blocked}).border(0));
+  } else {
+    slot.child(div().text_size(11).text_color(roleSourceColor(role.source, t)).child(role.source));
+  }
+  top.child(slot);
+  row.child(top);
+  row.child(h_flex().h(18).items_center().min_w(0).text_size(11.5).text_color(t.muted)
+    .child(div().min_w(0).truncate().child(roleSummaryLine(role))));
+  return row;
+}
+function roleList(view, t) {
+  const allRoles = view.store.roles || [];
+  const filtered = filterRoles(allRoles, view.roleFilter?.value?.() || '');
+  const toolbar = h_flex().gap(10).items_center().px(12).pt(10).pb(6).border_b(1).border_color(t.border)
+    .child(h_flex().flex_1().h(28).px(8).items_center().rounded(4).border(1).border_color(t.border).bg(t.input)
+      .child(Input.new(view.roleFilter).w_full()))
+    .child(button('roles-new', '+ New role', cx => view.openRoleCreate('', cx), t, {primary: true, height: 28}));
+  const list = v_flex().id('roles-list').flex_1().min_h(0).overflow_y_scrollbar().px(12).pt(8).pb(12).gap(2);
+  if (view.store.loadingRoles && !view.store.roles) list.child(div().p(8).text_color(t.muted).child('Loading roles…'));
+  else if (!filtered.length) list.child(div().p(8).text_color(t.muted).child(
+    view.roleFilter?.value?.() ? 'No roles match the filter.' : 'No roles found.'));
+  else for (const role of filtered) list.child(roleRow(view, role, t));
+  const root = v_flex().flex_1().min_h(0).child(toolbar);
+  const banner = roleNoticeBar(view, t);
+  if (banner) root.child(banner);
+  return root.child(list);
+}
+function roleDetail(view, t) {
+  const role = view.roleByName(view.selectedRole);
+  if (!role) return roleList(view, t);
+  const removable = role.source === 'file' ? 'delete' : role.source === 'override' ? 'reset' : null;
+  const confirming = view.confirmRoleAction?.name === role.name ? view.confirmRoleAction.action : null;
+  const topbar = h_flex().gap(8).items_center().px(12).pt(10).pb(6).border_b(1).border_color(t.border)
+    .child(div().flex_1().min_w(0).child(h_flex().gap(8).items_center().min_w(0)
+      .child(div().font_semibold().truncate().child(role.name))
+      .child(div().text_size(11).text_color(roleSourceColor(role.source, t)).child(role.source))));
+  if (confirming) {
+    topbar.child(button('role-detail-confirm', confirming === 'reset' ? 'Confirm reset' : 'Confirm delete',
+      cx => view.runRemoveRole(role.name, confirming, cx), t,
+      {height: 26, color: confirming === 'reset' ? t.working : t.blocked, disabled: view.store.savingRole}));
+    topbar.child(button('role-detail-cancel-remove', 'Cancel',
+      cx => { view.confirmRoleAction = null; cx.notify(); }, t, {height: 26}));
+  } else {
+    topbar.child(button('role-detail-edit', 'Edit', cx => view.openRoleEdit(role.name, cx), t, {primary: true, height: 26}));
+    topbar.child(button('role-detail-copy', 'Copy', cx => view.openRoleCreate(role.name, cx), t, {height: 26}));
+    if (removable) topbar.child(button(`role-detail-${removable}`, removable === 'reset' ? 'Reset' : 'Delete',
+      cx => view.confirmRemoveRole(role.name, removable, cx), t,
+      {height: 26, color: removable === 'reset' ? t.working : t.blocked}));
+  }
+  const fields = [
+    ['Harness', role.harness || '—', false],
+    ['Model', role.model || '—', true],
+    ['Effort', role.effort || '—', false],
+    ['Session', `${role.session || 'none'}${role.resumable ? ' · resumable' : ''}${role.steering ? ' · steering' : ''}`, false],
+    ['Start', role.start || '—', true],
+    ['Resume', role.resume || '—', true],
+    ...(role.trust ? [['Trust', role.trust, true]] : []),
+  ];
+  const body = v_flex().id('roles-detail').flex_1().min_h(0).overflow_y_scrollbar().px(12).pt(12).pb(12).gap(10);
+  const meta = v_flex().gap(6);
+  for (const [label, value, isMono] of fields) {
+    const val = div().flex_1().min_w(0).text_size(12).text_color(t.foreground).child(value);
+    meta.child(h_flex().gap(10).items_start().min_w(0)
+      .child(div().w(68).flex_shrink_0().text_size(11.5).text_color(t.muted).child(label))
+      .child(isMono ? mono(val) : val));
+  }
+  body.child(meta);
+  body.child(div().h(1).bg(t.border));
+  body.child(v_flex().gap(6)
+    .child(div().text_size(11.5).font_semibold().text_color(t.muted).child('Prompt'))
+    .child(div().px(10).py(8).rounded(6).bg(t.raised).text_size(12.5).line_height('18px')
+      .text_color(role.body ? t.foreground : t.muted)
+      .child(role.body || '(empty prompt)')));
+  const root = v_flex().flex_1().min_h(0).child(topbar);
+  const banner = roleNoticeBar(view, t);
+  if (banner) root.child(banner);
+  return root.child(body);
+}
+function roleFieldRow(label, control, t, hint = '') {
+  const wrap = v_flex().gap(4).min_w(0);
+  const head = h_flex().gap(8).items_center()
+    .child(div().text_size(11.5).font_semibold().text_color(t.muted).child(label));
+  if (hint) head.child(div().text_size(11).text_color(t.muted).child(hint));
+  return wrap.child(head).child(control);
+}
+function roleInputBox(state, t, isMono = false) {
+  const input = Input.new(state).w_full();
+  return h_flex().h(28).px(8).items_center().rounded(4).border(1).border_color(t.border).bg(t.input)
+    .child(isMono ? mono(input) : input);
+}
+function roleForm(view, t) {
+  const isCreate = view.rolesMode === 'create';
+  const existing = !isCreate ? view.roleByName(view.selectedRole) : null;
+  const saving = !!view.store.savingRole;
+  const nameValue = isCreate ? (view.roleFields.name.value?.() || '').trim() : (view.selectedRole || '');
+  const titleText = isCreate ? (view.roleFrom ? `New role · from ${view.roleFrom}` : 'New role') : `Edit ${view.selectedRole}`;
+  const subtitle = !isCreate && existing?.source === 'builtin' ? 'Saves as override' : '';
+  const titleRow = h_flex().gap(8).items_center().min_w(0)
+    .child(div().font_semibold().truncate().child(titleText));
+  if (subtitle) titleRow.child(div().text_size(11).text_color(t.working).child(subtitle));
+  const topbar = h_flex().gap(8).items_center().px(12).pt(10).pb(6).border_b(1).border_color(t.border)
+    .child(div().flex_1().min_w(0).child(titleRow))
+    .child(button('role-form-cancel', 'Cancel', cx => view.rolesBack(cx), t, {height: 26, disabled: saving}))
+    .child(button('role-form-save', saving ? 'Saving…' : isCreate ? 'Create' : 'Save',
+      cx => view.saveRole(cx), t, {primary: true, height: 26, disabled: saving || !nameValue}));
+  const form = v_flex().id('roles-form').flex_1().min_h(0).overflow_y_scrollbar().px(12).pt(12).pb(12).gap(10);
+  if (isCreate) {
+    const templateMenu = v_flex().id('role-from-menu').role('menu').w(220).max_h(260).overflow_y_scrollbar()
+      .p(4).gap(1).rounded(6).border(1).border_color(t.border).bg(t.raised).shadow_lg();
+    for (const r of (view.store.roles || [])) {
+      templateMenu.child(Button.new(`role-from-item-${r.name}`).role('menu_item').w_full().h(26).px(8).rounded(4).justify_start()
+        .text_size(12).text_color(t.foreground).hover(s => s.bg(t.hover)).accessibility_label(`Copy from ${r.name}`)
+        .on_click((_e, cx) => { cx.stop_propagation(); view.applyRoleTemplate(r.name, cx); })
+        .child(h_flex().w_full().gap(6).items_center().min_w(0)
+          .child(div().flex_1().min_w(0).truncate().child(r.name))
+          .child(div().text_size(10.5).text_color(t.muted).child(r.harness))));
+    }
+    const startFrom = h_flex().gap(6).items_center()
+      .child(button('role-from-blank', 'Blank', cx => view.applyRoleTemplate('', cx), t,
+        {height: 24, size: 11.5, primary: !view.roleFrom}))
+      .child(Popover.new('role-from-popover').anchor('top_left').open(!!view.fromMenuOpen)
+        .on_open_change((open, cx) => { view.fromMenuOpen = open; cx.notify(); })
+        .trigger(Button.new('role-from-trigger').h(24).px(10).rounded(4).border(1)
+          .border_color(view.roleFrom ? t.accent : t.border).bg(view.roleFrom ? t.hover : t.popover)
+          .text_size(11.5).text_color(t.foreground).hover(s => s.bg(t.hover))
+          .accessibility_label('Copy from existing role')
+          .child(view.roleFrom ? `From: ${view.roleFrom} ▾` : 'Copy from… ▾'))
+        .content(templateMenu));
+    form.child(roleFieldRow('Start from', startFrom, t));
+    form.child(roleFieldRow('Name', roleInputBox(view.roleFields.name, t, true), t, 'letters, digits, - or _'));
+  }
+  const currentHarness = (view.roleFields.harness.value?.() || '').trim();
+  const harnessChips = h_flex().gap(4).flex_wrap();
+  for (const h of ROLE_HARNESSES) {
+    harnessChips.child(button(`role-harness-${h}`, h, cx => view.pickRoleHarness(h, cx), t,
+      {height: 22, px: 7, size: 11, primary: currentHarness === h}));
+  }
+  form.child(roleFieldRow('Harness', v_flex().gap(4).child(roleInputBox(view.roleFields.harness, t, true)).child(harnessChips), t));
+  form.child(h_flex().gap(10).min_w(0)
+    .child(div().flex_1().min_w(0).child(roleFieldRow('Model', roleInputBox(view.roleFields.model, t, true), t)))
+    .child(div().w(180).flex_shrink_0().child(roleFieldRow('Effort', roleInputBox(view.roleFields.effort, t, true), t))));
+  const currentSession = (view.roleFields.session.value?.() || '').trim();
+  const sessionChips = h_flex().gap(4).flex_wrap();
+  for (const s of ROLE_SESSIONS) {
+    sessionChips.child(button(`role-session-${s}`, s, cx => { view.roleFields.session.set_value(s); cx.notify(); }, t,
+      {height: 22, px: 7, size: 11, primary: currentSession === s}));
+  }
+  form.child(roleFieldRow('Session', v_flex().gap(4).child(roleInputBox(view.roleFields.session, t, true)).child(sessionChips), t));
+  form.child(roleFieldRow('Start command', roleInputBox(view.roleFields.start, t, true), t, 'must include {brief}'));
+  form.child(roleFieldRow('Resume command', roleInputBox(view.roleFields.resume, t, true), t, 'optional'));
+  form.child(roleFieldRow('Trust flags', roleInputBox(view.roleFields.trust, t, true), t, 'optional'));
+  form.child(roleFieldRow('Prompt', div().px(8).py(6).rounded(4).border(1).border_color(t.border).bg(t.input)
+    .child(Textarea.new(view.roleFields.body).w_full().text_size(12.5)), t));
+  const root = v_flex().flex_1().min_h(0).child(topbar);
+  const banner = roleNoticeBar(view, t);
+  if (banner) root.child(banner);
+  return root.child(form);
+}
+function rolesView(view, t) {
+  if (view.rolesMode === 'detail') return roleDetail(view, t);
+  if (view.rolesMode === 'edit' || view.rolesMode === 'create') return roleForm(view, t);
+  return roleList(view, t);
+}
 export function renderRail(view) {
-  const t = palette(), vm = view.model(), isJournal = view.page === 'journal';
+  const t = palette(), vm = view.model(), isJournal = view.page === 'journal', isRoles = view.page === 'roles';
   const state = vm.working ? `Working · ${vm.elapsed}` : vm.status === 'off' ? 'Off' : vm.available ? 'Idle' : 'Degraded';
-  const header = h_flex().h(36).px(12).gap(8).items_center().border_b(1).border_color(t.border);
+  const header = h_flex().h(36).flex_shrink_0().px(12).gap(8).items_center().border_b(1).border_color(t.border);
   if (isJournal) header.child(button('journal-back','←',cx => { view.page='stream'; view.follow=true; view.latest(cx); },t,{px:4,label:'Back to stream'}).border(0));
-  header.child(div().font_semibold().child(isJournal ? 'Journal' : 'Coordinator'));
-  if (!isJournal) header.child(div().text_size(12).text_color(vm.working ? t.working : t.muted).child(state));
+  if (isRoles) header.child(button('roles-back','←',cx => view.rolesBack(cx),t,{px:4,label:view.rolesMode === 'list' ? 'Back to stream' : 'Back to roles'}).border(0));
+  header.child(div().font_semibold().child(isJournal ? 'Journal' : isRoles ? 'Roles' : 'Coordinator'));
+  if (!isJournal && !isRoles) header.child(div().text_size(12).text_color(vm.working ? t.working : t.muted).child(state));
   header.child(div().flex_1()).child(Popover.new('rail-actions').anchor('top_right').open(view.menuOpen)
     .on_open_change((open,cx) => { view.menuOpen=open; if (!open) view.confirmRestart=false; cx.notify(); })
     .trigger(Button.new('rail-more').h(24).w(26).track_focus(view.menuFocus).accessibility_label('Coordinator menu').child('⋯'))
@@ -215,6 +417,7 @@ export function renderRail(view) {
   const root = v_flex().id('rail-dialog').relative().size_full().min_h(0).min_w(0).bg(t.popover).text_color(t.foreground).text_size(13)
     .role('dialog').accessibility_label('Coordinator').track_focus(view.rootFocus).on_key_down((event,cx) => view.key(event,cx)).child(header);
   if (isJournal) return root.child(journal(view,t));
+  if (isRoles) return root.child(rolesView(view,t));
   if (vm.needsYou?.length) root.child(div().px(12).pt(8).child(needs(view,vm,t)));
   const body = v_flex().id('rail-log').flex_1().min_h(0).min_w(0).overflow_y_scrollbar().track_scroll(view.scroll)
     .track_focus(view.logFocus).tab_index(1).role('log').accessibility_label('Coordinator stream').px(12).pt(12)

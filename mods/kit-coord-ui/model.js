@@ -35,6 +35,126 @@ export function sayArgs(value, question) {
   if (!value.trim()) return null;
   return ['say', '--text', value, ...(question?.id ? ['--question', question.id] : [])];
 }
+export const ROLE_HARNESSES = ['omp', 'agy', 'claude', 'codex', 'copilot'];
+export const ROLE_SESSIONS = ['dir', 'preset', 'codex-rollout', 'agy-conversation', 'none'];
+export const HARNESS_DEFAULTS = {
+  omp: {
+    start: 'omp --session-dir {session_dir} {brief}',
+    resume: 'omp --session-dir {session_dir} --resume {session_id} {brief}',
+    session: 'dir',
+    trust: '',
+  },
+  agy: {
+    start: 'agy -i {brief}',
+    resume: 'agy --conversation {session_id} -i {brief}',
+    session: 'agy-conversation',
+    trust: `--settings '{"trustedWorkspaces":[{cwd_json}]}'`,
+  },
+  claude: {
+    start: 'claude --session-id {session_id} {brief}',
+    resume: 'claude --resume {session_id} {brief}',
+    session: 'preset',
+    trust: '',
+  },
+  codex: {
+    start: 'codex {brief}',
+    resume: 'codex resume {session_id} {brief}',
+    session: 'codex-rollout',
+    trust: `-c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'`,
+  },
+  copilot: {
+    start: 'copilot --session-id {session_id} -i {brief}',
+    resume: 'copilot --resume {session_id} -i {brief}',
+    session: 'preset',
+    trust: '',
+  },
+};
+export function decodeRoles(raw) {
+  const value = JSON.parse(raw);
+  if (!value || !Array.isArray(value.roles)) throw new Error('Invalid coordinator roles response');
+  return value.roles;
+}
+export function parseCliError(stderr, fallback = 'Command failed') {
+  const raw = String(stderr || '').trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.error?.message) return String(parsed.error.message);
+  } catch { /* fall through to plain text */ }
+  return raw.split('\n')[0].slice(0, 240);
+}
+export function filterRoles(roles, query = '') {
+  const q = oneLine(query).toLowerCase();
+  if (!q) return roles || [];
+  return (roles || []).filter(r =>
+    [r.name, r.harness, r.model, r.effort, r.source, r.session]
+      .some(v => String(v ?? '').toLowerCase().includes(q)));
+}
+export function roleSummaryLine(role) {
+  return [
+    role.harness || '',
+    role.model || 'default',
+    role.effort ? `effort: ${role.effort}` : '',
+  ].filter(Boolean).join(' · ');
+}
+export function roleCreateArgs(form) {
+  const name = String(form?.name || '').trim();
+  if (!name) return null;
+  const argv = ['roles', 'create', name];
+  const from = String(form?.from || '').trim();
+  if (from) argv.push('--from', from);
+  const harness = String(form?.harness || '').trim();
+  const model = String(form?.model || '').trim();
+  const effort = String(form?.effort || '').trim();
+  const session = String(form?.session || '').trim();
+  const start = String(form?.start || '').trim();
+  const resume = String(form?.resume || '').trim();
+  const trust = String(form?.trust || '').trim();
+  const body = String(form?.body ?? '');
+  if (harness) argv.push('--harness', harness);
+  if (model) argv.push('--model', model);
+  else if (from) argv.push('--clear-model');
+  if (effort) argv.push('--effort', effort);
+  else if (from) argv.push('--clear-effort');
+  if (session) argv.push('--session', session);
+  if (start) argv.push('--start', start);
+  if (resume) argv.push('--resume', resume);
+  else if (from) argv.push('--clear-resume');
+  if (trust) argv.push('--trust', trust);
+  else if (from) argv.push('--clear-trust');
+  argv.push('--prompt', body);
+  return argv;
+}
+export function roleEditArgs(name, form) {
+  const roleName = String(name || '').trim();
+  if (!roleName) return null;
+  const argv = ['roles', 'edit', roleName];
+  const harness = String(form?.harness || '').trim();
+  const model = String(form?.model || '').trim();
+  const effort = String(form?.effort || '').trim();
+  const session = String(form?.session || '').trim();
+  const start = String(form?.start || '').trim();
+  const resume = String(form?.resume || '').trim();
+  const trust = String(form?.trust || '').trim();
+  const body = String(form?.body ?? '');
+  if (harness) argv.push('--harness', harness);
+  if (model) argv.push('--model', model); else argv.push('--clear-model');
+  if (effort) argv.push('--effort', effort); else argv.push('--clear-effort');
+  if (session) argv.push('--session', session);
+  if (start) argv.push('--start', start);
+  if (resume) argv.push('--resume', resume); else argv.push('--clear-resume');
+  if (trust) argv.push('--trust', trust); else argv.push('--clear-trust');
+  argv.push('--prompt', body);
+  return argv;
+}
+export function roleDeleteArgs(name) {
+  const roleName = String(name || '').trim();
+  return roleName ? ['roles', 'delete', roleName] : null;
+}
+export function roleResetArgs(name) {
+  const roleName = String(name || '').trim();
+  return roleName ? ['roles', 'reset', roleName] : null;
+}
 const oneLine = value => String(value ?? '').replace(/\s+/g,' ').trim();
 const pad = n => String(n).padStart(2,'0');
 const formatAge = ms => { const s=Math.max(0,Math.floor(ms/1000)); if(s<60) return `${s}s`; const m=Math.floor(s/60); if(m<60) return `${m}m`; const h=Math.floor(m/60); if(h<24) return `${h}h${m%60 ? ` ${m%60}m` : ''}`; return `${Math.floor(h/24)}d${h%24 ? ` ${h%24}h` : ''}`; };

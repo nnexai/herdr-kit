@@ -67,3 +67,40 @@ test('journal retains at most 500 entries while paging backwards',async () => {
   assert.equal(h.store.journal.entries[0].seq,1);
   assert.equal(h.store.journal.entries[499].seq,500);
 });
+
+test('roles load and mutations go exclusively through kit-coord CLI and surface validation errors',async () => {
+  const h = setup();
+  let list = [{name:'agy-default',source:'builtin',harness:'agy',model:'gemini-4-neon-high',effort:null,body:'Default'}];
+  globalThis.railHost = async (_binary,args) => {
+    h.calls.push(args);
+    if (args.length === 1 && args[0] === 'roles') return {code:0,stdout:JSON.stringify({roles:list})};
+    if (args[0] === 'roles' && args[1] === 'create' && args[2] === 'bad') {
+      return {code:3,stderr:JSON.stringify({error:{code:'role_invalid',message:'role start command must reference {brief}'}})};
+    }
+    if (args[0] === 'roles' && args[1] === 'create') {
+      const created = {name:args[2],source:'file',harness:'agy',model:'gemini-4-neon-medium',effort:'low',body:'Fast'};
+      list = [...list,created];
+      return {code:0,stdout:JSON.stringify({action:'created',role:created})};
+    }
+    return {code:0,stdout:JSON.stringify({action:'ok'})};
+  };
+  h.store.loadRoles(h.cx,h.view); await h.drain();
+  assert.deepEqual(h.calls,[['roles']]);
+  assert.equal(h.store.roles.length,1);
+
+  let createdName = null;
+  h.store.mutateRole(h.cx,h.view,['roles','create','agy-fast','--from','agy-default'],{
+    notice:'Created role agy-fast.',
+    onSuccess:outcome => { createdName = outcome.role.name; },
+  });
+  await h.drain();
+  assert.equal(createdName,'agy-fast');
+  assert.equal(h.store.roles.length,2);
+  assert.equal(h.store.rolesError,'');
+  assert.match(h.store.rolesNotice,/Created role agy-fast/);
+
+  h.store.mutateRole(h.cx,h.view,['roles','create','bad','--harness','agy'],{});
+  await h.drain();
+  assert.equal(h.store.rolesError,'role start command must reference {brief}');
+  assert.equal(h.store.savingRole,false);
+});
