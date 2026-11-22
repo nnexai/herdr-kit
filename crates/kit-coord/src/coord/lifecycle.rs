@@ -317,6 +317,11 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         dir: Some(dir.clone()),
     };
     let arg = brief::for_argv(msg, &path);
+    let computer_config = if role.needs_computer_config() {
+        Some(ctx.paths.ensure_computer_config()?)
+    } else {
+        None
+    };
     let vars = role::Vars {
         brief: &arg,
         session_dir: Some(&dir),
@@ -325,6 +330,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         cwd: &ctx.paths.home,
         model: None,
         effort: None,
+        computer_config,
     };
     let argv = role.expand_start(&vars, false)?;
     let model = role.effective_model().or_else(|| role::model_of(&argv));

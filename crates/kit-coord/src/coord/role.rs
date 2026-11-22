@@ -28,6 +28,7 @@ pub struct Role {
     pub resume: Option<Vec<String>>,
     pub session: SessionMode,
     pub trust: Vec<String>,
+    pub steering: Option<bool>,
     pub body: String,
     pub source: RoleSource,
 }
@@ -40,20 +41,18 @@ pub struct Vars<'a> {
     pub cwd: &'a Path,
     pub model: Option<&'a str>,
     pub effort: Option<&'a str>,
+    pub computer_config: Option<&'a Path>,
 }
 
-pub const BUILTIN: [(&str, &str); 11] = [
+pub const BUILTIN: [(&str, &str); 8] = [
     ("coord-main", include_str!("roles/coord-main.md")),
     ("coord-light", include_str!("roles/coord-light.md")),
     ("coord-default", include_str!("roles/coord-default.md")),
     ("coord-deep", include_str!("roles/coord-deep.md")),
     ("coord-design", include_str!("roles/coord-design.md")),
+    ("coord-review", include_str!("roles/coord-review.md")),
+    ("coord-computer", include_str!("roles/coord-computer.md")),
     ("agy-default", include_str!("roles/agy-default.md")),
-    ("claude-default", include_str!("roles/claude-default.md")),
-    ("claude-sonnet", include_str!("roles/claude-sonnet.md")),
-    ("claude-opus", include_str!("roles/claude-opus.md")),
-    ("codex-default", include_str!("roles/codex-default.md")),
-    ("copilot-default", include_str!("roles/copilot-default.md")),
 ];
 
 pub fn builtin(name: &str) -> Option<&'static str> {
@@ -70,6 +69,7 @@ pub struct HarnessDefaults {
     pub resume: Option<&'static str>,
     pub session: SessionMode,
     pub trust: Option<&'static str>,
+    pub steering: Option<bool>,
 }
 
 pub fn harness_defaults(harness: &str) -> Option<HarnessDefaults> {
@@ -79,30 +79,35 @@ pub fn harness_defaults(harness: &str) -> Option<HarnessDefaults> {
             resume: Some("omp --session-dir {session_dir} --resume {session_id} {brief}"),
             session: SessionMode::Dir,
             trust: None,
+            steering: None,
         }),
         "agy" => Some(HarnessDefaults {
             start: "agy -i {brief}",
             resume: Some("agy --conversation {session_id} -i {brief}"),
             session: SessionMode::AgyConversation,
             trust: Some(r#"--settings '{"trustedWorkspaces":[{cwd_json}]}'"#),
+            steering: Some(true),
         }),
         "claude" => Some(HarnessDefaults {
             start: "claude --session-id {session_id} {brief}",
             resume: Some("claude --resume {session_id} {brief}"),
             session: SessionMode::Preset,
             trust: None,
+            steering: None,
         }),
         "codex" => Some(HarnessDefaults {
             start: "codex {brief}",
             resume: Some("codex resume {session_id} {brief}"),
             session: SessionMode::CodexRollout,
             trust: Some(r#"-c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'"#),
+            steering: None,
         }),
         "copilot" => Some(HarnessDefaults {
             start: "copilot --session-id {session_id} -i {brief}",
             resume: Some("copilot --resume {session_id} -i {brief}"),
             session: SessionMode::Preset,
             trust: None,
+            steering: None,
         }),
         _ => None,
     }
@@ -159,11 +164,68 @@ pub fn valid_effort(harness: &str, value: &str) -> bool {
 }
 
 pub fn harness_supports_steering(harness: &str) -> bool {
-    harness == "omp"
+    matches!(harness, "omp" | "agy")
 }
 
 pub fn app_supports_steering(app: Option<&str>) -> bool {
-    app == Some("omp")
+    matches!(app, Some("omp" | "antigravity" | "agy"))
+}
+
+const AGY_STEER_SETTINGS: &str = r#"{"queuedMessages":"send-immediately"}"#;
+
+/// Merge multiple `--settings <json-object>` flags for `agy` into one `--settings`
+/// flag, because `agy`'s `--settings` flag is last-wins rather than repeatable.
+fn merge_agy_settings(argv: Vec<String>) -> Result<Vec<String>> {
+    let mut merged = serde_json::Map::new();
+    let mut json_positions: Vec<(usize, bool)> = Vec::new();
+    let mut i = 1;
+    while i < argv.len() {
+        if argv[i] == "--" {
+            break;
+        }
+        if argv[i] == "--settings" {
+            if let Some(val) = argv.get(i + 1)
+                && let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(val)
+            {
+                for (k, v) in obj {
+                    merged.insert(k, v);
+                }
+                json_positions.push((i, false));
+                i += 2;
+                continue;
+            }
+        } else if let Some(val) = argv[i].strip_prefix("--settings=")
+            && let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(val)
+        {
+            for (k, v) in obj {
+                merged.insert(k, v);
+            }
+            json_positions.push((i, true));
+            i += 1;
+            continue;
+        }
+        i += 1;
+    }
+    if json_positions.len() < 2 {
+        return Ok(argv);
+    }
+    let combined = serde_json::to_string(&Value::Object(merged))?;
+    let first = json_positions[0].0;
+    let mut out = Vec::with_capacity(argv.len());
+    let mut idx = 0;
+    while idx < argv.len() {
+        if let Some(&(_, inline)) = json_positions.iter().find(|&&(pos, _)| pos == idx) {
+            if idx == first {
+                out.push("--settings".into());
+                out.push(combined.clone());
+            }
+            idx += if inline { 1 } else { 2 };
+            continue;
+        }
+        out.push(argv[idx].clone());
+        idx += 1;
+    }
+    Ok(out)
 }
 
 impl Role {
@@ -180,7 +242,16 @@ impl Role {
     }
 
     pub fn supports_steering(&self) -> bool {
-        harness_supports_steering(&self.harness)
+        self.steering
+            .unwrap_or_else(|| harness_supports_steering(&self.harness))
+    }
+
+    pub fn needs_computer_config(&self) -> bool {
+        self.start.iter().any(|a| a.contains("{computer_config}"))
+            || self
+                .resume
+                .as_deref()
+                .is_some_and(|r| r.iter().any(|a| a.contains("{computer_config}")))
     }
 
     pub fn expand_start(&self, vars: &Vars<'_>, trusted: bool) -> Result<Vec<String>> {
@@ -192,6 +263,10 @@ impl Role {
             ..*vars
         };
         let mut injected = Vec::new();
+        if self.harness == "agy" && self.supports_steering() {
+            injected.push("--settings".into());
+            injected.push(AGY_STEER_SETTINGS.into());
+        }
         if trusted {
             injected.extend(self.trust.iter().cloned());
         }
@@ -219,11 +294,16 @@ impl Role {
                 injected.push(e.into());
             }
         }
-        expand(
+        let expanded = expand(
             &self.start,
             &effective,
             (!injected.is_empty()).then_some(injected.as_slice()),
-        )
+        )?;
+        if self.harness == "agy" {
+            merge_agy_settings(expanded)
+        } else {
+            Ok(expanded)
+        }
     }
 
     pub fn expand_resume(&self, vars: &Vars<'_>, trusted: bool) -> Result<Vec<String>> {
@@ -242,11 +322,24 @@ impl Role {
             effort: None,
             ..*vars
         };
-        expand(
+        let mut injected = Vec::new();
+        if self.harness == "agy" && self.supports_steering() {
+            injected.push("--settings".into());
+            injected.push(AGY_STEER_SETTINGS.into());
+        }
+        if trusted {
+            injected.extend(self.trust.iter().cloned());
+        }
+        let expanded = expand(
             template,
             &effective,
-            trusted.then_some(self.trust.as_slice()),
-        )
+            (!injected.is_empty()).then_some(injected.as_slice()),
+        )?;
+        if self.harness == "agy" {
+            merge_agy_settings(expanded)
+        } else {
+            Ok(expanded)
+        }
     }
 }
 
@@ -295,6 +388,27 @@ pub fn to_json(role: &Role) -> Value {
         "steering": role.supports_steering(),
         "body": role.body,
     })
+}
+
+pub fn to_json_with_usage(
+    role: &Role,
+    snapshot: Option<&kit_core::usage::Snapshot>,
+    omp_config: Option<&Path>,
+    now_ms: u64,
+) -> Value {
+    let mut value = to_json(role);
+    if let (Some(snap), Some(map)) = (snapshot, value.as_object_mut()) {
+        let (resolved_model, usage) = kit_core::usage::resolve::evaluate_role(
+            snap,
+            &role.harness,
+            role.effective_model().as_deref(),
+            omp_config,
+            now_ms,
+        );
+        map.insert("resolved_model".into(), json!(resolved_model));
+        map.insert("usage".into(), json!(usage));
+    }
+    value
 }
 
 pub fn load(paths: &CoordPaths, name: &str) -> Result<Role> {
@@ -368,7 +482,14 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         ensure!(
             matches!(
                 key,
-                "harness" | "model" | "effort" | "start" | "resume" | "session" | "trust"
+                "harness"
+                    | "model"
+                    | "effort"
+                    | "start"
+                    | "resume"
+                    | "session"
+                    | "trust"
+                    | "steering"
             ),
             "unknown role key: {key}"
         );
@@ -419,6 +540,18 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         .map(|s| split_words(s))
         .transpose()?
         .unwrap_or_default();
+    let steering = match fields.get("steering").map(String::as_str) {
+        None => None,
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        Some(other) => bail!("invalid role steering: {other} (valid: true, false)"),
+    };
+    if steering == Some(true) {
+        ensure!(
+            harness_supports_steering(&harness),
+            "harness {harness} does not support mid-turn steering"
+        );
+    }
     let session = parse_session_mode(required("session")?)?;
     let start_placeholders = collect_placeholders(&start)?;
     ensure!(
@@ -520,6 +653,7 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         resume,
         session,
         trust,
+        steering,
         body: lines.collect::<String>().trim().to_owned(),
         source,
     })
@@ -549,6 +683,7 @@ fn collect_placeholders(argv: &[String]) -> Result<BTreeSet<String>> {
                         | "cwd_json"
                         | "model"
                         | "effort"
+                        | "computer_config"
                 ),
                 "unknown placeholder: {{{name}}}"
             );
@@ -639,6 +774,9 @@ pub fn format_markdown(role: &Role) -> Result<String> {
     if let Some(t) = &trust_line {
         out.push_str(&format!("trust: {t}\n"));
     }
+    if let Some(s) = role.steering {
+        out.push_str(&format!("steering: {s}\n"));
+    }
     out.push_str("---\n");
     let body = role.body.trim();
     if !body.is_empty() {
@@ -656,6 +794,7 @@ pub fn format_markdown(role: &Role) -> Result<String> {
             && parsed.resume == role.resume
             && parsed.session == role.session
             && parsed.trust == role.trust
+            && parsed.steering == role.steering
             && parsed.body == body,
         "formatted role front matter did not round-trip cleanly"
     );
@@ -867,10 +1006,15 @@ pub fn create(paths: &CoordPaths, args: &RoleCreate) -> Result<Role> {
             resume,
             session,
             trust,
+            steering: defaults.as_ref().and_then(|d| d.steering),
             body: String::new(),
             source: RoleSource::File(target.clone()),
         }
     };
+
+    if let Some(s) = args.steering {
+        role.steering = Some(s);
+    }
 
     if args.from.is_some() {
         if let Some(h) = &args.harness {
@@ -951,6 +1095,7 @@ pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
         || args.session.is_some()
         || args.trust.is_some()
         || args.clear_trust
+        || args.steering.is_some()
         || args.prompt.is_some()
         || args.prompt_file.is_some();
     if !any_change {
@@ -989,6 +1134,9 @@ pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
     } else if let Some(t) = &args.trust {
         role.trust = split_words(t)
             .map_err(|e| error::refused("role_invalid", format!("invalid trust flags: {e}")))?;
+    }
+    if let Some(s) = args.steering {
+        role.steering = Some(s);
     }
 
     if args.clear_model {
@@ -1155,6 +1303,9 @@ fn expand_one(arg: &str, vars: &Vars<'_>) -> Result<String> {
             "cwd_json" => serde_json::to_string(&vars.cwd.to_string_lossy()).ok(),
             "model" => vars.model.map(str::to_owned),
             "effort" => vars.effort.map(str::to_owned),
+            "computer_config" => vars
+                .computer_config
+                .map(|p| p.to_string_lossy().into_owned()),
             _ => bail!("unknown placeholder: {{{name}}}"),
         }
         .filter(|v| !v.is_empty())
@@ -1281,6 +1432,7 @@ mod tests {
             cwd: Path::new("/cwd"),
             model: None,
             effort: None,
+            computer_config: None,
         };
         let start = vec![
             "codex".into(),
@@ -1317,6 +1469,7 @@ mod tests {
             cwd: Path::new("/cwd"),
             model: None,
             effort: None,
+            computer_config: Some(Path::new("/coord/omp-computer.yml")),
         };
         let agy = parse(
             "agy-default",
@@ -1327,39 +1480,51 @@ mod tests {
         assert_eq!(agy.harness, "agy");
         assert_eq!(agy.session, SessionMode::AgyConversation);
         assert!(agy.resumable());
-        assert!(!agy.supports_steering());
+        assert!(agy.supports_steering());
         assert_eq!(
             agy.expand_start(&vars, false).unwrap(),
-            ["agy", "--model", "gemini-4-neon-high", "-i", "do the work"]
-        );
-        assert_eq!(
-            agy.expand_start(&vars, true).unwrap(),
             [
                 "agy",
                 "--settings",
-                r#"{"trustedWorkspaces":["/cwd"]}"#,
+                r#"{"queuedMessages":"send-immediately"}"#,
                 "--model",
                 "gemini-4-neon-high",
                 "-i",
                 "do the work"
             ]
         );
+        let trusted_start = agy.expand_start(&vars, true).unwrap();
+        assert_eq!(trusted_start[0], "agy");
+        assert_eq!(trusted_start[1], "--settings");
+        assert_eq!(
+            serde_json::from_str::<Value>(&trusted_start[2]).unwrap(),
+            json!({"queuedMessages": "send-immediately", "trustedWorkspaces": ["/cwd"]})
+        );
+        assert_eq!(
+            &trusted_start[3..],
+            &["--model", "gemini-4-neon-high", "-i", "do the work"]
+        );
         assert_eq!(
             agy.expand_resume(&vars, false).unwrap(),
             [
                 "agy",
+                "--settings",
+                r#"{"queuedMessages":"send-immediately"}"#,
                 "--conversation",
                 "11111111-2222-4333-8444-555555555555",
                 "-i",
                 "do the work"
             ]
         );
+        let trusted_resume = agy.expand_resume(&vars, true).unwrap();
+        assert_eq!(trusted_resume[1], "--settings");
         assert_eq!(
-            agy.expand_resume(&vars, true).unwrap(),
-            [
-                "agy",
-                "--settings",
-                r#"{"trustedWorkspaces":["/cwd"]}"#,
+            serde_json::from_str::<Value>(&trusted_resume[2]).unwrap(),
+            json!({"queuedMessages": "send-immediately", "trustedWorkspaces": ["/cwd"]})
+        );
+        assert_eq!(
+            &trusted_resume[3..],
+            &[
                 "--conversation",
                 "11111111-2222-4333-8444-555555555555",
                 "-i",
@@ -1376,16 +1541,20 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&weird_argv[2]).unwrap();
         assert_eq!(
             parsed,
-            serde_json::json!({"trustedWorkspaces": [r#"/work/dir "quoted"\slash"#]})
+            serde_json::json!({
+                "queuedMessages": "send-immediately",
+                "trustedWorkspaces": [r#"/work/dir "quoted"\slash"#]
+            })
         );
 
-        let agy_effort = parse(
-            "agy-xhigh",
-            "---\nharness: agy\nmodel: gemini-4-neon-high\neffort: xhigh\nstart: agy -i {brief}\nresume: agy --conversation {session_id} -i {brief}\nsession: agy-conversation\n---\nbody\n",
+        let agy_no_steer = parse(
+            "agy-no-steer",
+            "---\nharness: agy\nmodel: gemini-4-neon-high\neffort: xhigh\nstart: agy -i {brief}\nresume: agy --conversation {session_id} -i {brief}\nsession: agy-conversation\nsteering: false\n---\nbody\n",
             RoleSource::Builtin,
         )
         .unwrap();
-        let argv = agy_effort.expand_start(&vars, false).unwrap();
+        assert!(!agy_no_steer.supports_steering());
+        let argv = agy_no_steer.expand_start(&vars, false).unwrap();
         assert_eq!(
             argv,
             [
@@ -1401,9 +1570,40 @@ mod tests {
         assert_eq!(model_of(&argv).as_deref(), Some("gemini-4-neon-high"));
         assert_eq!(effort_of(&argv).as_deref(), Some("xhigh"));
 
+        let design = parse(
+            "coord-design",
+            builtin("coord-design").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(design.harness, "agy");
+        assert_eq!(design.effective_model().as_deref(), Some("gemini-4-neon-high"));
+        assert!(design.supports_steering());
+
+        let computer = parse(
+            "coord-computer",
+            builtin("coord-computer").unwrap(),
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert!(computer.needs_computer_config());
+        assert_eq!(
+            computer.expand_start(&vars, false).unwrap(),
+            [
+                "omp",
+                "--model",
+                "@design",
+                "--config",
+                "/coord/omp-computer.yml",
+                "--session-dir",
+                "/sessions/t1",
+                "do the work"
+            ]
+        );
+
         let opus = parse(
             "claude-opus",
-            builtin("claude-opus").unwrap(),
+            "---\nharness: claude\nmodel: opus\neffort: high\nstart: claude --session-id {session_id} {brief}\nresume: claude --resume {session_id} {brief}\nsession: preset\n---\nbody\n",
             RoleSource::Builtin,
         )
         .unwrap();
@@ -1429,42 +1629,6 @@ mod tests {
             [
                 "claude",
                 "--resume",
-                "11111111-2222-4333-8444-555555555555",
-                "do the work"
-            ]
-        );
-
-        let haiku = parse(
-            "claude-default",
-            builtin("claude-default").unwrap(),
-            RoleSource::Builtin,
-        )
-        .unwrap();
-        assert_eq!(
-            haiku.expand_start(&vars, false).unwrap(),
-            [
-                "claude",
-                "--model",
-                "haiku",
-                "--session-id",
-                "11111111-2222-4333-8444-555555555555",
-                "do the work"
-            ]
-        );
-
-        let sonnet = parse(
-            "claude-sonnet",
-            builtin("claude-sonnet").unwrap(),
-            RoleSource::Builtin,
-        )
-        .unwrap();
-        assert_eq!(
-            sonnet.expand_start(&vars, false).unwrap(),
-            [
-                "claude",
-                "--model",
-                "sonnet",
-                "--session-id",
                 "11111111-2222-4333-8444-555555555555",
                 "do the work"
             ]
@@ -1656,6 +1820,7 @@ mod tests {
             cwd: Path::new("/cwd"),
             model: None,
             effort: None,
+            computer_config: None,
         };
         assert_eq!(
             custom.expand_start(&vars, false).unwrap(),
@@ -1768,6 +1933,7 @@ mod tests {
             resume: None,
             session: SessionMode::Dir,
             trust: Vec::new(),
+            steering: None,
             body: "body".into(),
             source: RoleSource::Builtin,
         };

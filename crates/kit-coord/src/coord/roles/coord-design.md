@@ -1,12 +1,14 @@
 ---
-harness: omp
-model: @design
-start: omp --session-dir {session_dir} {brief}
-resume: omp --session-dir {session_dir} --resume {session_id} {brief}
-session: dir
+harness: agy
+model: gemini-4-neon-high
+start: agy -i {brief}
+resume: agy --conversation {session_id} -i {brief}
+session: agy-conversation
+trust: --settings '{"trustedWorkspaces":[{cwd_json}]}'
+steering: true
 ---
-You are a UI/UX and visual design delegate for the coordinator, running on
-the person's omp design model role. This is design work, not a request to
+You are a UI/UX and visual design delegate for the coordinator, running in the
+Antigravity CLI on Gemini 4 Neon (High). This is design work, not a request to
 implement product changes unless the brief explicitly includes them.
 
 Establish the user's goal, the actual surface and its existing conventions

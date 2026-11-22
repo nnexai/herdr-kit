@@ -302,24 +302,30 @@ The mod itself reads only coordinator CLI JSON. If kit-coord or the
 coordinator is unavailable, it keeps the draft and shows a clear state.
 
 State lives under `<data-dir>/coord/`, including the append-only journal,
-configuration, roles and task files. Use `--role coord-design` on
-`kit-coord task start` for UI/UX and visual design: it starts `omp --model @design`,
-so OMP resolves the person's configured design model without naming a model
-for every task. `coord-deep` uses `@slow` for open technical problems, not the
-design model role.
+configuration, roles and task files. Built-in roles cover everyday SWE,
+design, review and computer use without overlap:
+`coord-main` (coordinator, `omp` `@plan`), `coord-light` (quick mechanical
+tasks, `omp` `openai-codex/gpt-6-luna:medium`), `coord-default` (everyday SWE
+and routine bug fixes, `omp` `@task`), `coord-deep` (complex/novel builds and
+hard bug fixes, `omp` `@plan`), `coord-design` (UI/UX and visual design, `agy`
+`gemini-4-neon-high`), `coord-review` (primary read-only bug hunter/reviewer,
+`omp` `@advisor`), `coord-computer` (browser, native app, local/remote script
+automation, `omp` `@design` with per-session `computer.enabled` overlay), and
+`agy-default` (`agy` `gemini-4-neon-high` for bug-hunting cross-checks and
+second opinions). Both `omp` and steering-enabled `agy` roles (`steering: true`,
+launching with merged `--settings '{"queuedMessages":"send-immediately",...}'`)
+support mid-turn steering.
 
 `kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
-`override`, resolved fields and prompt body) and `kit-coord roles <name>` returns
-one role as JSON. Create, edit, reset and delete roles with
-`kit-coord roles create|edit|reset|delete` (validated before atomic write; editing
-a built-in creates an override file in `coord/roles/`), or manage them from the
-Coordinator dialog's `⋯` → **Roles** view. Built-in roles
-include OMP (`coord-*`), Antigravity CLI (`agy-default` on
-`gemini-4-neon-high` with resumable `agy-conversation` discovery), Claude Code
-(`claude-default` on `haiku`, `claude-sonnet` on `sonnet`, `claude-opus` on
-`opus` with `effort: high`),
-Codex (`codex-default`) and Copilot (`copilot-default`). See [roles and models](docs/coordinator-spec.md#roles-and-models)
-for role-file examples, resume rules, steering limits and statistics details.
+`override`, resolved fields, `resolved_model`, `steering`, prompt `body`, and
+per-role subscription `usage` read via `kit-core` from the shared `kit-usage`
+cache). `kit-coord task start` refuses roles whose subscription is `exhausted`
+or `not_signed_in` (`subscription_exhausted` / `subscription_not_signed_in`)
+unless `--allow-exhausted` is explicitly passed. Create, edit, reset and delete
+roles with `kit-coord roles create|edit|reset|delete` (additional harnesses
+`claude`, `codex`, `copilot` can be created on demand via `--harness`), or
+manage them from the Coordinator dialog's `⋯` → **Roles** view. See [roles and models](docs/coordinator-spec.md#roles-and-models)
+for role-file examples, usage-aware fallback rules, resume rules, steering limits and statistics details.
 Autostart is controlled by coordinator configuration. The watcher is a
 `kit-coord watch` subcommand running in an hc terminal, not a hidden service.
 

@@ -339,6 +339,11 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 json!({"action": "reset", "role": role::to_json(&restored)})
             }
             None => {
+                let usage_snap = (!defaults)
+                    .then(|| kit_core::usage::read_cached(&ctx.root.join("usage"), ctx.now()));
+                let omp_cfg = (!defaults)
+                    .then(kit_core::usage::resolve::default_omp_config_path)
+                    .flatten();
                 if let Some(name) = name {
                     let r = if defaults {
                         let text = role::builtin(&name).ok_or_else(|| {
@@ -348,7 +353,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                     } else {
                         role::load_or_not_found(&ctx.paths, &name)?
                     };
-                    role::to_json(&r)
+                    role::to_json_with_usage(&r, usage_snap.as_ref(), omp_cfg.as_deref(), ctx.now())
                 } else {
                     let roles = if defaults {
                         role::BUILTIN
@@ -369,7 +374,12 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                         } else {
                             role::load(&ctx.paths, &name)?
                         };
-                        out.push(role::to_json(&r));
+                        out.push(role::to_json_with_usage(
+                            &r,
+                            usage_snap.as_ref(),
+                            omp_cfg.as_deref(),
+                            ctx.now(),
+                        ));
                     }
                     json!({"roles": out})
                 }

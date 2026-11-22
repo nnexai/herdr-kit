@@ -1041,7 +1041,7 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
     assert!(agy_role["effort"].is_null());
     assert_eq!(agy_role["session"], "agy-conversation");
     assert_eq!(agy_role["resumable"], true);
-    assert_eq!(agy_role["steering"], false);
+    assert_eq!(agy_role["steering"], true);
 
     let ws = h.open();
     let task = format!("{ws}-t1");
@@ -1146,10 +1146,17 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
     let argv: Vec<_> = run_line.split('\t').collect();
     let sep = argv.iter().position(|a| *a == "--").unwrap();
     assert_eq!(
-        &argv[sep + 1..sep + 5],
-        &["agy", "--model", "gemini-4-neon-high", "-i"]
+        &argv[sep + 1..sep + 7],
+        &[
+            "agy",
+            "--settings",
+            r#"{"queuedMessages":"send-immediately"}"#,
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
     );
-    assert!(argv[sep + 5].starts_with("You are a delegate working on one task"));
+    assert!(argv[sep + 7].starts_with("You are a delegate working on one task"));
     assert!(calls.contains("Implement harness support"));
 
     // Startup (turn 0): refused as agent_not_ready.
@@ -1158,14 +1165,17 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
         "agent_not_ready",
         4,
     );
-    // Working after turn 1 on antigravity: refused explicitly as steering_unsupported.
+    // Working after turn 1 on steering-enabled antigravity: steers mid-turn!
     term["turn"] = json!(1);
     h.queue("hc", "get", &term);
-    rail_error(
-        h.run(&["task", "send", &task, "--text", "mid-turn steer"]),
-        "steering_unsupported",
-        4,
+    h.queue(
+        "hc",
+        "send",
+        &json!({"turn":1,"started":false,"status":"working"}),
     );
+    let steered = h.ok(&["task", "send", &task, "--text", "mid-turn steer"]);
+    assert_eq!(steered["delivery"], "steering");
+    assert_eq!(steered["steered"], true);
     // Blocked (permission prompt): refused as agent_blocked.
     term["status"]["state"] = json!("blocked");
     h.queue("hc", "get", &term);
@@ -1236,17 +1246,36 @@ fn agy_delegate_discovers_conversation_reports_and_resumes() {
     let resume_argv: Vec<_> = runs[1].split('\t').collect();
     let rsep = resume_argv.iter().position(|a| *a == "--").unwrap();
     assert_eq!(
-        &resume_argv[rsep + 1..rsep + 5],
-        &["agy", "--conversation", conv_id, "-i"]
+        &resume_argv[rsep + 1..rsep + 7],
+        &[
+            "agy",
+            "--settings",
+            r#"{"queuedMessages":"send-immediately"}"#,
+            "--conversation",
+            conv_id,
+            "-i"
+        ]
     );
-    assert!(!resume_argv[rsep + 1..rsep + 5].contains(&"--model"));
+    assert!(!resume_argv[rsep + 1..rsep + 7].contains(&"--model"));
 }
 
 #[test]
 fn claude_roles_expand_model_effort_and_resume_cleanly() {
     let h = Harness::new();
+    h.ok(&[
+        "roles",
+        "create",
+        "claude-opus",
+        "--harness",
+        "claude",
+        "--model",
+        "opus",
+        "--effort",
+        "high",
+        "--prompt",
+        "Claude opus delegate.",
+    ]);
     let roles_dir = h.root().join("data/coord/roles");
-    fs::create_dir_all(&roles_dir).unwrap();
     fs::write(
         roles_dir.join("claude-haiku-low.md"),
         "---\nharness: claude\nmodel: haiku\neffort: low\nstart: claude --session-id {session_id} {brief}\nresume: claude --resume {session_id} {brief}\nsession: preset\n---\nFast delegate\n",
@@ -1260,13 +1289,6 @@ fn claude_roles_expand_model_effort_and_resume_cleanly() {
     assert_eq!(opus["session"], "preset");
     assert_eq!(opus["resumable"], true);
     assert_eq!(opus["steering"], false);
-    let claude_default = roles
-        .iter()
-        .find(|r| r["name"] == "claude-default")
-        .unwrap();
-    assert_eq!(claude_default["model"], "haiku");
-    let claude_sonnet = roles.iter().find(|r| r["name"] == "claude-sonnet").unwrap();
-    assert_eq!(claude_sonnet["model"], "sonnet");
     let haiku = roles
         .iter()
         .find(|r| r["name"] == "claude-haiku-low")
@@ -1513,7 +1535,10 @@ fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed(
     ]);
     assert_eq!(started["session"], conv_id);
     let expected_cwd = worktree_root.join("trusted-repo/feat-agy-trust");
-    let expected_settings = json!({"trustedWorkspaces": [expected_cwd]}).to_string();
+    let expected_settings = json!({
+        "queuedMessages": "send-immediately",
+        "trustedWorkspaces": [expected_cwd]
+    });
 
     let start_run = h
         .calls("hc")
@@ -1523,19 +1548,18 @@ fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed(
         .to_owned();
     let start_argv: Vec<_> = start_run.split('\t').collect();
     let sep = start_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(start_argv[sep + 1], "agy");
+    assert_eq!(start_argv[sep + 2], "--settings");
     assert_eq!(
-        &start_argv[sep + 1..sep + 7],
-        &[
-            "agy",
-            "--settings",
-            expected_settings.as_str(),
-            "--model",
-            "gemini-4-neon-high",
-            "-i"
-        ]
+        serde_json::from_str::<Value>(start_argv[sep + 3]).unwrap(),
+        expected_settings
+    );
+    assert_eq!(
+        &start_argv[sep + 4..sep + 7],
+        &["--model", "gemini-4-neon-high", "-i"]
     );
 
-    // Cold resume also passes `--settings` for the worktree cwd (since `--settings` is
+    // Cold resume also passes merged `--settings` for the worktree cwd (since `--settings` is
     // session-only and never persisted) while still omitting `--model`.
     let mut resumed_term = term.clone();
     resumed_term["address"] = json!("t11");
@@ -1559,21 +1583,20 @@ fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed(
     assert_eq!(runs.len(), 2);
     let resume_argv: Vec<_> = runs[1].split('\t').collect();
     let rsep = resume_argv.iter().position(|a| *a == "--").unwrap();
+    assert_eq!(resume_argv[rsep + 1], "agy");
+    assert_eq!(resume_argv[rsep + 2], "--settings");
     assert_eq!(
-        &resume_argv[rsep + 1..rsep + 7],
-        &[
-            "agy",
-            "--settings",
-            expected_settings.as_str(),
-            "--conversation",
-            conv_id,
-            "-i"
-        ]
+        serde_json::from_str::<Value>(resume_argv[rsep + 3]).unwrap(),
+        expected_settings
+    );
+    assert_eq!(
+        &resume_argv[rsep + 4..rsep + 7],
+        &["--conversation", conv_id, "-i"]
     );
     assert!(!resume_argv[rsep + 1..rsep + 7].contains(&"--model"));
 
     // 2. Untrusted repo (not open in any person-owned Herdr space):
-    //    `agy-default` MUST NOT receive `--settings`.
+    //    `agy-default` receives steering settings only (MUST NOT receive `trustedWorkspaces`).
     let ws_untrusted = h.ok(&[
         "ws",
         "open",
@@ -1630,10 +1653,17 @@ fn agy_pretrusts_owned_worktree_only_for_trusted_repo_and_task_trust_is_removed(
     let untrusted_argv: Vec<_> = all_runs[2].split('\t').collect();
     let usep = untrusted_argv.iter().position(|a| *a == "--").unwrap();
     assert_eq!(
-        &untrusted_argv[usep + 1..usep + 5],
-        &["agy", "--model", "gemini-4-neon-high", "-i"]
+        &untrusted_argv[usep + 1..usep + 7],
+        &[
+            "agy",
+            "--settings",
+            r#"{"queuedMessages":"send-immediately"}"#,
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
     );
-    assert!(!untrusted_argv[usep + 1..].contains(&"--settings"));
+    assert!(!untrusted_argv[usep + 3].contains("trustedWorkspaces"));
 
     // No persistent settings.json was created or modified.
     assert!(
@@ -1904,8 +1934,18 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
     ]);
     assert_eq!(started["session"], conv_agy_b);
     let argv0 = run_argv(0);
-    assert_eq!(&argv0[..4], &["agy", "--model", "gemini-4-neon-high", "-i"]);
-    assert!(!argv0.iter().any(|a| a == "--settings"));
+    assert_eq!(
+        &argv0[..6],
+        &[
+            "agy",
+            "--settings",
+            r#"{"queuedMessages":"send-immediately"}"#,
+            "--model",
+            "gemini-4-neon-high",
+            "-i"
+        ]
+    );
+    assert!(!argv0[2].contains("trustedWorkspaces"));
 
     h.queued("hc", "get", 1, &json!({"error": {"kind": "not_found"}}), 3);
     h.queue(
@@ -1923,10 +1963,29 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
     );
     h.ok(&["task", "send", &task_agy_b, "--text", "cold resume in B"]);
     let argv1 = run_argv(1);
-    assert_eq!(&argv1[..4], &["agy", "--conversation", conv_agy_b, "-i"]);
-    assert!(!argv1.iter().any(|a| a == "--settings"));
+    assert_eq!(
+        &argv1[..6],
+        &[
+            "agy",
+            "--settings",
+            r#"{"queuedMessages":"send-immediately"}"#,
+            "--conversation",
+            conv_agy_b,
+            "-i"
+        ]
+    );
+    assert!(!argv1[2].contains("trustedWorkspaces"));
 
-    // 2. Rung-3 into unrelated repo B with codex-default: MUST omit -c trust override on start AND cold send.
+    // 2. Rung-3 into unrelated repo B with custom codex role: MUST omit -c trust override on start AND cold send.
+    h.ok(&[
+        "roles",
+        "create",
+        "codex-default",
+        "--harness",
+        "codex",
+        "--model",
+        "gpt-6-luna",
+    ]);
     let ws_codex_b = open_ws("Codex unrelated B");
     let task_codex_b = format!("{ws_codex_b}-t1");
     let sess_codex_b = "codex-session-b";
@@ -2029,19 +2088,14 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
         "2=no",
     ]);
     assert_eq!(started["session"], conv_agy_wt);
-    let expected_wt_settings = json!({"trustedWorkspaces": [wt_a]}).to_string();
     let argv4 = run_argv(4);
+    assert_eq!(argv4[0], "agy");
+    assert_eq!(argv4[1], "--settings");
     assert_eq!(
-        &argv4[..6],
-        &[
-            "agy",
-            "--settings",
-            expected_wt_settings.as_str(),
-            "--model",
-            "gemini-4-neon-high",
-            "-i"
-        ]
+        serde_json::from_str::<Value>(&argv4[2]).unwrap(),
+        json!({"queuedMessages": "send-immediately", "trustedWorkspaces": [wt_a]})
     );
+    assert_eq!(&argv4[3..6], &["--model", "gemini-4-neon-high", "-i"]);
 
     h.queued("hc", "get", 1, &json!({"error": {"kind": "not_found"}}), 3);
     h.queue(
@@ -2065,17 +2119,13 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
         "cold resume in wt_a",
     ]);
     let argv5 = run_argv(5);
+    assert_eq!(argv5[0], "agy");
+    assert_eq!(argv5[1], "--settings");
     assert_eq!(
-        &argv5[..6],
-        &[
-            "agy",
-            "--settings",
-            expected_wt_settings.as_str(),
-            "--conversation",
-            conv_agy_wt,
-            "-i"
-        ]
+        serde_json::from_str::<Value>(&argv5[2]).unwrap(),
+        json!({"queuedMessages": "send-immediately", "trustedWorkspaces": [wt_a]})
     );
+    assert_eq!(&argv5[3..6], &["--conversation", conv_agy_wt, "-i"]);
 
     // 4. Rung-3 into a same-repo worktree of repo A with codex-default: MUST apply -c trust override.
     let ws_codex_wt = open_ws("Codex same-repo wt");
@@ -2166,19 +2216,14 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
     ]);
     assert_eq!(started["session"], conv_agy_r4);
     let coord_wt = worktree_root.join("repo-a/feat-coord-wt");
-    let expected_r4_settings = json!({"trustedWorkspaces": [coord_wt]}).to_string();
     let argv7 = run_argv(7);
+    assert_eq!(argv7[0], "agy");
+    assert_eq!(argv7[1], "--settings");
     assert_eq!(
-        &argv7[..6],
-        &[
-            "agy",
-            "--settings",
-            expected_r4_settings.as_str(),
-            "--model",
-            "gemini-4-neon-high",
-            "-i"
-        ]
+        serde_json::from_str::<Value>(&argv7[2]).unwrap(),
+        json!({"queuedMessages": "send-immediately", "trustedWorkspaces": [coord_wt]})
     );
+    assert_eq!(&argv7[3..6], &["--model", "gemini-4-neon-high", "-i"]);
 }
 
 #[test]
@@ -2530,4 +2575,320 @@ fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
         .output()
         .unwrap();
     assert!(delegate_read.status.success());
+}
+
+#[test]
+fn roles_usage_task_start_exhausted_refusal_override_and_computer_overlay() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let h = Harness::new();
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    // Seed isolated OMP config so @plan/@task/@advisor/@design resolve deterministically.
+    let omp_cfg = h.root().join("omp-config.yml");
+    fs::write(
+        &omp_cfg,
+        "modelRoles:\n  plan: anthropic/claude-opus-5-5:high\n  task: openai-codex/gpt-6.1-terra:medium\n  advisor: openai-codex/gpt-6.2-sol:medium\n  design: anthropic/claude-sonnet-5-5:medium\n",
+    )
+    .unwrap();
+
+    // Seed isolated usage/snapshot.json (schema 3): Claude exhausted (resets in 10m),
+    // Codex ok (3% used), Copilot not signed in, Antigravity gemini ok (40% used).
+    let usage_dir = h.root().join("data/usage");
+    fs::create_dir_all(&usage_dir).unwrap();
+    fs::set_permissions(&usage_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    let snap = json!({
+        "schema": 3,
+        "omp": {
+            "attempted_at_ms": now_ms,
+            "succeeded_at_ms": now_ms,
+            "next_attempt_at_ms": now_ms + 300_000,
+            "failures": 0,
+            "providers": [
+                {
+                    "provider": "codex",
+                    "state": "available",
+                    "error": null,
+                    "accounts": [{
+                        "fetched_at_ms": now_ms,
+                        "limits": [{
+                            "id": "codex:7d:0",
+                            "window": "7d",
+                            "tier": null,
+                            "unit": "percent",
+                            "used_fraction": 0.03,
+                            "used": null,
+                            "limit": null,
+                            "remaining": null,
+                            "unlimited": false,
+                            "level": "ok",
+                            "resets_at_ms": now_ms + 300_000_000
+                        }]
+                    }]
+                },
+                {
+                    "provider": "claude",
+                    "state": "available",
+                    "error": null,
+                    "accounts": [{
+                        "fetched_at_ms": now_ms,
+                        "limits": [{
+                            "id": "claude:5h:0",
+                            "window": "5h",
+                            "tier": null,
+                            "unit": "percent",
+                            "used_fraction": 1.0,
+                            "used": null,
+                            "limit": null,
+                            "remaining": null,
+                            "unlimited": false,
+                            "level": "exhausted",
+                            "resets_at_ms": now_ms + 600_000
+                        }]
+                    }]
+                },
+                {
+                    "provider": "copilot",
+                    "state": "not_signed_in",
+                    "error": "not_signed_in",
+                    "accounts": []
+                }
+            ]
+        },
+        "antigravity": {
+            "attempted_at_ms": now_ms,
+            "succeeded_at_ms": now_ms,
+            "next_attempt_at_ms": now_ms + 300_000,
+            "failures": 0,
+            "providers": [{
+                "provider": "antigravity",
+                "state": "available",
+                "error": null,
+                "accounts": [{
+                    "fetched_at_ms": now_ms,
+                    "limits": [{
+                        "id": "antigravity:5h:0",
+                        "window": "5h",
+                        "tier": "gemini",
+                        "unit": "percent",
+                        "used_fraction": 0.40,
+                        "used": null,
+                        "limit": null,
+                        "remaining": null,
+                        "unlimited": false,
+                        "level": "ok",
+                        "resets_at_ms": now_ms + 3_600_000
+                    }]
+                }]
+            }]
+        }
+    });
+    let snap_path = usage_dir.join("snapshot.json");
+    fs::write(&snap_path, serde_json::to_vec(&snap).unwrap()).unwrap();
+    fs::set_permissions(&snap_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    // 1. `kit-coord roles` exposes resolved_model and live usage per role.
+    let roles_out = h
+        .command(&["roles"])
+        .env("KIT_COORD_OMP_CONFIG", &omp_cfg)
+        .output()
+        .unwrap();
+    assert!(roles_out.status.success());
+    let roles: Value = serde_json::from_slice(&roles_out.stdout).unwrap();
+    let list = roles["roles"].as_array().unwrap();
+    assert_eq!(list.len(), 8);
+    let deep = list.iter().find(|r| r["name"] == "coord-deep").unwrap();
+    assert_eq!(deep["resolved_model"], "anthropic/claude-opus-5-5:high");
+    assert_eq!(deep["usage"]["provider"], "claude");
+    assert_eq!(deep["usage"]["status"], "exhausted");
+    assert_eq!(deep["usage"]["blocking_window"], "5h");
+    assert!(deep["usage"]["resets_in_s"].as_u64().unwrap() > 0);
+
+    let light = list.iter().find(|r| r["name"] == "coord-light").unwrap();
+    assert_eq!(light["resolved_model"], "openai-codex/gpt-6-luna:medium");
+    assert_eq!(light["usage"]["provider"], "codex");
+    assert_eq!(light["usage"]["status"], "ok");
+
+    let design = list.iter().find(|r| r["name"] == "coord-design").unwrap();
+    assert_eq!(design["harness"], "agy");
+    assert_eq!(design["steering"], true);
+    assert_eq!(design["usage"]["provider"], "antigravity");
+    assert_eq!(design["usage"]["tier"], "gemini");
+    assert_eq!(design["usage"]["status"], "ok");
+
+    // 2. `task start` refuses exhausted role before allocating anything.
+    let ws = h.open();
+    let brief = h.root().join("brief");
+    fs::write(&brief, "Build feature").unwrap();
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let refused = h
+        .command(&[
+            "task",
+            "start",
+            "--ws",
+            &ws,
+            "--rung",
+            "3",
+            "--reason",
+            "work",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--role",
+            "coord-deep",
+            "--space",
+            "existing",
+            "--reject",
+            "1=no",
+            "--reject",
+            "2=no",
+        ])
+        .env("KIT_COORD_OMP_CONFIG", &omp_cfg)
+        .output()
+        .unwrap();
+    rail_error(refused, "subscription_exhausted", 3);
+    assert!(h.calls("hc").is_empty());
+
+    // 3. `task start` refuses not_signed_in subscription as well.
+    h.ok(&[
+        "roles",
+        "create",
+        "cop-test",
+        "--harness",
+        "copilot",
+        "--model",
+        "gpt-6-luna",
+    ]);
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let not_signed = h
+        .command(&[
+            "task",
+            "start",
+            "--ws",
+            &ws,
+            "--rung",
+            "3",
+            "--reason",
+            "work",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--role",
+            "cop-test",
+            "--space",
+            "existing",
+            "--reject",
+            "1=no",
+            "--reject",
+            "2=no",
+        ])
+        .env("KIT_COORD_OMP_CONFIG", &omp_cfg)
+        .output()
+        .unwrap();
+    rail_error(not_signed, "subscription_not_signed_in", 3);
+
+    // 4. `--allow-exhausted` overrides refusal on `coord-computer` and materializes `omp-computer.yml`.
+    let task = format!("{ws}-t1");
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t7","pane":"p1"}]}]}]}));
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["address"] = json!("t7");
+    term["state"] = json!("live");
+    term["turn"] = json!(1);
+    term["reported"] = json!(true);
+    term["status"] = json!({"app":"omp","state":"working"});
+    term["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task});
+    h.queue("hc", "run", &json!({"address":"t7"}));
+    h.queue("hc", "get", &term);
+    let started_out = h
+        .command(&[
+            "task",
+            "start",
+            "--ws",
+            &ws,
+            "--rung",
+            "3",
+            "--reason",
+            "computer task",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--role",
+            "coord-computer",
+            "--space",
+            "existing",
+            "--reject",
+            "1=no",
+            "--reject",
+            "2=no",
+            "--allow-exhausted",
+        ])
+        .env("KIT_COORD_OMP_CONFIG", &omp_cfg)
+        .output()
+        .unwrap();
+    assert!(
+        started_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&started_out.stderr)
+    );
+    let started: Value = serde_json::from_slice(&started_out.stdout).unwrap();
+    assert_eq!(started["usage"]["status"], "exhausted");
+    assert_eq!(started["usage"]["overridden"], true);
+    let overlay = h.root().join("data/coord/omp-computer.yml");
+    let overlay_text = fs::read_to_string(&overlay).unwrap();
+    assert!(overlay_text.contains("computer:\n  enabled: true"));
+    assert!(h.calls("hc").contains("--config"));
+    assert!(h.calls("hc").contains(overlay.to_str().unwrap()));
+
+    // 5. Role-level `steering: false` on an agy role refuses mid-turn steering.
+    h.ok(&[
+        "roles",
+        "create",
+        "agy-no-steer",
+        "--from",
+        "agy-default",
+        "--steering",
+        "false",
+    ]);
+    let no_steer_role = h.ok(&["roles", "agy-no-steer"]);
+    assert_eq!(no_steer_role["steering"], false);
+    let task2 = format!("{ws}-t2");
+    h.queue("herdr-app", "ls", &json!({"spaces":[{"id":"existing","name":"Existing","folder":h.root(),"machine":null,"tabs":[{"id":"tab1","name":"Tab","terminals":[{"terminal":"t9","pane":"p2"}]}]}]}));
+    let mut term2 = term.clone();
+    term2["address"] = json!("t9");
+    term2["status"] = json!({"app":"antigravity","state":"working"});
+    term2["labels"] = json!({"herdr.space":"existing","coord.managed":"1","coord.role":"delegate","coord.ws":ws,"coord.task":task2});
+    h.queue("hc", "run", &json!({"address":"t9"}));
+    h.queue("hc", "get", &term2);
+    let started2 = h
+        .command(&[
+            "task",
+            "start",
+            "--ws",
+            &ws,
+            "--rung",
+            "3",
+            "--reason",
+            "non-steering agy",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--role",
+            "agy-no-steer",
+            "--space",
+            "existing",
+            "--reject",
+            "1=no",
+            "--reject",
+            "2=no",
+        ])
+        .env("KIT_COORD_OMP_CONFIG", &omp_cfg)
+        .output()
+        .unwrap();
+    assert!(started2.status.success());
+    h.queue("hc", "get", &term2);
+    rail_error(
+        h.run(&["task", "send", &task2, "--text", "steer blocked"]),
+        "steering_unsupported",
+        4,
+    );
 }

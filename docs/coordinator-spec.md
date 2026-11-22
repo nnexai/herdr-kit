@@ -142,39 +142,42 @@ Defaults are built into herdr-kit. A file of the same name in `roles/`
 overrides the built-in one and is never written by updates; `kit-coord roles
 --defaults` prints the current built-ins for comparison.
 
-| Role | Harness | Model / effort | Session | Used for |
-|---|---|---|---|---|
-| `coord-main` | `omp` | `@plan` | `dir` | The coordinator |
-| `coord-light` | `omp` | `@smol` | `dir` | Mechanical, fully specified tasks |
-| `coord-default` | `omp` | `@task` | `dir` | Clear goal, known approach |
-| `coord-deep` | `omp` | `@slow` | `dir` | Open technical design, unclear cause, high cost of error |
-| `coord-design` | `omp` | `@design` | `dir` | UI/UX, interaction, layout and visual design, including open-ended work |
-| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | Antigravity CLI delegate on Gemini 4 Neon (High) (with per-session `--settings` trust override for trusted repos) |
-| `claude-default` | `claude` | `haiku` | `preset` | Claude Code delegate (lightweight / default) |
-| `claude-sonnet` | `claude` | `sonnet` | `preset` | Claude Code delegate for clear-goal tasks |
-| `claude-opus` | `claude` | `opus` (`effort: high`) | `preset` | Claude Code delegate for open technical design or complex work |
-| `codex-default` | `codex` | `gpt-6-luna` | `codex-rollout` | Codex delegate (with per-launch trust override for trusted repos) |
-| `copilot-default` | `copilot` | `gpt-6-luna` | `preset` | Copilot CLI delegate |
-
-For design work, pass `--role coord-design` to `kit-coord task start` with the
-usual workstream, brief and placement arguments. OMP resolves `@design` from
-its own model-role configuration at session start; herdr-kit neither reads
-nor changes that configuration and does not pin a provider model. Changing
-the person's OMP design model therefore applies to future design sessions.
-This selects the model role, not an OMP bundled subagent.
+| Role | Harness | Model / effort | Session | Steering | Used for |
+|---|---|---|---|---|---|
+| `coord-main` | `omp` | `@plan` | `dir` | `true` | The coordinator |
+| `coord-light` | `omp` | `openai-codex/gpt-6-luna:medium` | `dir` | `true` | Quick, mechanical, tightly specified tasks (cheapest; generous `codex` sub) |
+| `coord-default` | `omp` | `@task` | `dir` | `true` | Everyday SWE: clear-goal features, refactors, localized bug fixes |
+| `coord-deep` | `omp` | `@plan` | `dir` | `true` | Complex tasks: novel/larger builds, open architecture, hard multi-file bug fixes |
+| `coord-design` | `agy` | `gemini-4-neon-high` | `agy-conversation` | `true` | UI/UX, interaction, layout and visual design on Gemini 4 Neon (High) |
+| `coord-review` | `omp` | `@advisor` | `dir` | `true` | Primary bug hunter and read-only code reviewer (Sol 6.2; never builds) |
+| `coord-computer` | `omp` | `@design` (`--config {computer_config}`) | `dir` | `true` | Computer use: browsers, native apps, local scripts and SSH on other machines |
+| `agy-default` | `agy` | `gemini-4-neon-high` | `agy-conversation` | `true` | Antigravity CLI delegate on Gemini 4 Neon (High): bug-hunting cross-check, second opinion and cross-provider fallback |
 
 `kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
-`override`, resolved harness, model, effort, session mode, start/resume/trust
-commands, resumability, steering support, and prompt `body`). `kit-coord roles
-coord-design` returns that single role as JSON without launching a delegate;
-`kit-coord roles --defaults [name]` inspects the shipped defaults.
+`override`, resolved harness, model, `resolved_model`, effort, session mode,
+start/resume/trust commands, resumability, `steering`, prompt `body`, and live
+per-role subscription `usage` read via `kit_core::usage` from the shared
+`<data-dir>/usage/snapshot.json` cache). `kit-coord roles coord-design` returns
+that single role as JSON without launching a delegate; `kit-coord roles
+--defaults [name]` inspects the shipped defaults offline.
 
-To set up, edit, or remove roles via the CLI (validated before atomic write):
+`kit-coord task start` checks the target role's subscription usage before
+placing or launching: if `usage.status` is `exhausted` or `not_signed_in`, it
+refuses with `subscription_exhausted` or `subscription_not_signed_in` (including
+blocking window and reset timing) unless `--allow-exhausted` is explicitly
+passed. On steering-enabled `agy` roles (`steering: true`), `kit-coord` merges
+`{"queuedMessages":"send-immediately"}` with any per-launch `trustedWorkspaces`
+into a single `--settings` JSON object so `kit-coord task send` steers working
+`agy` delegates mid-turn reliably.
+
+To set up, edit, or remove roles via the CLI (validated before atomic write;
+additional harnesses `claude`, `codex`, `copilot` remain built into
+`harness_defaults()` for on-demand creation):
 
 ```sh
-kit-coord roles create <name> --from agy-default --model <m> [--effort <e>] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles create <name> --from agy-default --model <m> [--effort <e>] [--steering true|false] [--prompt <text> | --prompt-file <path|->]
 kit-coord roles create <name> --harness claude --model sonnet [--start ...] [--resume ...] [--session ...] [--trust ...]
-kit-coord roles edit <name> [--model <m> | --clear-model] [--effort <e> | --clear-effort] [--harness ...] [--start ...] [--resume ... | --clear-resume] [--session ...] [--trust ... | --clear-trust] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles edit <name> [--model <m> | --clear-model] [--effort <e> | --clear-effort] [--steering true|false] [--harness ...] [--start ...] [--resume ... | --clear-resume] [--session ...] [--trust ... | --clear-trust] [--prompt <text> | --prompt-file <path|->]
 kit-coord roles reset <name>    # revert a built-in override
 kit-coord roles delete <name>   # remove a custom file role
 ```
@@ -618,10 +621,11 @@ Standing instructions for this role.
 ```
 
 - `start` and `resume` are split into arguments like a shell would, then placeholders are replaced inside single arguments; nothing is passed through a shell.
-- Placeholders: `{brief}` (the whole first message as one argument), `{session_dir}`, `{session_id}`, `{repo_root}`, `{cwd}`, `{model}`, `{effort}`.
+- Placeholders: `{brief}` (the whole first message as one argument), `{session_dir}`, `{session_id}`, `{repo_root}`, `{cwd}`, `{cwd_json}`, `{model}`, `{effort}`, `{computer_config}`.
 - `model` and `effort` are plain front-matter config choices injected into `start` (never `resume`) using each known harness's native flags (`--model`/`-m`, `--effort`/`--thinking`), or substituted into `{model}`/`{effort}` placeholders in `start` for custom harnesses (`{model}` and `{effort}` are rejected in `resume`).
+- `steering` (`true` or `false`) is an optional front-matter setting (defaults to `true` for `omp` and `agy`, `false` for other harnesses). On steering-enabled `agy` roles, `kit-coord` merges `{"queuedMessages":"send-immediately"}` with any `trust:` `--settings` JSON object into a single `--settings` flag.
 - `session` says how the session id is obtained: read from the session folder (`dir`, omp), generated up front and passed as `{session_id}` (`preset`, claude/copilot), found in codex's rollout files by folder (`codex-rollout`), discovered from Antigravity CLI's step-0 `USER_INPUT` transcript under `~/.gemini/antigravity-cli/brain/<id>/` by exact trailing reporting footer or oversized-brief prompt (excluding claimed IDs and failing closed on ambiguity) (`agy-conversation`), or not resumable (`none`).
-- The five `coord-*` built-ins use `omp`. Six more built-ins—`agy-default` (Gemini 4 Neon High), `claude-default` (Haiku), `claude-sonnet` (Sonnet), `claude-opus` (Opus with `effort: high`), `codex-default` (with codex's per-launch trust override for `{repo_root}`) and `copilot-default`—carry the start and resume commands for the other harnesses. The models named in built-ins are starting values the person is expected to override or duplicate in `roles/`.
+- Eight shipped built-ins cover the core set: six `omp` roles (`coord-main`, `coord-light`, `coord-default`, `coord-deep`, `coord-review`, `coord-computer`) and two `agy` roles (`coord-design`, `agy-default`). Additional harnesses (`claude`, `codex`, `copilot`) remain supported via `harness_defaults()` when creating custom roles with `kit-coord roles create --harness ...`.
 
 ### What a delegate is told
 

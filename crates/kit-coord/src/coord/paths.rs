@@ -20,6 +20,7 @@ pub struct CoordPaths {
     pub results: PathBuf,
     pub sessions: PathBuf,
     pub roles: PathBuf,
+    pub computer_config: PathBuf,
     pub home: PathBuf,
 }
 
@@ -38,6 +39,7 @@ impl CoordPaths {
             results: dir.join("results"),
             sessions: dir.join("sessions"),
             roles: dir.join("roles"),
+            computer_config: dir.join("omp-computer.yml"),
             home: dir.join("home"),
             dir,
         }
@@ -73,10 +75,30 @@ impl CoordPaths {
             &self.watcher_lock,
             &self.heartbeat,
             &self.config,
+            &self.computer_config,
         ] {
             no_links(file, SymlinkMessage::WithPath)?;
         }
         Ok(())
+    }
+
+    /// Ensure the per-session OMP computer-use config overlay exists with `computer.enabled: true`.
+    pub fn ensure_computer_config(&self) -> Result<&Path> {
+        const OVERLAY: &[u8] = b"computer:\n  enabled: true\nbrowser:\n  enabled: true\n";
+        self.ensure()?;
+        let needs_write = match fs::read(&self.computer_config) {
+            Ok(existing) => existing != OVERLAY,
+            Err(_) => true,
+        };
+        if needs_write {
+            kit_core::paths::write_atomic(
+                &self.computer_config,
+                OVERLAY,
+                SymlinkMessage::WithPath,
+            )?;
+            fs::set_permissions(&self.computer_config, fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(&self.computer_config)
     }
 
     pub fn month_file(&self, ts_ms: u64) -> PathBuf {

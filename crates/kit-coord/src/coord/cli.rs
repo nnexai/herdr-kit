@@ -266,6 +266,9 @@ pub struct RoleCreate {
     /// Remove trust flags (useful with --from).
     #[arg(long)]
     pub clear_trust: bool,
+    /// Whether this role supports mid-turn steering (true or false).
+    #[arg(long)]
+    pub steering: Option<bool>,
     /// Standing instructions prompt body.
     #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
@@ -311,6 +314,9 @@ pub struct RoleEdit {
     /// Clear trust flags.
     #[arg(long)]
     pub clear_trust: bool,
+    /// Whether this role supports mid-turn steering (true or false).
+    #[arg(long)]
+    pub steering: Option<bool>,
     /// Replace the standing instructions prompt body.
     #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
     pub prompt: Option<String>,
@@ -450,6 +456,9 @@ pub struct TaskStart {
     /// Relationship to the task named by --follows.
     #[arg(long, requires = "follows")]
     pub relation: Option<RelationArg>,
+    /// Explicitly allow starting on a role whose subscription usage is exhausted or not signed in.
+    #[arg(long)]
+    pub allow_exhausted: bool,
 }
 
 #[derive(Debug, Args)]

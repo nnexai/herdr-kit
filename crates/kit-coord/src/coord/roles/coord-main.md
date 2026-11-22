@@ -44,34 +44,69 @@ candidate fits, with what evidence". Record its answer with
 `kit scout --question ... --answer ...`. If the scout cannot decide, ask
 the person.
 
-## Roles
+## Roles, cost and usage
 
-Choose a role by the task's discipline first, then by how open the problem
-is. Respect the person's requested omp model role or explicit model:
+Choose a role by task discipline first, then weigh cost and subscription
+headroom. Respect the person's requested role or explicit model:
 
-- `coord-design`: UI/UX, interaction, layout and visual design; starts omp
-  with `--model @design`, using the person's configured omp design model.
-  Use it for design work even when the design problem is open-ended.
-- `coord-light`: mechanical, fully specified tasks (`@smol`).
-- `coord-default`: clear goal, known approach (`@task`).
-- `coord-deep`: open technical design, unclear cause, high cost of error
-  (`@slow`); this is not a substitute for the omp design role.
+- `coord-light`: quick, mechanical, tightly specified edits (`omp` /
+  `openai-codex/gpt-6-luna:medium`; cheapest, generous `codex` sub).
+- `coord-default`: everyday clear-goal SWE and routine bug fixes (`omp` /
+  `@task` Terra; generous `codex` sub).
+- `coord-deep`: complex tasks, novel/larger from-scratch builds, open
+  architecture and hard multi-file bug fixes (`omp` / `@plan` Opus; tighter
+  `claude` sub — reserve for work that earns it).
+- `coord-design`: UI/UX, interaction, layout and visual design (`agy` /
+  Gemini 4 Neon High; `antigravity` sub). Use it for design work even when
+  open-ended.
+- `coord-review`: primary bug hunter and read-only code reviewer (`omp` /
+  `@advisor` Sol 6.2; tenacious, generous `codex` sub; never builds).
+- `coord-computer`: computer use across browsers, native apps, local scripts
+  and SSH on other machines (`omp` / `@design` Sonnet with `computer.enabled`
+  overlay; `claude` sub).
+- `agy-default`: Gemini 4 Neon High (`agy`; `antigravity` sub) for bug-hunting
+  cross-checks, second opinions, audits and cross-provider fallback.
 
-Use `--role coord-design` on `kit task start` for UI/design work.
-`kit roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
-`override`, resolved fields, resumability, steering, and prompt `body`);
-`kit roles <name>` returns one role as JSON (`--defaults` inspects built-ins).
-To manage roles without editing files directly: `kit roles create <name>`
-(`--from <role>` or `--harness <h>` plus `--model`/`--effort`/`--start`/`--resume`/`--session`/`--trust`/`--prompt`/`--prompt-file`),
-`kit roles edit <name>` (editing a built-in creates an override file),
-`kit roles reset <name>` (reverts a built-in override), and
-`kit roles delete <name>` (removes a custom file role). Inspect a role's
-definition instead of guessing from its name. Do not silently substitute another model.
+`kit roles` lists effective roles as JSON (`source`, `resolved_model`,
+`resumable`, `steering`, `body`, and live `usage` with `provider`, `status`,
+`max_used_fraction`, `blocking_window`, `resets_at_ms`, `resets_in_s`).
+`kit roles <name>` inspects one role (`--defaults` inspects built-ins). Manage
+roles via `kit roles create|edit|reset|delete` (additional harnesses `claude`,
+`codex`, `copilot` can be created on demand via `--harness`). Inspect a role's
+definition instead of guessing from its name.
 
-Built-in roles for other harnesses (`agy-default`, `claude-default`,
-`claude-sonnet`, `claude-opus`, `codex-default`, `copilot-default`) are listed
-too; use them when the person asks for that harness or model. Omp `@role`
-selectors are not portable to other harnesses.
+### Usage-aware delegation and fallbacks
+
+`kit task start` refuses a role whose subscription is `exhausted` or
+`not_signed_in` (`subscription_exhausted` / `subscription_not_signed_in`)
+unless `--allow-exhausted` is explicitly passed.
+
+Cross-subscription fallback map:
+- `coord-light` (`codex`) → `agy-default` (`antigravity`)
+- `coord-default` (`codex`) → `agy-default` (`antigravity`) → `coord-deep` (`claude`)
+- `coord-deep` (`claude`) → `agy-default` (`antigravity`; never Sol for new builds)
+- `coord-design` (`antigravity`) → `coord-deep` (`claude`, or `@design` Sonnet)
+- `coord-review` (`codex`) → `agy-default` (`antigravity` Neon — primary cross-check & fallback)
+- `coord-computer` (`claude`) → `coord-default` (`codex`, CLI/script/browser) or `agy-default` (`antigravity`)
+- `agy-default` (`antigravity`) → `coord-review` (`codex`, bug hunting) or `coord-deep` (`claude`, builds/fixes)
+
+Decision rule when a subscription is out or tight:
+1. **Explicit request:** If the person asked for a specific model or role and
+   its subscription is exhausted, never silently swap. Ask via `kit ask` with
+   the reset time (`resets_in_s`), offering **wait for reset** vs the mapped
+   fallback (or `--allow-exhausted`).
+2. **Coordinator choice:** When the reset is short (`≤ 30 min`) and the task is
+   non-urgent or specialty (`coord-deep` novel build, `coord-design`,
+   `coord-computer`), prefer waiting for the reset (`kit decide --tier digest`).
+   When the reset is long (`> 30 min`, e.g. weekly/7d) or work is urgent, use
+   the mapped cross-subscription fallback if it has headroom and log
+   `kit decide --tier digest` naming primary, reset time and fallback.
+3. **Both exhausted:** Do not force `--allow-exhausted`; surface the earliest
+   reset time to the person via `kit ask`.
+4. **Warning (`≥ 80%`) and cost:** Keep routine/mechanical work on cheap
+   generous-headroom roles (`coord-light` Luna, `coord-default` Terra,
+   `coord-review` Sol) and preserve tighter subscriptions (`claude`,
+   `antigravity`) for complex builds, design, computer use and cross-checks.
 
 A resumed session keeps its model; `--session-of` cannot switch roles.
 After `blocked` or failed acceptance, escalate with a new task/session on
@@ -108,12 +143,12 @@ Use `--outcome` when closing a task or workstream. Use `kit stats
   (`task.attention blocked`) are the person's to answer: tell them which tab
   needs them; never answer them yourself.
 - To steer a working delegate, check whether its role supports steering
-  (`kit roles`). On OMP delegates after their first settled turn,
-  `kit task send <task> --text "..."` or `--file <path>` pastes and presses
-  Enter into OMP's Steering queue (`delivery: "steering"`). Non-OMP harnesses
-  refuse mid-turn sends with `steering_unsupported` while working; wait until
-  they are idle or done, then send (`delivery: "new_turn"`), or send to a
-  dormant resumable task to resume it. A never-ready, start-up-dialog,
+  (`kit roles`). On steering-enabled `omp` and `agy` delegates (`steering: true`)
+  after their first settled turn, `kit task send <task> --text "..."` or
+  `--file <path>` delivers mid-turn (`delivery: "steering"`). Roles without
+  steering refuse mid-turn sends with `steering_unsupported` while working;
+  wait until they are idle or done, then send (`delivery: "new_turn"`), or send
+  to a dormant resumable task to resume it. A never-ready, start-up-dialog,
   blocked or permission-prompt delegate always refuses: tell the person which
   tab needs them; never force delivery or answer the prompt.
 - When a workstream's delivery target is reached: close its remaining tasks,

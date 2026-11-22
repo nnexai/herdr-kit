@@ -549,6 +549,61 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         .ok_or_else(|| refuse("role_invalid", "role required"))?;
     let role =
         role::load(&ctx.paths, role_name).map_err(|e| refuse("role_invalid", e.to_string()))?;
+    let usage_snap = kit_core::usage::read_cached(&ctx.root.join("usage"), ctx.now());
+    let omp_cfg = kit_core::usage::resolve::default_omp_config_path();
+    let (resolved_model, role_usage) = kit_core::usage::resolve::evaluate_role(
+        &usage_snap,
+        &role.harness,
+        role.effective_model().as_deref(),
+        omp_cfg.as_deref(),
+        ctx.now(),
+    );
+    if !a.allow_exhausted {
+        use kit_core::usage::resolve::RoleUsageStatus;
+        let provider_name = role_usage
+            .provider
+            .map(|p| format!("{p:?}").to_ascii_lowercase())
+            .unwrap_or_else(|| "unknown".into());
+        match role_usage.status {
+            RoleUsageStatus::Exhausted => {
+                let window = role_usage.blocking_window.as_deref().unwrap_or("unknown");
+                let reset = match (role_usage.resets_in_s, role_usage.resets_at_ms) {
+                    (Some(secs), Some(at)) => format!("resets_in_s={secs}, resets_at_ms={at}"),
+                    (None, Some(at)) => format!("resets_at_ms={at}"),
+                    _ => "reset time unknown".into(),
+                };
+                return Err(refuse(
+                    "subscription_exhausted",
+                    format!(
+                        "role '{}' subscription '{}' is exhausted (window={}, {}); wait for reset, choose a fallback role, or pass --allow-exhausted",
+                        role.name, provider_name, window, reset
+                    ),
+                ));
+            }
+            RoleUsageStatus::NotSignedIn => {
+                return Err(refuse(
+                    "subscription_not_signed_in",
+                    format!(
+                        "role '{}' subscription '{}' is not signed in; sign in, choose a fallback role, or pass --allow-exhausted",
+                        role.name, provider_name
+                    ),
+                ));
+            }
+            RoleUsageStatus::Ok | RoleUsageStatus::Warning | RoleUsageStatus::Unknown => {}
+        }
+    }
+    let usage_out = json!({
+        "resolved_model": resolved_model,
+        "provider": role_usage.provider,
+        "tier": role_usage.tier,
+        "status": role_usage.status,
+        "stale": role_usage.stale,
+        "max_used_fraction": role_usage.max_used_fraction,
+        "blocking_window": role_usage.blocking_window,
+        "resets_at_ms": role_usage.resets_at_ms,
+        "resets_in_s": role_usage.resets_in_s,
+        "overridden": a.allow_exhausted,
+    });
     let follows = followed_task(state, a, previous.as_ref())?;
     let role_hash = role_hash(&role)?;
     let last_number = w.tasks.iter().map(TaskId::n).max().unwrap_or(0);
@@ -599,6 +654,11 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         return Err(refuse("role_invalid", "role command must include {brief}"));
     }
     let argv_message = brief::for_argv(message.clone(), &brief_path);
+    let computer_config = if role.needs_computer_config() {
+        Some(ctx.paths.ensure_computer_config()?)
+    } else {
+        None
+    };
     let vars = role::Vars {
         brief: &argv_message,
         session_dir: session.as_ref().and_then(|s| s.dir.as_deref()),
@@ -607,6 +667,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         cwd: &cwd,
         model: None,
         effort: None,
+        computer_config,
     };
     let argv = if cold_resume {
         role.expand_resume(&vars, trusted)?
@@ -745,6 +806,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
             "space": space,
             "tab": p.tab,
             "session": session.and_then(|s| s.id),
+            "usage": usage_out,
         }));
     }
     drop(l);
@@ -840,6 +902,7 @@ pub fn task_start(ctx: &Ctx, c: &Caller, a: &cli::TaskStart) -> Result<Value> {
         "space": space,
         "tab": launched.tab,
         "session": launched.session.and_then(|s| s.id),
+        "usage": usage_out,
     }))
 }
 
@@ -865,8 +928,9 @@ pub fn task_send(ctx: &Ctx, c: &Caller, task: &TaskId, text: &str) -> Result<Val
     }
 }
 
-/// Deliver to the task's running agent: steer a working OMP turn, otherwise
-/// start a new turn once the agent is ready for one.
+/// Deliver to the task's running agent: steer a working steering-enabled turn
+/// (OMP or steering-enabled Antigravity CLI), otherwise start a new turn once
+/// the agent is ready for one.
 fn send_to_terminal(
     ctx: &Ctx,
     c: &Caller,
@@ -884,7 +948,9 @@ fn send_to_terminal(
         .status
         .as_ref()
         .and_then(|status| status.app.as_deref());
-    let steered = working_ready && role::app_supports_steering(app);
+    let role_allows_steering = role::load(&ctx.paths, &t.role)
+        .map_or_else(|_| role::harness_supports_steering(&t.harness), |r| r.supports_steering());
+    let steered = working_ready && role::app_supports_steering(app) && role_allows_steering;
     if working_ready && !steered {
         let harness = app.unwrap_or(&t.harness);
         return Err(error::not_ready(
@@ -980,6 +1046,11 @@ fn resume_with_message(
     let snapshot = ctx.app.ls()?;
     let trusted = repo.is_some_and(|repo| launch_trusted(state, &snapshot, repo, &cwd, false));
     let arg = brief::for_argv(message.clone(), &path);
+    let computer_config = if role.needs_computer_config() {
+        Some(ctx.paths.ensure_computer_config()?)
+    } else {
+        None
+    };
     let vars = role::Vars {
         brief: &arg,
         session_dir: session.dir.as_deref(),
@@ -988,6 +1059,7 @@ fn resume_with_message(
         cwd: &cwd,
         model: None,
         effort: None,
+        computer_config,
     };
     let template = role
         .resume
@@ -1462,6 +1534,7 @@ mod tests {
             request: None,
             follows: None,
             relation: None,
+            allow_exhausted: false,
         };
         assert_eq!(
             error::exit_of(&task_start(&ctx, &person(), &a).unwrap_err()),
@@ -1591,6 +1664,7 @@ mod placement_failure_tests {
             request: None,
             follows: None,
             relation: None,
+            allow_exhausted: false,
         };
         assert!(task_start(&ctx, &c, &a).is_err());
         let j = Journal::open(&ctx.paths).unwrap();
@@ -1860,6 +1934,7 @@ mod placement_acceptance_tests {
             request: None,
             follows: None,
             relation: None,
+            allow_exhausted: false,
         }
     }
     fn space(shared: &Rc<RefCell<Recording>>, id: &str, folder: &Path) {
