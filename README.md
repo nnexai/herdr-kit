@@ -322,11 +322,11 @@ for role-file examples, resume rules, steering limits and statistics details.
 Autostart is controlled by coordinator configuration. The watcher is a
 `kit-coord watch` subcommand running in an hc terminal, not a hidden service.
 
-The coordinator never closes spaces created by the person, never answers
-mid-task permission prompts (only detected start-up folder/workspace trust
-prompts may be explicitly confirmed with `kit-coord task trust <task>`,
-recorded as `task.trust_confirmed`), and does not reopen a coordinator tab the
-person closed.
+The coordinator never closes spaces created by the person, never types into
+startup dialogs or mid-task permission prompts (without an atomic prompt-bound
+confirmation operation in `hc`, `kit-coord task trust <task>` refuses without
+sending any input and names the tab needing the person), and does not reopen a
+coordinator tab the person closed.
 The journal includes insight records such as operation and cause identifiers,
 ratings and outcomes; `kit-coord stats --json` summarizes them. See
 [the coordinator specification](docs/coordinator-spec.md) for the full model

@@ -120,9 +120,7 @@ paste-plus-Enter send, guarded by `--if working`. Its JSON includes
 `claude`, `codex`, `copilot`) refuse mid-turn sends with exit 4 and error code
 `steering_unsupported` until settled. Never-ready agents, startup dialogs,
 blocked states and permission prompts still refuse `task send`; no force flag
-is used. For detected start-up folder/workspace trust prompts (`task.start_blocked`
-at `turn == 0` with visible trust prompt screen text), `task trust <task>`
-explicitly presses allowlisted confirmation keys (`enter` by default) and
-journals `task.trust_confirmed`; mid-task permission prompts and non-trust
-dialogs stay refused.
+is used. Without an atomic prompt-bound confirmation operation in `hc`,
+`task trust <task>` accepts no key arguments, refuses without sending any input
+or journaling confirmation, and names the tab that needs the person.
 

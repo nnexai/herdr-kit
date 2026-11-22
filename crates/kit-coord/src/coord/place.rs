@@ -1074,57 +1074,45 @@ fn resume_with_message(
     }))
 }
 
-const TRUST_KEY_ALLOWLIST: &[&str] = &[
-    "enter", "up", "down", "left", "right", "tab", "space", "y", "1", "2",
-];
-const MAX_TRUST_KEYS: usize = 4;
-
-fn validate_trust_keys(raw: &[String]) -> Result<Vec<String>> {
-    if raw.is_empty() {
-        return Ok(vec!["enter".into()]);
-    }
-    if raw.len() > MAX_TRUST_KEYS {
-        return Err(refuse(
-            "invalid_keys",
-            format!("at most {MAX_TRUST_KEYS} keys may be sent to confirm a start-up trust prompt"),
-        ));
-    }
-    let mut keys = Vec::with_capacity(raw.len());
-    for key in raw {
-        let normalized = key.trim().to_ascii_lowercase();
-        if !TRUST_KEY_ALLOWLIST.contains(&normalized.as_str()) {
-            return Err(refuse(
-                "invalid_keys",
-                format!("unsupported start-up trust key: {key}"),
-            ));
+fn describe_task_tab(ctx: &Ctx, state: &State, t: &Task, address: &str) -> String {
+    let mut tab_id = t.tab.clone();
+    let mut tab_name = (!t.title.is_empty()).then(|| t.title.clone());
+    let mut space_name = state
+        .workstreams
+        .get(&t.ws)
+        .and_then(|w| w.space.as_ref())
+        .map(|s| s.name.clone())
+        .or_else(|| t.space.clone());
+    if tab_id.is_none() || tab_name.is_none() || space_name.is_none() {
+        if let Ok(snapshot) = ctx.app.ls() {
+            if let Some((space, tab)) = snapshot.tab_of(address) {
+                if tab_id.is_none() {
+                    tab_id = Some(tab.id.clone());
+                }
+                if tab_name.is_none() && !tab.name.is_empty() {
+                    tab_name = Some(tab.name.clone());
+                }
+                if space_name.is_none() && !space.name.is_empty() {
+                    space_name = Some(space.name.clone());
+                }
+            }
         }
-        keys.push(normalized);
     }
-    Ok(keys)
+    let mut parts = Vec::new();
+    if let Some(id) = tab_id {
+        parts.push(format!("tab {id}"));
+    }
+    parts.push(format!("terminal {address}"));
+    if let Some(space) = space_name {
+        parts.push(format!("space \"{space}\""));
+    }
+    match tab_name {
+        Some(name) => format!("tab \"{name}\" ({})", parts.join(", ")),
+        None => parts.join(", "),
+    }
 }
 
-/// Returns true only when the visible terminal screen shows a folder/workspace
-/// start-up trust prompt (such as agy "Trust this folder?", claude/copilot
-/// folder trust, or codex directory trust), rejecting update offers, login
-/// screens, shell prompts, and unrelated dialogs.
-fn is_startup_trust_prompt(screen: &str) -> bool {
-    let lower = screen.to_ascii_lowercase();
-    let mentions_trust = lower.contains("trust");
-    let mentions_scope = [
-        "folder",
-        "directory",
-        "workspace",
-        "project",
-        "repository",
-        "repo",
-    ]
-    .iter()
-    .any(|word| lower.contains(word));
-    mentions_trust && mentions_scope
-}
-
-pub fn task_trust(ctx: &Ctx, c: &Caller, task: &TaskId, raw_keys: &[String]) -> Result<Value> {
-    let keys = validate_trust_keys(raw_keys)?;
+pub fn task_trust(ctx: &Ctx, _c: &Caller, task: &TaskId) -> Result<Value> {
     let j = ctx.journal()?;
     let state = j.read_state()?;
     let t = state
@@ -1138,12 +1126,22 @@ pub fn task_trust(ctx: &Ctx, c: &Caller, task: &TaskId, raw_keys: &[String]) -> 
         return Err(refuse("task_not_running", "task is not running"));
     }
     if t.attention.is_some() || t.blocked.is_some() {
+        let where_text = t
+            .terminal
+            .as_deref()
+            .map(|addr| {
+                format!(
+                    "; ask the person to review {}",
+                    describe_task_tab(ctx, &state, t, addr)
+                )
+            })
+            .unwrap_or_default();
         return Err(refuse(
             "agent_blocked",
-            "mid-task permission or error prompts require the person",
+            format!("mid-task permission or error prompts require the person{where_text}"),
         ));
     }
-    let start_blocked_seq = t.start_blocked.ok_or_else(|| {
+    let _start_blocked_seq = t.start_blocked.ok_or_else(|| {
         error::not_ready(
             "not_startup_dialog",
             "task has no detected start-up dialog (task.start_blocked)",
@@ -1159,16 +1157,19 @@ pub fn task_trust(ctx: &Ctx, c: &Caller, task: &TaskId, raw_keys: &[String]) -> 
         .get(address)?
         .filter(|term| term.live() && term.pid == t.pid)
         .ok_or_else(|| error::not_ready("agent_not_ready", "task terminal is not live"))?;
+    let location = describe_task_tab(ctx, &state, t, &term.address);
     if matches!(term.word(), Some("blocked" | "error")) {
         return Err(refuse(
             "agent_blocked",
-            "mid-task permission or error prompts require the person",
+            format!(
+                "mid-task permission or error prompts require the person; ask the person to review {location}"
+            ),
         ));
     }
     if term.turn >= 1 {
         return Err(refuse(
             "not_startup_dialog",
-            "delegate has already completed a turn; only start-up trust prompts may be confirmed",
+            "delegate has already completed a turn; only start-up trust prompts may be handled",
         ));
     }
     if term.word() == Some("working") {
@@ -1177,71 +1178,17 @@ pub fn task_trust(ctx: &Ctx, c: &Caller, task: &TaskId, raw_keys: &[String]) -> 
     if !owns_terminal(&state, &term, &t.id) {
         return Err(refuse("terminal_not_owned", "task terminal is not owned"));
     }
-    let screen = ctx.hc.read(&term.address, 0)?;
-    if let Some(why) = screen.why.as_deref() {
-        if matches!(why, "blocked" | "error") {
-            return Err(refuse(
-                "agent_blocked",
-                "mid-task permission or error prompts require the person",
-            ));
-        }
-        return Err(refuse(
-            "not_startup_dialog",
-            format!("delegate is not waiting at a start-up trust prompt ({why})"),
-        ));
-    }
-    if !is_startup_trust_prompt(&screen.text) {
-        return Err(refuse(
-            "not_trust_prompt",
-            "visible screen does not show a workspace or folder trust prompt",
-        ));
-    }
-    // Re-check task state and ownership under the journal lock before typing,
-    // then drop the lock before calling `hc keys`.
-    {
-        let l = j.lock()?;
-        let current = l
-            .state()
-            .tasks
-            .get(&t.id)
-            .ok_or_else(|| refuse("unknown_task", "task disappeared"))?;
-        if current.last_activity_seq != t.last_activity_seq
-            || current.terminal != t.terminal
-            || current.state != TaskState::Running
-            || current.start_blocked != Some(start_blocked_seq)
-            || current.attention.is_some()
-            || current.blocked.is_some()
-        {
-            return Err(error::not_ready(
-                "agent_not_ready",
-                "task changed before confirming trust prompt",
-            ));
-        }
-        if !owns_terminal(l.state(), &term, &t.id) {
-            return Err(refuse("terminal_not_owned", "task terminal is not owned"));
-        }
-    }
-    let outcome = ctx.hc.keys(&term.address, &keys)?;
-    let entry = (
-        Some(t.ws.clone()),
-        Some(t.id.clone()),
-        Kind::TaskTrustConfirmed {
-            terminal: term.address.clone(),
-            keys: keys.clone(),
-            start_blocked_seq,
-        },
-    );
-    let entries = j.lock()?.append(&c.actor(), ctx.now(), vec![entry])?;
-    Ok(json!({
-        "task": t.id,
-        "confirmed": true,
-        "terminal": term.address,
-        "keys": keys,
-        "start_blocked_seq": start_blocked_seq,
-        "turn": outcome.turn,
-        "status": outcome.status,
-        "seq": entries[0].seq,
-    }))
+    // Never approximate prompt binding with screen reads, timeouts, or unbound keystrokes:
+    // hc offers no atomic prompt-bound confirmation operation, so refuse without sending
+    // any input and tell the coordinator which tab needs the person.
+    Err(refuse(
+        "trust_confirmation_unavailable",
+        format!(
+            "cannot confirm start-up trust prompt automatically for {} ({}): hc has no atomic prompt-bound confirmation operation; no input was sent — ask the person to review {location}",
+            t.id.as_str(),
+            t.harness,
+        ),
+    ))
 }
 pub fn task_close(
     ctx: &Ctx,
@@ -1597,48 +1544,115 @@ mod tests {
         assert!(send_guard(&t).is_ok());
     }
     #[test]
-    fn startup_trust_prompt_matcher_and_key_allowlist() {
-        assert!(is_startup_trust_prompt(
-            "Trust this folder?\n> Yes, trust this folder\n  No, exit"
-        ));
-        assert!(is_startup_trust_prompt(
-            "Quick safety check: Is this a project you created or one you trust?\n1. Yes, proceed"
-        ));
-        assert!(is_startup_trust_prompt(
-            "Do you trust the contents of this directory?"
-        ));
-        assert!(is_startup_trust_prompt(
-            "Confirm folder trust for /repo/worktree"
-        ));
-        assert!(!is_startup_trust_prompt(
-            "Update available: 0.168 -> 0.169. Press enter to update."
-        ));
-        assert!(!is_startup_trust_prompt(
-            "Allow running shell command `rm -rf build`? [y/N]"
-        ));
-        assert!(!is_startup_trust_prompt("user@host:~/project$ "));
-
-        assert_eq!(validate_trust_keys(&[]).unwrap(), vec!["enter"]);
+    fn describe_task_tab_uses_state_and_falls_back_to_app_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = setup(tmp.path());
+        let app = FakeApp::default();
+        app.snapshots
+            .borrow_mut()
+            .push_back(Ok(serde_json::from_value(json!({
+                "spaces": [{
+                    "id": "sp-live",
+                    "name": "Live Space",
+                    "folder": "/tmp",
+                    "machine": null,
+                    "tabs": [{
+                        "id": "tab-live",
+                        "name": "Live Tab",
+                        "terminals": [{"terminal": "t9", "pane": "p1"}]
+                    }]
+                }]
+            }))
+            .unwrap()));
+        ctx.app = Box::new(app);
+        let ws = WsId::parse("ws-abcdef").unwrap();
+        let id = TaskId::new(&ws, 1);
+        let mut state = State::default();
+        let mut task = Task {
+            id: id.clone(),
+            ws: ws.clone(),
+            n: 1,
+            title: String::new(),
+            state: TaskState::Running,
+            report: None,
+            start_blocked: Some(5),
+            stalled: None,
+            attention: None,
+            blocked: None,
+            start_blocked_ms: Some(100),
+            stalled_ms: None,
+            state_since_ms: 0,
+            placed_ms: 0,
+            started_ms: Some(0),
+            last_event_ms: 0,
+            rung: 3,
+            reason: "work".into(),
+            rejected: vec![],
+            role: "agy-default".into(),
+            harness: "agy".into(),
+            model: Some("gemini-4-neon-high".into()),
+            effort: None,
+            summary: None,
+            terminal: Some("t9".into()),
+            space: None,
+            tab: None,
+            cwd: None,
+            pid: Some(1),
+            created_ms: Some(0),
+            session: None,
+            brief: tmp.path().join("brief"),
+            result: None,
+            nudges: 0,
+            last_nudge: None,
+            last_activity_seq: 0,
+            reported_seq: None,
+            request: None,
+            follows: None,
+            role_hash: String::new(),
+            brief_bytes: 0,
+            outcome: None,
+            rating: None,
+            turns: 0,
+            person_turns: 0,
+            working_ms: 0,
+        };
         assert_eq!(
-            validate_trust_keys(&["Down".into(), "ENTER".into()]).unwrap(),
-            vec!["down", "enter"]
+            describe_task_tab(&ctx, &state, &task, "t9"),
+            "tab \"Live Tab\" (tab tab-live, terminal t9, space \"Live Space\")"
+        );
+        task.title = "Recorded Title".into();
+        task.tab = Some("tab-rec".into());
+        task.space = Some("sp-rec".into());
+        state.workstreams.insert(
+            ws.clone(),
+            Ws {
+                id: ws,
+                title: "WS".into(),
+                repo: None,
+                delivery_target: None,
+                delivery_branch: None,
+                state: WsState::Open,
+                retained: None,
+                summary: None,
+                opened_ms: 0,
+                closed_ms: None,
+                last_event_ms: 0,
+                space: Some(super::super::state::SpaceRec {
+                    id: "sp-rec".into(),
+                    name: "Recorded Space".into(),
+                    owned: true,
+                    folder: tmp.path().into(),
+                }),
+                cwd: None,
+                tasks: vec![id],
+                request: None,
+                outcome: None,
+                rating: None,
+            },
         );
         assert_eq!(
-            error::exit_of(&validate_trust_keys(&["ctrl+c".into()]).unwrap_err()),
-            ("invalid_keys", 3)
-        );
-        assert_eq!(
-            error::exit_of(
-                &validate_trust_keys(&[
-                    "down".into(),
-                    "down".into(),
-                    "down".into(),
-                    "down".into(),
-                    "enter".into()
-                ])
-                .unwrap_err()
-            ),
-            ("invalid_keys", 3)
+            describe_task_tab(&ctx, &state, &task, "t9"),
+            "tab \"Recorded Title\" (tab tab-rec, terminal t9, space \"Recorded Space\")"
         );
     }
     #[test]
@@ -1918,20 +1932,6 @@ mod placement_acceptance_tests {
         }
         fn list(&self, _: bool, _: Option<(&str, &str)>) -> Result<Vec<String>> {
             Ok(vec![])
-        }
-        fn read(&self, _: &str, _: u32) -> Result<super::super::adapter::ReadResult> {
-            Ok(super::super::adapter::ReadResult {
-                text: String::new(),
-                complete: true,
-                how: "screen".into(),
-                why: None,
-            })
-        }
-        fn keys(&self, _: &str, _: &[String]) -> Result<super::super::adapter::KeysResult> {
-            Ok(super::super::adapter::KeysResult {
-                turn: 0,
-                status: None,
-            })
         }
         fn send(&self, _: &str, text: &str) -> Result<SendOutcome> {
             self.shared.borrow_mut().sends.push(text.into());

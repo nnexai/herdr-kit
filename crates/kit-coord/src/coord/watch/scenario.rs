@@ -115,12 +115,6 @@ impl Hc for WorldHc {
     fn send(&self, terminal: &str, _text: &str) -> Result<SendOutcome> {
         anyhow::bail!("the scenario does not send synchronously to {terminal}")
     }
-    fn read(&self, terminal: &str, _lines: u32) -> Result<super::super::adapter::ReadResult> {
-        anyhow::bail!("the scenario does not read {terminal}")
-    }
-    fn keys(&self, terminal: &str, _keys: &[String]) -> Result<super::super::adapter::KeysResult> {
-        anyhow::bail!("the scenario does not send keys to {terminal}")
-    }
     fn send_command(&self, terminal: &str, text: &str) -> Command {
         let mut world = self.0.borrow_mut();
         world.calls.push(format!("hc send {terminal} {text}"));

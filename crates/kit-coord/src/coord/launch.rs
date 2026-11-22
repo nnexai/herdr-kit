@@ -483,12 +483,6 @@ mod tests {
         fn list(&self, _: bool, _: Option<(&str, &str)>) -> Result<Vec<String>> {
             unreachable!()
         }
-        fn read(&self, _: &str, _: u32) -> Result<super::super::adapter::ReadResult> {
-            unreachable!()
-        }
-        fn keys(&self, _: &str, _: &[String]) -> Result<super::super::adapter::KeysResult> {
-            unreachable!()
-        }
         fn send(&self, _: &str, _: &str) -> Result<SendOutcome> {
             unreachable!()
         }

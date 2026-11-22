@@ -64,7 +64,6 @@ export function journalEntry(e) {
     case 'task.note': text = said('Note', s('text')); break;
     case 'task.dormant': text = 'Agent ended; its session can be resumed'; break;
     case 'task.start_blocked': tone = 'blocked'; text = 'Agent did not start, probably a start-up dialog'; break;
-    case 'task.trust_confirmed': text = 'Confirmed start-up trust prompt'; break;
     case 'task.stalled': tone = 'blocked'; text = 'No report after a nudge'; break;
     case 'decision': tone = d.tier === 'ask' ? 'question' : 'quiet'; text = said('Decided', s('what')); break;
     case 'question.asked': tone = 'question'; text = said('Asked you', s('text')); break;

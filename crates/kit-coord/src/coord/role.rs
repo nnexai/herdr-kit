@@ -457,15 +457,20 @@ pub fn expand(
 const MODEL_FLAGS: &[&str] = &["--model", "-m"];
 const EFFORT_FLAGS: &[&str] = &["--effort", "--thinking"];
 
+fn is_short_flag(flag: &str) -> bool {
+    flag.starts_with('-') && !flag.starts_with("--") && flag.len() == 2
+}
+
 fn has_flag(argv: &[String], flags: &[&str]) -> bool {
-    for arg in argv {
+    for arg in argv.iter().skip(1) {
         if arg == "--" {
             break;
         }
         if flags.contains(&arg.as_str())
             || flags.iter().any(|flag| {
-                arg.strip_prefix(flag)
-                    .is_some_and(|rest| rest.starts_with('='))
+                arg.strip_prefix(flag).is_some_and(|rest| {
+                    rest.starts_with('=') || (is_short_flag(flag) && !rest.is_empty())
+                })
             })
         {
             return true;
@@ -475,7 +480,7 @@ fn has_flag(argv: &[String], flags: &[&str]) -> bool {
 }
 
 fn flag_value(argv: &[String], flags: &[&str]) -> Option<String> {
-    let mut iter = argv.iter();
+    let mut iter = argv.iter().skip(1);
     while let Some(arg) = iter.next() {
         if arg == "--" {
             break;
@@ -484,9 +489,16 @@ fn flag_value(argv: &[String], flags: &[&str]) -> Option<String> {
             return iter.next().filter(|v| !v.is_empty()).cloned();
         }
         for flag in flags {
-            if let Some(rest) = arg.strip_prefix(flag).and_then(|s| s.strip_prefix('=')) {
-                if !rest.is_empty() {
-                    return Some(rest.to_owned());
+            if let Some(rest) = arg.strip_prefix(flag) {
+                let value = if let Some(v) = rest.strip_prefix('=') {
+                    Some(v)
+                } else if is_short_flag(flag) && !rest.is_empty() {
+                    Some(rest)
+                } else {
+                    None
+                };
+                if let Some(value) = value.filter(|v| !v.is_empty()) {
+                    return Some(value.to_owned());
                 }
             }
         }
@@ -740,6 +752,49 @@ mod tests {
         );
         assert!(
             parse(
+                "dup-codex-compact-short",
+                "---\nharness: codex\nmodel: gpt-6-luna\nstart: codex -mother-model {brief}\nsession: codex-rollout\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        assert!(
+            parse(
+                "dup-codex-short-equals",
+                "---\nharness: codex\nmodel: gpt-6-luna\nstart: codex -m=other-model {brief}\nsession: codex-rollout\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        let codex_compact_only = parse(
+            "codex-compact-only",
+            "---\nharness: codex\nstart: codex -mgpt-6-luna {brief}\nsession: codex-rollout\n---\nbody\n",
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(
+            codex_compact_only.effective_model().as_deref(),
+            Some("gpt-6-luna")
+        );
+        let codex_after_sep = parse(
+            "codex-after-sep",
+            "---\nharness: codex\nmodel: gpt-6-luna\nstart: codex -- -mnot-a-flag {brief}\nsession: codex-rollout\n---\nbody\n",
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(
+            codex_after_sep.effective_model().as_deref(),
+            Some("gpt-6-luna")
+        );
+        let omp_models_flag = parse(
+            "omp-models-flag",
+            "---\nharness: omp\nmodel: @task\nstart: omp --models=a,b --session-dir {session_dir} {brief}\nsession: dir\n---\nbody\n",
+            RoleSource::Builtin,
+        )
+        .unwrap();
+        assert_eq!(omp_models_flag.effective_model().as_deref(), Some("@task"));
+        assert!(
+            parse(
                 "dup-effort-equals",
                 "---\nharness: claude\nmodel: opus\neffort: high\nstart: claude --effort=low --session-id {session_id} {brief}\nsession: preset\n---\nbody\n",
                 RoleSource::Builtin,
@@ -778,6 +833,15 @@ mod tests {
             model_of(&["codex".into(), "-m=gpt-6-luna".into()]).as_deref(),
             Some("gpt-6-luna")
         );
+        assert_eq!(
+            model_of(&["codex".into(), "-mgpt-6-luna".into()]).as_deref(),
+            Some("gpt-6-luna")
+        );
+        assert_eq!(
+            model_of(&["codex".into(), "--".into(), "-mgpt-6-luna".into()]),
+            None
+        );
+        assert_eq!(model_of(&["omp".into(), "--models=a,b".into()]), None);
         assert_eq!(
             effort_of(&["claude".into(), "--effort=high".into()]).as_deref(),
             Some("high")
