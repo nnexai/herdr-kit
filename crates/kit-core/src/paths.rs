@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail, ensure};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub fn data_dir() -> Result<PathBuf> {
@@ -76,9 +77,37 @@ pub fn agy_data_dir() -> Result<PathBuf> {
     Ok(home()?.join(".gemini/antigravity-cli"))
 }
 
+/// Atomically write `bytes` to `path` after verifying no symlink components.
+/// The parent directory must already exist.
+pub fn write_atomic(path: &Path, bytes: &[u8], message: SymlinkMessage) -> Result<()> {
+    no_links(path, message)?;
+    let parent = path.parent().context("missing parent directory")?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_atomic_creates_and_replaces_without_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("role.md");
+        write_atomic(&file, b"first", SymlinkMessage::WithPath).unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"first");
+        write_atomic(&file, b"second", SymlinkMessage::WithPath).unwrap();
+        assert_eq!(fs::read(&file).unwrap(), b"second");
+
+        let link = temp.path().join("link.md");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(write_atomic(&link, b"bad", SymlinkMessage::WithPath).is_err());
+        assert_eq!(fs::read(&file).unwrap(), b"second");
+    }
 
     #[test]
     fn agy_data_dir_joins_validated_home() {

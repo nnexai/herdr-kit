@@ -1,8 +1,7 @@
 use anyhow::{Context, Result, ensure};
-use kit_core::paths::{SymlinkMessage, no_links};
+use kit_core::paths::{SymlinkMessage, no_links, write_atomic};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 
 use super::paths::CoordPaths;
@@ -54,13 +53,11 @@ impl Config {
     }
     pub fn save(&self, paths: &CoordPaths) -> Result<()> {
         paths.ensure()?;
-        no_links(&paths.config, SymlinkMessage::WithPath)?;
-        let mut tmp = tempfile::NamedTempFile::new_in(&paths.dir)?;
-        tmp.write_all(&serde_json::to_vec(self)?)?;
-        tmp.as_file().sync_all()?;
-        tmp.persist(&paths.config).map_err(|e| e.error)?;
-        File::open(&paths.dir)?.sync_all()?;
-        Ok(())
+        write_atomic(
+            &paths.config,
+            &serde_json::to_vec(self)?,
+            SymlinkMessage::WithPath,
+        )
     }
     pub fn worktree_root(&self) -> Result<PathBuf> {
         if let Some(rest) = self.worktree_root.strip_prefix("~/") {

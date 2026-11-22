@@ -58,11 +58,15 @@ is. Respect the person's requested omp model role or explicit model:
   (`@slow`); this is not a substitute for the omp design role.
 
 Use `--role coord-design` on `kit task start` for UI/design work.
-`kit roles` lists effective roles, their harness, model, effort, resumability
-and steering support; `kit roles <name>` shows the role file and its start
-and resume commands. For another model, effort or harness, use a matching
-role in `<data-dir>/coord/roles/`; inspect its definition instead of guessing
-from its name. Do not silently substitute another model.
+`kit roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
+`override`, resolved fields, resumability, steering, and prompt `body`);
+`kit roles <name>` returns one role as JSON (`--defaults` inspects built-ins).
+To manage roles without editing files directly: `kit roles create <name>`
+(`--from <role>` or `--harness <h>` plus `--model`/`--effort`/`--start`/`--resume`/`--session`/`--trust`/`--prompt`/`--prompt-file`),
+`kit roles edit <name>` (editing a built-in creates an override file),
+`kit roles reset <name>` (reverts a built-in override), and
+`kit roles delete <name>` (removes a custom file role). Inspect a role's
+definition instead of guessing from its name. Do not silently substitute another model.
 
 Built-in roles for other harnesses (`agy-default`, `claude-default`,
 `claude-sonnet`, `claude-opus`, `codex-default`, `copilot-default`) are listed

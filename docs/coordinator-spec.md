@@ -163,11 +163,23 @@ nor changes that configuration and does not pin a provider model. Changing
 the person's OMP design model therefore applies to future design sessions.
 This selects the model role, not an OMP bundled subagent.
 
-`kit-coord roles` lists effective harnesses, model selectors, effort levels,
-session modes, resumability, steering support, sources and whether a file
-overrides a built-in. `kit-coord roles coord-design` prints the effective
-role, including its front matter and commands, without launching a delegate.
-`kit-coord roles --defaults coord-design` prints the shipped version instead.
+`kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
+`override`, resolved harness, model, effort, session mode, start/resume/trust
+commands, resumability, steering support, and prompt `body`). `kit-coord roles
+coord-design` returns that single role as JSON without launching a delegate;
+`kit-coord roles --defaults [name]` inspects the shipped defaults.
+
+To set up, edit, or remove roles via the CLI (validated before atomic write):
+
+```sh
+kit-coord roles create <name> --from agy-default --model <m> [--effort <e>] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles create <name> --harness claude --model sonnet [--start ...] [--resume ...] [--session ...] [--trust ...]
+kit-coord roles edit <name> [--model <m> | --clear-model] [--effort <e> | --clear-effort] [--harness ...] [--start ...] [--resume ... | --clear-resume] [--session ...] [--trust ... | --clear-trust] [--prompt <text> | --prompt-file <path|->]
+kit-coord roles reset <name>    # revert a built-in override
+kit-coord roles delete <name>   # remove a custom file role
+```
+
+Editing a built-in creates an override file in `<data-dir>/coord/roles/<name>.md`. Both the person (including the Coordinator dialog's Roles menu) and the coordinator can manage roles; delegates are read-only.
 
 #### Custom roles, models and effort
 

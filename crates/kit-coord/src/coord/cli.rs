@@ -106,13 +106,20 @@ pub enum CoordCommand {
         #[command(subcommand)]
         command: Option<InboxCommand>,
     },
-    /// List available coordinator roles.
+    /// List, view, create, edit, delete, or reset coordinator roles.
+    #[command(
+        args_conflicts_with_subcommands = true,
+        subcommand_precedence_over_arg = true
+    )]
     Roles {
         /// Print built-in role defaults.
         #[arg(long)]
         defaults: bool,
         /// Show details for one role.
         name: Option<String>,
+        /// Role management operation.
+        #[command(subcommand)]
+        command: Option<RolesCommand>,
     },
     /// Manage workstreams.
     Ws {
@@ -199,6 +206,117 @@ pub enum InboxCommand {
         /// Journal sequence number to acknowledge.
         seq: u64,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RolesCommand {
+    /// Create a new role file, from scratch or copied from an existing role.
+    Create(RoleCreate),
+    /// Edit an existing role; editing a built-in creates an override file.
+    Edit(RoleEdit),
+    /// Delete a custom file role.
+    Delete {
+        /// Name of the role to delete.
+        name: String,
+    },
+    /// Revert a built-in role override back to its shipped default.
+    Reset {
+        /// Name of the built-in role to reset.
+        name: String,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct RoleCreate {
+    /// New role name (ASCII letters, digits, hyphens, underscores).
+    pub name: String,
+    /// Copy fields and prompt body from an existing role before applying flags.
+    #[arg(long)]
+    pub from: Option<String>,
+    /// Harness name (omp, agy, claude, codex, copilot, or a custom harness).
+    #[arg(long)]
+    pub harness: Option<String>,
+    /// Model selector or name.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_model")]
+    pub model: Option<String>,
+    /// Remove the model field (useful with --from).
+    #[arg(long)]
+    pub clear_model: bool,
+    /// Effort or thinking level.
+    #[arg(long, conflicts_with = "clear_effort")]
+    pub effort: Option<String>,
+    /// Remove the effort field (useful with --from).
+    #[arg(long)]
+    pub clear_effort: bool,
+    /// Start command template (shell-like words; must include {brief}).
+    #[arg(long, allow_hyphen_values = true)]
+    pub start: Option<String>,
+    /// Resume command template (shell-like words; must include {session_id} and {brief}).
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_resume")]
+    pub resume: Option<String>,
+    /// Remove the resume command (useful with --from).
+    #[arg(long)]
+    pub clear_resume: bool,
+    /// Session discovery mode (dir, preset, codex-rollout, agy-conversation, none).
+    #[arg(long)]
+    pub session: Option<String>,
+    /// Per-launch trust flags template.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_trust")]
+    pub trust: Option<String>,
+    /// Remove trust flags (useful with --from).
+    #[arg(long)]
+    pub clear_trust: bool,
+    /// Standing instructions prompt body.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
+    pub prompt: Option<String>,
+    /// Read the standing instructions prompt body from a file (or - for stdin).
+    #[arg(long)]
+    pub prompt_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct RoleEdit {
+    /// Existing role name to edit.
+    pub name: String,
+    /// New harness name.
+    #[arg(long)]
+    pub harness: Option<String>,
+    /// New model selector or name.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_model")]
+    pub model: Option<String>,
+    /// Clear the model field.
+    #[arg(long)]
+    pub clear_model: bool,
+    /// New effort or thinking level.
+    #[arg(long, conflicts_with = "clear_effort")]
+    pub effort: Option<String>,
+    /// Clear the effort field.
+    #[arg(long)]
+    pub clear_effort: bool,
+    /// New start command template.
+    #[arg(long, allow_hyphen_values = true)]
+    pub start: Option<String>,
+    /// New resume command template.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_resume")]
+    pub resume: Option<String>,
+    /// Clear the resume command.
+    #[arg(long)]
+    pub clear_resume: bool,
+    /// New session discovery mode.
+    #[arg(long)]
+    pub session: Option<String>,
+    /// New per-launch trust flags template.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "clear_trust")]
+    pub trust: Option<String>,
+    /// Clear trust flags.
+    #[arg(long)]
+    pub clear_trust: bool,
+    /// Replace the standing instructions prompt body.
+    #[arg(long, allow_hyphen_values = true, conflicts_with = "prompt_file")]
+    pub prompt: Option<String>,
+    /// Replace the prompt body from a file (or - for stdin).
+    #[arg(long)]
+    pub prompt_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -713,5 +831,50 @@ mod tests {
         ]));
         assert!(parses(&["report", "progress", "--summary", "milestone"]));
         assert!(!parses(&["report", "unknown", "--summary", "milestone"]));
+        assert!(parses(&["roles"]));
+        assert!(parses(&["roles", "--defaults"]));
+        assert!(parses(&["roles", "agy-default"]));
+        assert!(parses(&["roles", "--defaults", "agy-default"]));
+        assert!(parses(&[
+            "roles",
+            "create",
+            "agy-fast",
+            "--from",
+            "agy-default",
+            "--model",
+            "gemini-4-neon-medium",
+            "--trust",
+            "--settings '{\"trustedWorkspaces\":[{cwd_json}]}'",
+        ]));
+        assert!(parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--effort",
+            "high",
+            "--prompt",
+            "- follow instructions",
+        ]));
+        assert!(parses(&["roles", "edit", "agy-default", "--prompt-file", "-"]));
+        assert!(parses(&["roles", "delete", "agy-fast"]));
+        assert!(parses(&["roles", "reset", "agy-default"]));
+        assert!(!parses(&["roles", "--defaults", "create", "agy-fast"]));
+        assert!(!parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--model",
+            "m",
+            "--clear-model",
+        ]));
+        assert!(!parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--prompt",
+            "x",
+            "--prompt-file",
+            "-",
+        ]));
     }
 }

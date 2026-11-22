@@ -131,7 +131,7 @@ pub enum Output {
 
 pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
     use caller::Caller;
-    use cli::{ConfigCommand, CoordCommand as C, InboxCommand, TaskCommand, WsCommand};
+    use cli::{ConfigCommand, CoordCommand as C, InboxCommand, RolesCommand, TaskCommand, WsCommand};
     use ids::{TaskId, WsId};
     use serde_json::json;
     use std::io::Read;
@@ -146,7 +146,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             | C::Board { .. }
             | C::Log { .. }
             | C::Explain { .. }
-            | C::Roles { .. }
+            | C::Roles { command: None, .. }
             | C::Ws {
                 command: WsCommand::List { .. }
             }
@@ -317,54 +317,64 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                 Output::Text(views::explain_text(&value))
             });
         }
-        C::Roles { defaults, name } => {
-            if let Some(name) = name {
-                let text = if defaults {
-                    role::builtin(&name)
-                        .ok_or_else(|| anyhow::anyhow!("unknown role: {name}"))?
-                        .to_owned()
+        C::Roles {
+            defaults,
+            name,
+            command,
+        } => match command {
+            Some(RolesCommand::Create(args)) => {
+                let created = role::create(&ctx.paths, &args)?;
+                json!({"action": "created", "role": role::to_json(&created)})
+            }
+            Some(RolesCommand::Edit(args)) => {
+                let updated = role::edit(&ctx.paths, &args)?;
+                json!({"action": "updated", "role": role::to_json(&updated)})
+            }
+            Some(RolesCommand::Delete { name }) => {
+                role::delete(&ctx.paths, &name)?;
+                json!({"action": "deleted", "name": name})
+            }
+            Some(RolesCommand::Reset { name }) => {
+                let restored = role::reset(&ctx.paths, &name)?;
+                json!({"action": "reset", "role": role::to_json(&restored)})
+            }
+            None => {
+                if let Some(name) = name {
+                    let r = if defaults {
+                        let text = role::builtin(&name).ok_or_else(|| {
+                            error::refused("role_not_found", format!("unknown role: {name}"))
+                        })?;
+                        role::parse(&name, text, role::RoleSource::Builtin)?
+                    } else {
+                        role::load_or_not_found(&ctx.paths, &name)?
+                    };
+                    role::to_json(&r)
                 } else {
-                    let r = role::load(&ctx.paths, &name)?;
-                    match r.source {
-                        role::RoleSource::Builtin => role::builtin(&name).unwrap().to_owned(),
-                        role::RoleSource::File(path) => std::fs::read_to_string(path)?,
+                    let roles = if defaults {
+                        role::BUILTIN
+                            .iter()
+                            .map(|(name, _)| ((*name).to_owned(), role::RoleSource::Builtin, false))
+                            .collect()
+                    } else {
+                        role::list(&ctx.paths)?
+                    };
+                    let mut out = Vec::new();
+                    for (name, _source, _overrides) in roles {
+                        let r = if defaults {
+                            role::parse(
+                                &name,
+                                role::builtin(&name).unwrap(),
+                                role::RoleSource::Builtin,
+                            )?
+                        } else {
+                            role::load(&ctx.paths, &name)?
+                        };
+                        out.push(role::to_json(&r));
                     }
-                };
-                return Ok(Output::Text(text));
+                    json!({"roles": out})
+                }
             }
-            let roles = if defaults {
-                role::BUILTIN
-                    .iter()
-                    .map(|(name, _)| ((*name).to_owned(), role::RoleSource::Builtin, false))
-                    .collect()
-            } else {
-                role::list(&ctx.paths)?
-            };
-            let mut out = Vec::new();
-            for (name, source, overrides) in roles {
-                let r = if defaults {
-                    role::parse(
-                        &name,
-                        role::builtin(&name).unwrap(),
-                        role::RoleSource::Builtin,
-                    )?
-                } else {
-                    role::load(&ctx.paths, &name)?
-                };
-                out.push(json!({
-                    "name": name,
-                    "source": if matches!(source, role::RoleSource::Builtin) { "builtin" } else { "file" },
-                    "overrides_builtin": overrides,
-                    "harness": r.harness,
-                    "model": r.effective_model(),
-                    "effort": r.effective_effort(),
-                    "session": r.session,
-                    "resumable": r.resumable(),
-                    "steering": r.supports_steering(),
-                }));
-            }
-            json!({"roles":out})
-        }
+        },
         C::Rate {
             target,
             value,

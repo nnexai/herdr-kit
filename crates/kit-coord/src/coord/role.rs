@@ -1,10 +1,14 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail, ensure};
+use kit_core::paths::{SymlinkMessage, no_links, write_atomic};
+use serde_json::{Value, json};
 
+use super::cli::{RoleCreate, RoleEdit};
+use super::error;
 pub use super::kinds::SessionMode;
 use super::paths::CoordPaths;
 
@@ -57,6 +61,74 @@ pub fn builtin(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(n, _)| *n == name)
         .map(|(_, text)| *text)
+}
+
+pub const KNOWN_HARNESSES: &[&str] = &["omp", "agy", "claude", "codex", "copilot"];
+
+pub struct HarnessDefaults {
+    pub start: &'static str,
+    pub resume: Option<&'static str>,
+    pub session: SessionMode,
+    pub trust: Option<&'static str>,
+}
+
+pub fn harness_defaults(harness: &str) -> Option<HarnessDefaults> {
+    match harness {
+        "omp" => Some(HarnessDefaults {
+            start: "omp --session-dir {session_dir} {brief}",
+            resume: Some("omp --session-dir {session_dir} --resume {session_id} {brief}"),
+            session: SessionMode::Dir,
+            trust: None,
+        }),
+        "agy" => Some(HarnessDefaults {
+            start: "agy -i {brief}",
+            resume: Some("agy --conversation {session_id} -i {brief}"),
+            session: SessionMode::AgyConversation,
+            trust: Some(r#"--settings '{"trustedWorkspaces":[{cwd_json}]}'"#),
+        }),
+        "claude" => Some(HarnessDefaults {
+            start: "claude --session-id {session_id} {brief}",
+            resume: Some("claude --resume {session_id} {brief}"),
+            session: SessionMode::Preset,
+            trust: None,
+        }),
+        "codex" => Some(HarnessDefaults {
+            start: "codex {brief}",
+            resume: Some("codex resume {session_id} {brief}"),
+            session: SessionMode::CodexRollout,
+            trust: Some(r#"-c 'projects={ "{repo_root}" = { trust_level = "trusted" } }'"#),
+        }),
+        "copilot" => Some(HarnessDefaults {
+            start: "copilot --session-id {session_id} -i {brief}",
+            resume: Some("copilot --resume {session_id} -i {brief}"),
+            session: SessionMode::Preset,
+            trust: None,
+        }),
+        _ => None,
+    }
+}
+
+pub fn session_mode_str(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Dir => "dir",
+        SessionMode::Preset => "preset",
+        SessionMode::CodexRollout => "codex-rollout",
+        SessionMode::AgyConversation => "agy-conversation",
+        SessionMode::None => "none",
+    }
+}
+
+pub fn parse_session_mode(value: &str) -> Result<SessionMode> {
+    match value {
+        "dir" => Ok(SessionMode::Dir),
+        "preset" => Ok(SessionMode::Preset),
+        "codex-rollout" => Ok(SessionMode::CodexRollout),
+        "agy-conversation" => Ok(SessionMode::AgyConversation),
+        "none" => Ok(SessionMode::None),
+        _ => bail!(
+            "unknown session mode: {value} (valid: dir, preset, codex-rollout, agy-conversation, none)"
+        ),
+    }
 }
 
 pub fn model_flag(harness: &str) -> Option<&'static str> {
@@ -185,6 +257,46 @@ fn valid_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+fn valid_writable_name(name: &str) -> bool {
+    valid_name(name) && !matches!(name, "create" | "edit" | "delete" | "reset")
+}
+
+pub fn source_label(source: &RoleSource, overrides_builtin: bool) -> &'static str {
+    match source {
+        RoleSource::Builtin => "builtin",
+        RoleSource::File(_) if overrides_builtin => "override",
+        RoleSource::File(_) => "file",
+    }
+}
+
+pub fn to_json(role: &Role) -> Value {
+    let overrides = matches!(role.source, RoleSource::File(_)) && builtin(&role.name).is_some();
+    let source = source_label(&role.source, overrides);
+    let path = match &role.source {
+        RoleSource::Builtin => None,
+        RoleSource::File(p) => Some(p.to_string_lossy().into_owned()),
+    };
+    json!({
+        "name": role.name,
+        "source": source,
+        "overrides_builtin": overrides,
+        "path": path,
+        "harness": role.harness,
+        "model": role.effective_model(),
+        "effort": role.effective_effort(),
+        "session": role.session,
+        "start": format_words(&role.start),
+        "start_argv": role.start,
+        "resume": role.resume.as_deref().map(format_words),
+        "resume_argv": role.resume,
+        "trust": (!role.trust.is_empty()).then(|| format_words(&role.trust)),
+        "trust_argv": role.trust,
+        "resumable": role.resumable(),
+        "steering": role.supports_steering(),
+        "body": role.body,
+    })
+}
+
 pub fn load(paths: &CoordPaths, name: &str) -> Result<Role> {
     ensure!(valid_name(name), "invalid role name: {name}");
     let path = paths.roles.join(format!("{name}.md"));
@@ -307,16 +419,72 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         .map(|s| split_words(s))
         .transpose()?
         .unwrap_or_default();
-    let session = match required("session")? {
-        "dir" => SessionMode::Dir,
-        "preset" => SessionMode::Preset,
-        "codex-rollout" => SessionMode::CodexRollout,
-        "agy-conversation" => SessionMode::AgyConversation,
-        "none" => SessionMode::None,
-        value => bail!("unknown session mode: {value}"),
-    };
-    let has_model_placeholder = start.iter().any(|arg| arg.contains("{model}"));
-    let has_effort_placeholder = start.iter().any(|arg| arg.contains("{effort}"));
+    let session = parse_session_mode(required("session")?)?;
+    let start_placeholders = collect_placeholders(&start)?;
+    ensure!(
+        start_placeholders.contains("brief"),
+        "role start command must reference {{brief}}"
+    );
+    match session {
+        SessionMode::Dir => ensure!(
+            start_placeholders.contains("session_dir"),
+            "session mode dir requires {{session_dir}} in start command"
+        ),
+        _ => ensure!(
+            !start_placeholders.contains("session_dir"),
+            "placeholder {{session_dir}} requires session mode dir"
+        ),
+    }
+    match session {
+        SessionMode::Preset => ensure!(
+            start_placeholders.contains("session_id"),
+            "session mode preset requires {{session_id}} in start command"
+        ),
+        _ => ensure!(
+            !start_placeholders.contains("session_id"),
+            "placeholder {{session_id}} in start requires session mode preset"
+        ),
+    }
+    if let Some(argv) = &resume {
+        let resume_placeholders = collect_placeholders(argv)?;
+        ensure!(
+            resume_placeholders.contains("brief"),
+            "role resume command must reference {{brief}}"
+        );
+        ensure!(
+            resume_placeholders.contains("session_id"),
+            "role resume command must reference {{session_id}}"
+        );
+        match session {
+            SessionMode::Dir => ensure!(
+                resume_placeholders.contains("session_dir"),
+                "session mode dir requires {{session_dir}} in resume command"
+            ),
+            _ => ensure!(
+                !resume_placeholders.contains("session_dir"),
+                "placeholder {{session_dir}} in resume requires session mode dir"
+            ),
+        }
+    }
+    let trust_placeholders = collect_placeholders(&trust)?;
+    ensure!(
+        !trust_placeholders.contains("model") && !trust_placeholders.contains("effort"),
+        "role trust flags must not reference {{model}} or {{effort}}"
+    );
+    let has_model_placeholder = start_placeholders.contains("model");
+    let has_effort_placeholder = start_placeholders.contains("effort");
+    if has_model_placeholder {
+        ensure!(
+            model.is_some(),
+            "start command references {{model}} but role has no model"
+        );
+    }
+    if has_effort_placeholder {
+        ensure!(
+            effort.is_some(),
+            "start command references {{effort}} but role has no effort"
+        );
+    }
     if model.is_some() && !has_model_placeholder {
         ensure!(
             !has_flag(&start, MODEL_FLAGS),
@@ -355,6 +523,569 @@ pub fn parse(name: &str, text: &str, source: RoleSource) -> Result<Role> {
         body: lines.collect::<String>().trim().to_owned(),
         source,
     })
+}
+
+fn collect_placeholders(argv: &[String]) -> Result<BTreeSet<String>> {
+    let mut found = BTreeSet::new();
+    for arg in argv {
+        let mut rest = arg.as_str();
+        while let Some(pos) = rest.find('{') {
+            rest = &rest[pos + 1..];
+            let Some(end) = rest.find('}') else {
+                break;
+            };
+            let name = &rest[..end];
+            if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                continue;
+            }
+            ensure!(
+                matches!(
+                    name,
+                    "brief"
+                        | "session_dir"
+                        | "session_id"
+                        | "repo_root"
+                        | "cwd"
+                        | "cwd_json"
+                        | "model"
+                        | "effort"
+                ),
+                "unknown placeholder: {{{name}}}"
+            );
+            found.insert(name.to_owned());
+            rest = &rest[end + 1..];
+        }
+    }
+    Ok(found)
+}
+
+pub fn format_words(words: &[String]) -> String {
+    words
+        .iter()
+        .enumerate()
+        .map(|(idx, word)| {
+            if word.is_empty() {
+                return "\"\"".to_owned();
+            }
+            let safe = word
+                .chars()
+                .all(|c| !c.is_whitespace() && !matches!(c, '\'' | '"' | '\\'))
+                && !(idx > 0 && word.starts_with('#'));
+            if safe {
+                word.clone()
+            } else if !word.contains('\'') && !word.contains(" #") {
+                format!("'{word}'")
+            } else {
+                let mut escaped = String::with_capacity(word.len() + 2);
+                escaped.push('"');
+                for c in word.chars() {
+                    if matches!(c, '"' | '\\') {
+                        escaped.push('\\');
+                    }
+                    escaped.push(c);
+                }
+                escaped.push('"');
+                escaped
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn check_frontmatter_value(key: &str, value: &str) -> Result<()> {
+    ensure!(
+        !value.contains('\n') && !value.contains('\r'),
+        "role {key} must be a single line"
+    );
+    ensure!(
+        !value.contains(" #"),
+        "role {key} must not contain ' #' (inline comment delimiter)"
+    );
+    Ok(())
+}
+
+pub fn format_markdown(role: &Role) -> Result<String> {
+    check_frontmatter_value("harness", &role.harness)?;
+    if let Some(m) = &role.model {
+        check_frontmatter_value("model", m)?;
+    }
+    if let Some(e) = &role.effort {
+        check_frontmatter_value("effort", e)?;
+    }
+    let start_line = format_words(&role.start);
+    check_frontmatter_value("start", &start_line)?;
+    let resume_line = role.resume.as_deref().map(format_words);
+    if let Some(r) = &resume_line {
+        check_frontmatter_value("resume", r)?;
+    }
+    let trust_line = (!role.trust.is_empty()).then(|| format_words(&role.trust));
+    if let Some(t) = &trust_line {
+        check_frontmatter_value("trust", t)?;
+    }
+
+    let mut out = String::from("---\n");
+    out.push_str(&format!("harness: {}\n", role.harness));
+    if let Some(m) = &role.model {
+        out.push_str(&format!("model: {m}\n"));
+    }
+    if let Some(e) = &role.effort {
+        out.push_str(&format!("effort: {e}\n"));
+    }
+    out.push_str(&format!("start: {start_line}\n"));
+    if let Some(r) = &resume_line {
+        out.push_str(&format!("resume: {r}\n"));
+    }
+    out.push_str(&format!("session: {}\n", session_mode_str(role.session)));
+    if let Some(t) = &trust_line {
+        out.push_str(&format!("trust: {t}\n"));
+    }
+    out.push_str("---\n");
+    let body = role.body.trim();
+    if !body.is_empty() {
+        out.push_str(body);
+        out.push('\n');
+    }
+
+    // Validate through the exact same parser the loader uses, and assert lossless round-trip.
+    let parsed = parse(&role.name, &out, role.source.clone())?;
+    ensure!(
+        parsed.harness == role.harness
+            && parsed.model == role.model
+            && parsed.effort == role.effort
+            && parsed.start == role.start
+            && parsed.resume == role.resume
+            && parsed.session == role.session
+            && parsed.trust == role.trust
+            && parsed.body == body,
+        "formatted role front matter did not round-trip cleanly"
+    );
+    Ok(out)
+}
+
+fn read_prompt(prompt: Option<&str>, prompt_file: Option<&Path>) -> Result<Option<String>> {
+    if let Some(text) = prompt {
+        return Ok(Some(text.to_owned()));
+    }
+    let Some(path) = prompt_file else {
+        return Ok(None);
+    };
+    let mut text = String::new();
+    if path == Path::new("-") {
+        std::io::stdin()
+            .take(1_048_577)
+            .read_to_string(&mut text)
+            .context("reading prompt from stdin")?;
+    } else {
+        fs::File::open(path)
+            .with_context(|| format!("opening prompt file {}", path.display()))?
+            .take(1_048_577)
+            .read_to_string(&mut text)
+            .with_context(|| format!("reading prompt file {}", path.display()))?;
+    }
+    ensure!(text.len() <= 1_048_576, "prompt exceeds 1 MiB");
+    Ok(Some(text))
+}
+
+fn strip_flag(argv: &[String], flags: &[&str]) -> Vec<String> {
+    if argv.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(argv.len());
+    out.push(argv[0].clone());
+    let mut iter = argv.iter().skip(1);
+    let mut after_sep = false;
+    while let Some(arg) = iter.next() {
+        if after_sep {
+            out.push(arg.clone());
+            continue;
+        }
+        if arg == "--" {
+            after_sep = true;
+            out.push(arg.clone());
+            continue;
+        }
+        if flags.contains(&arg.as_str()) {
+            let _ = iter.next();
+            continue;
+        }
+        let matches_inline = flags.iter().any(|flag| {
+            arg.strip_prefix(flag).is_some_and(|rest| {
+                rest.starts_with('=') || (is_short_flag(flag) && !rest.is_empty())
+            })
+        });
+        if matches_inline {
+            continue;
+        }
+        out.push(arg.clone());
+    }
+    out
+}
+
+fn write_validated(paths: &CoordPaths, role: &Role) -> Result<Role> {
+    let text = format_markdown(role).map_err(|e| error::refused("role_invalid", e.to_string()))?;
+    paths.ensure()?;
+    let path = paths.roles.join(format!("{}.md", role.name));
+    write_atomic(&path, text.as_bytes(), SymlinkMessage::WithPath)?;
+    parse(&role.name, &text, RoleSource::File(path))
+        .map_err(|e| error::refused("role_invalid", e.to_string()))
+}
+
+pub fn load_or_not_found(paths: &CoordPaths, name: &str) -> Result<Role> {
+    if !valid_name(name) {
+        return Err(error::refused(
+            "invalid_role_name",
+            format!("invalid role name: {name}"),
+        ));
+    }
+    let path = paths.roles.join(format!("{name}.md"));
+    no_links(&path, SymlinkMessage::WithPath)?;
+    match fs::read_to_string(&path) {
+        Ok(text) => parse(name, &text, RoleSource::File(path))
+            .map_err(|e| error::refused("role_invalid", e.to_string())),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            let text = builtin(name).ok_or_else(|| {
+                error::refused("role_not_found", format!("unknown role: {name}"))
+            })?;
+            parse(name, text, RoleSource::Builtin)
+                .map_err(|e| error::refused("role_invalid", e.to_string()))
+        }
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+pub fn create(paths: &CoordPaths, args: &RoleCreate) -> Result<Role> {
+    if !valid_writable_name(&args.name) {
+        return Err(error::refused(
+            "invalid_role_name",
+            format!(
+                "invalid role name '{}': use ASCII letters, digits, hyphens, or underscores (and not create/edit/delete/reset)",
+                args.name
+            ),
+        ));
+    }
+    let target = paths.roles.join(format!("{}.md", args.name));
+    no_links(&target, SymlinkMessage::WithPath)?;
+    if target.exists() {
+        return Err(error::refused(
+            "role_exists",
+            format!(
+                "role '{}' already exists; use 'roles edit {}' to modify it",
+                args.name, args.name
+            ),
+        ));
+    }
+    if builtin(&args.name).is_some() {
+        return Err(error::refused(
+            "role_exists",
+            format!(
+                "built-in role '{}' already exists; use 'roles edit {}' to override it",
+                args.name, args.name
+            ),
+        ));
+    }
+
+    let mut role = if let Some(from) = &args.from {
+        let mut base = load_or_not_found(paths, from)?;
+        base.name = args.name.clone();
+        base.source = RoleSource::File(target.clone());
+        base
+    } else {
+        let harness = args
+            .harness
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                error::refused(
+                    "role_invalid",
+                    "missing --harness (or specify --from <existing-role>)",
+                )
+            })?
+            .to_owned();
+        let defaults = harness_defaults(&harness);
+        let start_str = match (&args.start, &defaults) {
+            (Some(s), _) => s.as_str(),
+            (None, Some(d)) => d.start,
+            (None, None) => {
+                return Err(error::refused(
+                    "role_invalid",
+                    format!(
+                        "unknown harness '{harness}' (known: {}); specify --start and --session for a custom harness",
+                        KNOWN_HARNESSES.join(", ")
+                    ),
+                ));
+            }
+        };
+        let session = match (&args.session, &defaults) {
+            (Some(s), _) => {
+                parse_session_mode(s).map_err(|e| error::refused("role_invalid", e.to_string()))?
+            }
+            (None, Some(d)) => d.session,
+            (None, None) => {
+                return Err(error::refused(
+                    "role_invalid",
+                    format!(
+                        "unknown harness '{harness}' (known: {}); specify --start and --session for a custom harness",
+                        KNOWN_HARNESSES.join(", ")
+                    ),
+                ));
+            }
+        };
+        let start = split_words(start_str)
+            .map_err(|e| error::refused("role_invalid", format!("invalid start command: {e}")))?;
+        let resume = if args.clear_resume {
+            None
+        } else if let Some(r) = &args.resume {
+            Some(
+                split_words(r).map_err(|e| {
+                    error::refused("role_invalid", format!("invalid resume command: {e}"))
+                })?,
+            )
+        } else {
+            defaults.as_ref().and_then(|d| d.resume).map(|r| {
+                split_words(r).expect("built-in default resume command must split cleanly")
+            })
+        };
+        let trust = if args.clear_trust {
+            Vec::new()
+        } else if let Some(t) = &args.trust {
+            split_words(t)
+                .map_err(|e| error::refused("role_invalid", format!("invalid trust flags: {e}")))?
+        } else {
+            defaults
+                .as_ref()
+                .and_then(|d| d.trust)
+                .map(|t| split_words(t).expect("built-in default trust flags must split cleanly"))
+                .unwrap_or_default()
+        };
+        Role {
+            name: args.name.clone(),
+            harness,
+            model: None,
+            effort: None,
+            start,
+            resume,
+            session,
+            trust,
+            body: String::new(),
+            source: RoleSource::File(target.clone()),
+        }
+    };
+
+    if args.from.is_some() {
+        if let Some(h) = &args.harness {
+            role.harness = h.trim().to_owned();
+        }
+        if let Some(s) = &args.start {
+            role.start = split_words(s).map_err(|e| {
+                error::refused("role_invalid", format!("invalid start command: {e}"))
+            })?;
+        }
+        if args.clear_resume {
+            role.resume = None;
+        } else if let Some(r) = &args.resume {
+            role.resume = Some(split_words(r).map_err(|e| {
+                error::refused("role_invalid", format!("invalid resume command: {e}"))
+            })?);
+        }
+        if let Some(s) = &args.session {
+            role.session =
+                parse_session_mode(s).map_err(|e| error::refused("role_invalid", e.to_string()))?;
+        }
+        if args.clear_trust {
+            role.trust.clear();
+        } else if let Some(t) = &args.trust {
+            role.trust = split_words(t)
+                .map_err(|e| error::refused("role_invalid", format!("invalid trust flags: {e}")))?;
+        }
+    }
+
+    if args.clear_model {
+        role.model = None;
+        if args.start.is_none() {
+            role.start = strip_flag(&role.start, MODEL_FLAGS);
+        }
+    } else if let Some(m) = &args.model {
+        let trimmed = m.trim();
+        if trimmed.is_empty() {
+            return Err(error::refused("role_invalid", "empty role model"));
+        }
+        if args.start.is_none() && !role.start.iter().any(|a| a.contains("{model}")) {
+            role.start = strip_flag(&role.start, MODEL_FLAGS);
+        }
+        role.model = Some(trimmed.to_owned());
+    }
+
+    if args.clear_effort {
+        role.effort = None;
+        if args.start.is_none() {
+            role.start = strip_flag(&role.start, EFFORT_FLAGS);
+        }
+    } else if let Some(e) = &args.effort {
+        let trimmed = e.trim();
+        if trimmed.is_empty() {
+            return Err(error::refused("role_invalid", "empty role effort"));
+        }
+        if args.start.is_none() && !role.start.iter().any(|a| a.contains("{effort}")) {
+            role.start = strip_flag(&role.start, EFFORT_FLAGS);
+        }
+        role.effort = Some(trimmed.to_owned());
+    }
+
+    if let Some(body) = read_prompt(args.prompt.as_deref(), args.prompt_file.as_deref())? {
+        role.body = body.trim().to_owned();
+    }
+
+    write_validated(paths, &role)
+}
+
+pub fn edit(paths: &CoordPaths, args: &RoleEdit) -> Result<Role> {
+    let any_change = args.harness.is_some()
+        || args.model.is_some()
+        || args.clear_model
+        || args.effort.is_some()
+        || args.clear_effort
+        || args.start.is_some()
+        || args.resume.is_some()
+        || args.clear_resume
+        || args.session.is_some()
+        || args.trust.is_some()
+        || args.clear_trust
+        || args.prompt.is_some()
+        || args.prompt_file.is_some();
+    if !any_change {
+        return Err(error::refused(
+            "invalid_arguments",
+            "no fields specified to edit",
+        ));
+    }
+
+    let mut role = load_or_not_found(paths, &args.name)?;
+    let target = paths.roles.join(format!("{}.md", args.name));
+    role.source = RoleSource::File(target);
+
+    if let Some(h) = &args.harness {
+        role.harness = h.trim().to_owned();
+    }
+    if let Some(s) = &args.start {
+        role.start = split_words(s)
+            .map_err(|e| error::refused("role_invalid", format!("invalid start command: {e}")))?;
+    }
+    if args.clear_resume {
+        role.resume = None;
+    } else if let Some(r) = &args.resume {
+        role.resume = Some(
+            split_words(r).map_err(|e| {
+                error::refused("role_invalid", format!("invalid resume command: {e}"))
+            })?,
+        );
+    }
+    if let Some(s) = &args.session {
+        role.session =
+            parse_session_mode(s).map_err(|e| error::refused("role_invalid", e.to_string()))?;
+    }
+    if args.clear_trust {
+        role.trust.clear();
+    } else if let Some(t) = &args.trust {
+        role.trust = split_words(t)
+            .map_err(|e| error::refused("role_invalid", format!("invalid trust flags: {e}")))?;
+    }
+
+    if args.clear_model {
+        role.model = None;
+        if args.start.is_none() {
+            role.start = strip_flag(&role.start, MODEL_FLAGS);
+        }
+    } else if let Some(m) = &args.model {
+        let trimmed = m.trim();
+        if trimmed.is_empty() {
+            return Err(error::refused("role_invalid", "empty role model"));
+        }
+        if args.start.is_none() && !role.start.iter().any(|a| a.contains("{model}")) {
+            role.start = strip_flag(&role.start, MODEL_FLAGS);
+        }
+        role.model = Some(trimmed.to_owned());
+    }
+
+    if args.clear_effort {
+        role.effort = None;
+        if args.start.is_none() {
+            role.start = strip_flag(&role.start, EFFORT_FLAGS);
+        }
+    } else if let Some(e) = &args.effort {
+        let trimmed = e.trim();
+        if trimmed.is_empty() {
+            return Err(error::refused("role_invalid", "empty role effort"));
+        }
+        if args.start.is_none() && !role.start.iter().any(|a| a.contains("{effort}")) {
+            role.start = strip_flag(&role.start, EFFORT_FLAGS);
+        }
+        role.effort = Some(trimmed.to_owned());
+    }
+
+    if let Some(body) = read_prompt(args.prompt.as_deref(), args.prompt_file.as_deref())? {
+        role.body = body.trim().to_owned();
+    }
+
+    write_validated(paths, &role)
+}
+
+pub fn delete(paths: &CoordPaths, name: &str) -> Result<()> {
+    if !valid_name(name) {
+        return Err(error::refused(
+            "invalid_role_name",
+            format!("invalid role name: {name}"),
+        ));
+    }
+    let path = paths.roles.join(format!("{name}.md"));
+    no_links(&path, SymlinkMessage::WithPath)?;
+    if builtin(name).is_some() {
+        if path.exists() {
+            return Err(error::refused(
+                "cannot_delete_builtin",
+                format!(
+                    "role '{name}' is a built-in override; use 'roles reset {name}' to revert it to default"
+                ),
+            ));
+        }
+        return Err(error::refused(
+            "cannot_delete_builtin",
+            format!("built-in role '{name}' cannot be deleted"),
+        ));
+    }
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(error::refused(
+            "role_not_found",
+            format!("unknown role: {name}"),
+        )),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
+pub fn reset(paths: &CoordPaths, name: &str) -> Result<Role> {
+    if !valid_name(name) {
+        return Err(error::refused(
+            "invalid_role_name",
+            format!("invalid role name: {name}"),
+        ));
+    }
+    let Some(default_text) = builtin(name) else {
+        return Err(error::refused(
+            "not_a_builtin",
+            format!("role '{name}' is not a built-in; use 'roles delete {name}' to remove it"),
+        ));
+    };
+    let path = paths.roles.join(format!("{name}.md"));
+    no_links(&path, SymlinkMessage::WithPath)?;
+    match fs::remove_file(&path) {
+        Ok(()) => parse(name, default_text, RoleSource::Builtin),
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(error::refused(
+            "role_not_overridden",
+            format!("built-in role '{name}' has no override to reset"),
+        )),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
 }
 
 pub fn split_words(s: &str) -> Result<Vec<String>> {
@@ -951,5 +1682,95 @@ mod tests {
                 .any(|(n, _, over)| n == "coord-main" && *over)
         );
         assert!(load(&paths, "../escape").is_err());
+    }
+
+    #[test]
+    fn format_roundtrip_and_placeholder_validation() {
+        for (name, text) in BUILTIN {
+            let role = parse(name, text, RoleSource::Builtin).unwrap();
+            let formatted = format_markdown(&role).unwrap();
+            let reparsed = parse(name, &formatted, RoleSource::Builtin).unwrap();
+            assert_eq!(reparsed.harness, role.harness);
+            assert_eq!(reparsed.model, role.model);
+            assert_eq!(reparsed.effort, role.effort);
+            assert_eq!(reparsed.start, role.start);
+            assert_eq!(reparsed.resume, role.resume);
+            assert_eq!(reparsed.session, role.session);
+            assert_eq!(reparsed.trust, role.trust);
+            assert_eq!(reparsed.body, role.body);
+        }
+        // Missing {brief} in start
+        assert!(
+            parse(
+                "no-brief",
+                "---\nharness: omp\nstart: omp --session-dir {session_dir}\nsession: dir\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // Missing {session_dir} for dir mode
+        assert!(
+            parse(
+                "no-session-dir",
+                "---\nharness: omp\nstart: omp {brief}\nsession: dir\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // Missing {session_id} for preset mode
+        assert!(
+            parse(
+                "no-session-id",
+                "---\nharness: claude\nstart: claude {brief}\nsession: preset\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // Unknown placeholder
+        assert!(
+            parse(
+                "bad-ph",
+                "---\nharness: agy\nstart: agy {bogus} {brief}\nsession: none\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // Resume missing {session_id}
+        assert!(
+            parse(
+                "bad-resume",
+                "---\nharness: agy\nstart: agy -i {brief}\nresume: agy -i {brief}\nsession: agy-conversation\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // {model} placeholder without model field
+        assert!(
+            parse(
+                "missing-model-val",
+                "---\nharness: custom\nstart: custom --llm {model} {brief}\nsession: none\n---\nbody\n",
+                RoleSource::Builtin,
+            )
+            .is_err()
+        );
+        // Inline comment delimiter rejected by format_markdown
+        let bad_role = Role {
+            name: "bad-comment".into(),
+            harness: "omp".into(),
+            model: Some("foo # bar".into()),
+            effort: None,
+            start: vec![
+                "omp".into(),
+                "--session-dir".into(),
+                "{session_dir}".into(),
+                "{brief}".into(),
+            ],
+            resume: None,
+            session: SessionMode::Dir,
+            trust: Vec::new(),
+            body: "body".into(),
+            source: RoleSource::Builtin,
+        };
+        assert!(format_markdown(&bad_role).is_err());
     }
 }

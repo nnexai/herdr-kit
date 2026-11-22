@@ -2180,3 +2180,354 @@ fn trust_override_is_confined_to_workstream_repo_checkouts() {
         ]
     );
 }
+
+#[test]
+fn roles_cli_view_create_edit_override_reset_delete_and_validation() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let h = Harness::new();
+    let roles_dir = h.root().join("data/coord/roles");
+
+    // 1. View list and single built-in role as JSON with source, resolved fields, and prompt body.
+    let list = h.ok(&["roles"]);
+    let agy_item = list["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "agy-default")
+        .unwrap();
+    assert_eq!(agy_item["source"], "builtin");
+    assert_eq!(agy_item["overrides_builtin"], false);
+    assert_eq!(agy_item["harness"], "agy");
+    assert_eq!(agy_item["model"], "gemini-4-neon-high");
+    assert!(
+        agy_item["body"]
+            .as_str()
+            .unwrap()
+            .contains("Antigravity CLI")
+    );
+
+    let agy_one = h.ok(&["roles", "agy-default"]);
+    assert_eq!(agy_one["name"], "agy-default");
+    assert_eq!(agy_one["source"], "builtin");
+    assert_eq!(agy_one["start"], "agy -i {brief}");
+    assert_eq!(
+        agy_one["resume"],
+        "agy --conversation {session_id} -i {brief}"
+    );
+    assert!(agy_one["trust"].as_str().unwrap().contains("{cwd_json}"));
+    assert!(agy_one["body"].as_str().unwrap().contains("Antigravity CLI"));
+
+    // 2. Create copied from agy-default with overrides.
+    let created = h.ok(&[
+        "roles",
+        "create",
+        "agy-fast",
+        "--from",
+        "agy-default",
+        "--model",
+        "gemini-4-neon-medium",
+        "--effort",
+        "low",
+        "--prompt",
+        "Fast delegate for quick checks.",
+    ]);
+    assert_eq!(created["action"], "created");
+    assert_eq!(created["role"]["name"], "agy-fast");
+    assert_eq!(created["role"]["source"], "file");
+    assert_eq!(created["role"]["harness"], "agy");
+    assert_eq!(created["role"]["model"], "gemini-4-neon-medium");
+    assert_eq!(created["role"]["effort"], "low");
+    assert_eq!(created["role"]["body"], "Fast delegate for quick checks.");
+    assert!(roles_dir.join("agy-fast.md").is_file());
+
+    // 3. Create from scratch using harness defaults + stdin prompt.
+    let mut child = h
+        .command(&[
+            "roles",
+            "create",
+            "claude-reviewer",
+            "--harness",
+            "claude",
+            "--model",
+            "sonnet",
+            "--effort",
+            "medium",
+            "--prompt-file",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"Review changes carefully.\nReport only concrete findings.\n")
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let reviewer: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reviewer["role"]["source"], "file");
+    assert_eq!(reviewer["role"]["session"], "preset");
+    assert_eq!(
+        reviewer["role"]["start"],
+        "claude --session-id {session_id} {brief}"
+    );
+    assert!(
+        reviewer["role"]["body"]
+            .as_str()
+            .unwrap()
+            .contains("Review changes carefully.")
+    );
+
+    // 4. Edit a custom file role (including prompt from file).
+    let prompt_file = h.root().join("new-prompt.md");
+    fs::write(&prompt_file, "Updated fast prompt.\n").unwrap();
+    let edited = h.ok(&[
+        "roles",
+        "edit",
+        "agy-fast",
+        "--model",
+        "gemini-4-neon-high",
+        "--clear-effort",
+        "--prompt-file",
+        prompt_file.to_str().unwrap(),
+    ]);
+    assert_eq!(edited["action"], "updated");
+    assert_eq!(edited["role"]["source"], "file");
+    assert_eq!(edited["role"]["model"], "gemini-4-neon-high");
+    assert!(edited["role"]["effort"].is_null());
+    assert_eq!(edited["role"]["body"], "Updated fast prompt.");
+
+    // 5. Edit an inline-model file role (like existing coord-fable) without conflict.
+    fs::write(
+        roles_dir.join("legacy-inline.md"),
+        "---\nharness: omp\nstart: omp --model @old --session-dir {session_dir} {brief}\nresume: omp --session-dir {session_dir} --resume {session_id} {brief}\nsession: dir\n---\nOld prompt\n",
+    )
+    .unwrap();
+    let inline_edited = h.ok(&["roles", "edit", "legacy-inline", "--model", "@slow"]);
+    assert_eq!(inline_edited["role"]["model"], "@slow");
+    assert_eq!(
+        inline_edited["role"]["start"],
+        "omp --session-dir {session_dir} {brief}"
+    );
+
+    // 6. Edit a built-in role -> creates override file, source becomes "override", --defaults still shows original.
+    let overridden = h.ok(&["roles", "edit", "agy-default", "--effort", "high"]);
+    assert_eq!(overridden["action"], "updated");
+    assert_eq!(overridden["role"]["source"], "override");
+    assert_eq!(overridden["role"]["overrides_builtin"], true);
+    assert_eq!(overridden["role"]["effort"], "high");
+    assert!(roles_dir.join("agy-default.md").is_file());
+
+    let listed_override = h.ok(&["roles"])["roles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "agy-default")
+        .unwrap()
+        .clone();
+    assert_eq!(listed_override["source"], "override");
+    assert_eq!(listed_override["effort"], "high");
+
+    let default_view = h.ok(&["roles", "--defaults", "agy-default"]);
+    assert_eq!(default_view["source"], "builtin");
+    assert!(default_view["effort"].is_null());
+
+    // Delete on built-in override is refused with guidance to use reset.
+    rail_error(
+        h.run(&["roles", "delete", "agy-default"]),
+        "cannot_delete_builtin",
+        3,
+    );
+
+    // 7. Reset built-in override -> removes override file, source returns to "builtin".
+    let reset = h.ok(&["roles", "reset", "agy-default"]);
+    assert_eq!(reset["action"], "reset");
+    assert_eq!(reset["role"]["source"], "builtin");
+    assert!(reset["role"]["effort"].is_null());
+    assert!(!roles_dir.join("agy-default.md").exists());
+
+    // Reset again when not overridden -> refused.
+    rail_error(
+        h.run(&["roles", "reset", "agy-default"]),
+        "role_not_overridden",
+        3,
+    );
+    // Reset on non-builtin -> refused.
+    rail_error(h.run(&["roles", "reset", "agy-fast"]), "not_a_builtin", 3);
+
+    // 8. Delete custom file role -> removes file, subsequent view fails with role_not_found.
+    let deleted = h.ok(&["roles", "delete", "agy-fast"]);
+    assert_eq!(deleted["action"], "deleted");
+    assert_eq!(deleted["name"], "agy-fast");
+    assert!(!roles_dir.join("agy-fast.md").exists());
+    rail_error(h.run(&["roles", "agy-fast"]), "role_not_found", 3);
+    rail_error(
+        h.run(&["roles", "delete", "agy-default"]),
+        "cannot_delete_builtin",
+        3,
+    );
+
+    // 9. Rejection of invalid roles: never writes or corrupts files.
+    // Unknown harness without --start/--session
+    rail_error(
+        h.run(&["roles", "create", "bad-harness", "--harness", "unknown-tool"]),
+        "role_invalid",
+        3,
+    );
+    assert!(!roles_dir.join("bad-harness.md").exists());
+
+    // Unknown harness with model and no {model} placeholder
+    rail_error(
+        h.run(&[
+            "roles",
+            "create",
+            "bad-harness-model",
+            "--harness",
+            "custom",
+            "--model",
+            "m1",
+            "--start",
+            "custom {brief}",
+            "--session",
+            "none",
+        ]),
+        "role_invalid",
+        3,
+    );
+    assert!(!roles_dir.join("bad-harness-model.md").exists());
+
+    // Missing {brief} placeholder
+    rail_error(
+        h.run(&[
+            "roles",
+            "create",
+            "missing-brief",
+            "--harness",
+            "agy",
+            "--start",
+            "agy --no-brief",
+            "--session",
+            "none",
+        ]),
+        "role_invalid",
+        3,
+    );
+    assert!(!roles_dir.join("missing-brief.md").exists());
+
+    // Missing {session_id} for preset mode
+    rail_error(
+        h.run(&[
+            "roles",
+            "create",
+            "missing-sid",
+            "--harness",
+            "claude",
+            "--start",
+            "claude {brief}",
+            "--session",
+            "preset",
+        ]),
+        "role_invalid",
+        3,
+    );
+    assert!(!roles_dir.join("missing-sid.md").exists());
+
+    // Bad frontmatter / unterminated quote in start
+    rail_error(
+        h.run(&[
+            "roles",
+            "create",
+            "bad-quote",
+            "--harness",
+            "agy",
+            "--start",
+            "agy 'unterminated {brief}",
+            "--session",
+            "none",
+        ]),
+        "role_invalid",
+        3,
+    );
+    assert!(!roles_dir.join("bad-quote.md").exists());
+
+    // Bad effort on edit does not overwrite existing valid role
+    let before = fs::read_to_string(roles_dir.join("claude-reviewer.md")).unwrap();
+    rail_error(
+        h.run(&["roles", "edit", "claude-reviewer", "--effort", "turbo"]),
+        "role_invalid",
+        3,
+    );
+    assert_eq!(
+        fs::read_to_string(roles_dir.join("claude-reviewer.md")).unwrap(),
+        before
+    );
+
+    // Reserved subcommand names and duplicate names rejected
+    rail_error(
+        h.run(&["roles", "create", "edit", "--harness", "omp"]),
+        "invalid_role_name",
+        3,
+    );
+    rail_error(
+        h.run(&["roles", "create", "agy-default", "--harness", "agy"]),
+        "role_exists",
+        3,
+    );
+    rail_error(
+        h.run(&["roles", "create", "claude-reviewer", "--harness", "claude"]),
+        "role_exists",
+        3,
+    );
+
+    // 10. Caller permissions: coordinator allowed, delegate forbidden from mutating but allowed to read.
+    let mut term: Value =
+        serde_json::from_str(include_str!("../src/coord/testdata/hc-get-agent.json")).unwrap();
+    term["labels"] = json!({"coord.managed":"1","coord.role":"coordinator"});
+    h.queue("hc", "get", &term);
+    let coord_create = h
+        .command(&[
+            "roles",
+            "create",
+            "coord-made",
+            "--from",
+            "coord-light",
+            "--prompt",
+            "Created by coordinator.",
+        ])
+        .env("HC_TERMINAL_ID", "tc")
+        .output()
+        .unwrap();
+    assert!(
+        coord_create.status.success(),
+        "{}",
+        String::from_utf8_lossy(&coord_create.stderr)
+    );
+
+    term["labels"] = json!({"coord.managed":"1","coord.role":"delegate","coord.task":"ws-abcdef-t1"});
+    h.queue("hc", "get", &term);
+    rail_error(
+        h.command(&["roles", "delete", "coord-made"])
+            .env("HC_TERMINAL_ID", "td")
+            .output()
+            .unwrap(),
+        "forbidden_caller",
+        3,
+    );
+    // Delegate can still read roles.
+    let delegate_read = h
+        .command(&["roles", "coord-made"])
+        .env("HC_TERMINAL_ID", "td")
+        .output()
+        .unwrap();
+    assert!(delegate_read.status.success());
+}

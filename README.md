@@ -308,16 +308,17 @@ so OMP resolves the person's configured design model without naming a model
 for every task. `coord-deep` uses `@slow` for open technical problems, not the
 design model role.
 
-`kit-coord roles` lists effective roles, harnesses, model/effort config,
-session modes, resumability and steering support; `kit-coord roles
-coord-design` shows a role file without launching anything. Built-in roles
+`kit-coord roles` lists effective roles as JSON (`source`: `builtin`, `file`, or
+`override`, resolved fields and prompt body) and `kit-coord roles <name>` returns
+one role as JSON. Create, edit, reset and delete roles with
+`kit-coord roles create|edit|reset|delete` (validated before atomic write; editing
+a built-in creates an override file in `coord/roles/`), or manage them from the
+Coordinator dialog's `⋯` → **Roles** view. Built-in roles
 include OMP (`coord-*`), Antigravity CLI (`agy-default` on
 `gemini-4-neon-high` with resumable `agy-conversation` discovery), Claude Code
 (`claude-default` on `haiku`, `claude-sonnet` on `sonnet`, `claude-opus` on
 `opus` with `effort: high`),
-Codex (`codex-default`) and Copilot (`copilot-default`). Override any built-in
-or add named roles in `coord/roles/` with plain `model:` and optional `effort:`
-front-matter fields. See [roles and models](docs/coordinator-spec.md#roles-and-models)
+Codex (`codex-default`) and Copilot (`copilot-default`). See [roles and models](docs/coordinator-spec.md#roles-and-models)
 for role-file examples, resume rules, steering limits and statistics details.
 Autostart is controlled by coordinator configuration. The watcher is a
 `kit-coord watch` subcommand running in an hc terminal, not a hidden service.
