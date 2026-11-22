@@ -351,8 +351,12 @@ impl Role {
 }
 
 /// Whether `program` (the first word of a role command) can be executed here.
+/// A program with a placeholder or a relative path depends on the launch
+/// directory and is not checked.
 pub fn program_available(program: &str, dirs: &[PathBuf]) -> std::result::Result<(), String> {
-    if program.contains('{') || kit_core::paths::find_executable(program, dirs).is_some() {
+    let launch_relative =
+        program.contains('{') || (program.contains('/') && !program.starts_with('/'));
+    if launch_relative || kit_core::paths::find_executable(program, dirs).is_some() {
         Ok(())
     } else if program.contains('/') {
         Err(format!("{program} is not an executable file"))

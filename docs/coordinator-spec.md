@@ -160,12 +160,14 @@ the role's subscription is exhausted; a role cannot fall back to itself).
 
 A role is **available** when the first word of its start command (its resume
 command for a cold resume) is an executable on the `PATH` kit-coord runs
-with; a first word containing a placeholder is not checked. `kit-coord task
-start`, a cold-resume `task send` and the coordinator launch refuse an
-unavailable role with `harness_unavailable` and the reason (for example
-`agy is not installed (not found on PATH)`) before anything is placed or
-launched. `up`, `restart` and handoffs check the coordinator role before
-ending or replacing the running coordinator.
+with; a first word containing a placeholder or a relative path depends on the
+launch directory and is not checked. `kit-coord task start`, a cold-resume
+`task send` and the coordinator launch refuse an unavailable role with
+`harness_unavailable` and the reason (for example `agy is not installed (not
+found on PATH)`) before anything is placed or launched. `restart` and
+handoffs check the coordinator role before ending the running coordinator and
+launch the role they checked; `up` checks it only when it starts one, so
+watcher repair still works.
 
 The coordinator's first message includes "Roles on this machine", derived
 from the effective role files at session start: every available role except

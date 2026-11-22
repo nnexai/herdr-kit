@@ -277,8 +277,8 @@ fn watcher(
 }
 
 /// The configured coordinator role, refused with `harness_unavailable` when
-/// its program is not installed. Checked before anything ends or replaces a
-/// running coordinator, so a missing harness never leaves it stopped.
+/// its program is not installed. A restart checks it before ending the running
+/// coordinator and launches exactly the role it checked.
 fn coordinator_role(ctx: &Ctx) -> Result<role::Role> {
     let role = role::load(&ctx.paths, &ctx.config()?.coordinator_role)?;
     role.availability(&ctx.path).map_err(|reason| {
@@ -290,7 +290,13 @@ fn coordinator_role(ctx: &Ctx) -> Result<role::Role> {
     Ok(role)
 }
 
-fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> Result<()> {
+fn start_with_tab(
+    ctx: &Ctx,
+    j: &Journal,
+    reason: &str,
+    tab: Option<String>,
+    role: role::Role,
+) -> Result<()> {
     let state = j.read_state()?;
     let sp = state
         .resources
@@ -304,7 +310,6 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
         })
         .map(|r| r.r.name.clone())
         .context("coordinator space missing")?;
-    let role = coordinator_role(ctx)?;
     let name = format!("coordinator-{}", state.coordinator.sessions_started + 1);
     let dir = ctx.paths.session_dir(&name);
     fs::create_dir_all(&dir)?;
@@ -395,7 +400,7 @@ fn start_with_tab(ctx: &Ctx, j: &Journal, reason: &str, tab: Option<String>) -> 
     )
 }
 pub fn restart_coordinator(ctx: &Ctx, j: &Journal, reason: &str) -> Result<()> {
-    coordinator_role(ctx)?;
+    let role = coordinator_role(ctx)?;
     let address = j
         .read_state()?
         .coordinator
@@ -451,7 +456,7 @@ pub fn restart_coordinator(ctx: &Ctx, j: &Journal, reason: &str) -> Result<()> {
     drop(lock);
     ctx.hc.kill(&address)?;
     ctx.hc.rm(&address)?;
-    start_with_tab(ctx, j, reason, rec.tab)
+    start_with_tab(ctx, j, reason, rec.tab, role)
 }
 fn config_autostart(ctx: &Ctx, j: &Journal, enabled: bool) -> Result<Config> {
     let old = Config::load(&ctx.paths)?;
@@ -515,7 +520,6 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
     if if_enabled && !Config::load(&ctx.paths)?.is_some_and(|c| c.autostart) {
         return Ok(json!({"state":"disabled"}));
     }
-    coordinator_role(ctx)?;
     crate::deployment::ensure_current(&ctx.root)?;
     let j = ctx.journal()?;
     let cfg = config_autostart(ctx, &j, true)?;
@@ -567,7 +571,7 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
             )?;
             actions.push("coordinator_recovered".into());
         } else {
-            start_with_tab(ctx, &j, "up", rec.tab.clone())?;
+            start_with_tab(ctx, &j, "up", rec.tab.clone(), coordinator_role(ctx)?)?;
             actions.push("coordinator_started".into());
         }
     }
@@ -1164,7 +1168,10 @@ mod tests {
         let mut hb = read_heartbeat(&paths).unwrap().unwrap();
         hb.beat_ms = 1;
         write_heartbeat(&paths, &hb).unwrap();
+        // Repairing the watcher next to a live coordinator needs no harness.
+        fs::remove_file(root.join("stub-bin/fake")).unwrap();
         up(&ctx, false).unwrap();
+        crate::coord::stub_path(root);
         {
             let w = world.borrow();
             assert_eq!(w.specs.len(), 3);
