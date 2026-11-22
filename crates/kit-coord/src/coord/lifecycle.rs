@@ -586,13 +586,13 @@ pub fn up(ctx: &Ctx, if_enabled: bool) -> Result<Value> {
                 },
             )?;
             actions.push("coordinator_recovered".into());
-        } else {
-            let role = match launch_role.take() {
-                Some(role) => role,
-                None => coordinator_role(ctx)?,
-            };
+        } else if let Some(role) = launch_role.take() {
             start_with_tab(ctx, &j, "up", rec.tab.clone(), role)?;
             actions.push("coordinator_started".into());
+        } else {
+            // The coordinator ended while the watcher was repaired; a later
+            // `up` checks the harness and starts a new one.
+            actions.push("coordinator_gone".into());
         }
     }
     let rec = j.read_state()?.coordinator;
