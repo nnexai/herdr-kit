@@ -146,6 +146,17 @@ pub enum CoordCommand {
         /// Workstream identifier.
         ws: String,
     },
+    /// Record a separately attributed recovered result for a closed task's finished terminal.
+    ReconcileResult {
+        /// Closed task whose original report is missing.
+        task: String,
+        /// Distinct task that recovered the result.
+        #[arg(long)]
+        source_task: String,
+        /// Absolute path to the recovered result.
+        #[arg(long)]
+        result: PathBuf,
+    },
     /// Record a coordinator decision and its rationale.
     Decide(Decide),
     /// Ask the person a question or record their answer.

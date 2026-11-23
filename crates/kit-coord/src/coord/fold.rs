@@ -272,6 +272,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                     last_nudge: None,
                     last_activity_seq: 0,
                     reported_seq: None,
+                    reconciled_result_seq: None,
                     request,
                     follows,
                     role_hash,
@@ -439,6 +440,17 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
             } else {
                 t.blocked = None;
             }
+        }
+        Kind::TaskResultReconciled { .. } => {
+            let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
+                anomaly(s, e, "unknown task");
+                return;
+            };
+            if t.state != TaskState::Closed {
+                anomaly(s, e, "invalid result reconciliation");
+                return;
+            }
+            t.reconciled_result_seq = Some(e.seq);
         }
         Kind::TaskProgress {
             summary,

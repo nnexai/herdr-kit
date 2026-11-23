@@ -9,7 +9,7 @@ use super::kinds::{
     ResourceRef, SessionRef, TaskOutcome, Tier, WsOutcome,
 };
 
-pub const FOLD_VERSION: u32 = 9;
+pub const FOLD_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -155,6 +155,8 @@ pub struct Task {
     pub last_nudge: Option<(u64, u64)>,
     pub last_activity_seq: u64,
     pub reported_seq: Option<u64>,
+    #[serde(default)]
+    pub reconciled_result_seq: Option<u64>,
     #[serde(default)]
     pub request: Option<String>,
     #[serde(default)]

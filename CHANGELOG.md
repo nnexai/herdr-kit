@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Allow the coordinator to journal a separately reported recovered result for a
+  closed task only when its exact owned terminal is finished and its tab is gone;
+  ordinary resource release remains separately guarded.
+
 - Redesign Coordinator report attachment presentation and interaction
   (`kit-coord-ui`) for direct discoverability, low click count, and uncluttered
   receipt readability:

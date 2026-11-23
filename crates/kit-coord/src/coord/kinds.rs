@@ -336,6 +336,12 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attachments: Vec<AttachmentRef>,
     },
+    #[serde(rename = "task.result_reconciled")]
+    TaskResultReconciled {
+        source_task: TaskId,
+        result: PathBuf,
+        terminal: String,
+    },
     #[serde(rename = "task.progress")]
     TaskProgress {
         summary: String,
@@ -531,6 +537,7 @@ impl Kind {
             Self::TaskSession { .. } => "task.session",
             Self::TaskSent { .. } => "task.sent",
             Self::TaskReported { .. } => "task.reported",
+            Self::TaskResultReconciled { .. } => "task.result_reconciled",
             Self::TaskProgress { .. } => "task.progress",
             Self::ArtifactPruned { .. } => "artifact.pruned",
             Self::TaskNote { .. } => "task.note",

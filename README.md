@@ -229,6 +229,19 @@ can change configuration or ratings and start or stop the coordinator. Delegates
 report and add notes to their own tasks. Anyone can read the board, log,
 explanations, inbox, roles and statistics. `kit-coord --help` lists commands.
 
+For a closed task whose delegate never reported, the coordinator may record a
+separate recovery result already reported by another task:
+
+```sh
+kit-coord reconcile-result <closed-task> --source-task <recovery-task> --result /absolute/path/to/result.md
+kit-coord release <workstream>
+```
+
+Reconciliation requires the exact owned terminal to be definitively finished,
+without a foreground process or visible recorded tab. It records provenance,
+not a delegate report, and does not remove resources. Ordinary release checks
+still apply; live, unknown, missing, or mismatched terminals are refused.
+
 In the Coordinator dialog, choose **Clear context** to request a fresh session
 when the coordinator is idle. While waiting, **Restart now** offers a
 confirmation before interrupting a turn. The prior session remains in history.

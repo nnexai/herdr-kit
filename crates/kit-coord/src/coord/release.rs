@@ -92,7 +92,15 @@ pub fn check_tab(ctx: &Ctx, state: &State, rec: &ResourceRec) -> Result<Vec<Chec
         ),
         check(
             "result_recorded",
-            task.is_some_and(|t| t.reported_seq.is_some_and(|seq| seq > t.last_activity_seq)),
+            task.is_some_and(|t| {
+                t.reported_seq.is_some_and(|seq| seq > t.last_activity_seq)
+                    || (identity
+                        && term.as_ref().is_some_and(|term| {
+                            term.state == "finished" && term.foreground.is_none()
+                        })
+                        && t.reconciled_result_seq
+                            .is_some_and(|seq| seq > t.last_activity_seq))
+            }),
             None,
         ),
         check("session_recorded", session, None),
@@ -286,7 +294,12 @@ fn close_empty_tab(ctx: &Ctx, tab: Option<&str>) -> Result<()> {
     Ok(())
 }
 fn end_tab(ctx: &Ctx, rec: &ResourceRec) -> Result<()> {
-    ctx.hc.kill(&rec.r.name)?;
+    match ctx.hc.get(&rec.r.name)? {
+        None => return Ok(()),
+        Some(term) if term.state == "finished" => {}
+        Some(term) if term.state == "live" => ctx.hc.kill(&rec.r.name)?,
+        Some(_) => anyhow::bail!("terminal state is unknown"),
+    }
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         match ctx.hc.rm(&rec.r.name) {
@@ -324,6 +337,99 @@ fn retained(checks: Vec<Check>, now: u64) -> Retained {
         checked_ms: Some(now),
         checks,
     }
+}
+/// Record recovery provenance without manufacturing a delegate report or removing a resource.
+pub fn reconcile_result(
+    ctx: &Ctx,
+    j: &Journal,
+    actor: &Actor,
+    task_id: &TaskId,
+    source_id: &TaskId,
+    result: &Path,
+) -> Result<serde_json::Value> {
+    ensure!(matches!(actor, Actor::Coordinator), "coordinator only");
+    ensure!(task_id != source_id, "source task must be distinct");
+    ensure!(
+        result.is_absolute() && result.is_file(),
+        "result must be an existing absolute file"
+    );
+    let mut lock = j.lock()?;
+    let state = lock.state();
+    let task = state.tasks.get(task_id).context("unknown task")?;
+    ensure!(task.state == TaskState::Closed, "task is not closed");
+    ensure!(
+        task.reported_seq
+            .is_none_or(|seq| seq <= task.last_activity_seq),
+        "task already has a current report"
+    );
+    ensure!(
+        task.reconciled_result_seq.is_none(),
+        "result already reconciled"
+    );
+    let source = state.tasks.get(source_id).context("unknown source task")?;
+    ensure!(
+        source.report == Some(super::kinds::Outcome::Done)
+            && source.result.as_deref() == Some(result),
+        "source task did not report this result"
+    );
+    let terminal = task.terminal.as_deref().context("task has no terminal")?;
+    let rec = state
+        .resources
+        .iter()
+        .find(|r| {
+            r.task.as_ref() == Some(task_id)
+                && r.ws.as_ref() == Some(&task.ws)
+                && r.r.r#type == ResType::Tab
+                && r.r.name == terminal
+                && r.owned
+                && !r.released
+        })
+        .context("owned task terminal not found")?;
+    let tab = rec
+        .r
+        .tab
+        .as_deref()
+        .context("resource has no recorded tab")?;
+    let _guard = ctx.terminal_lock(terminal)?;
+    let term = ctx.hc.get(terminal)?.context("terminal not found")?;
+    ensure!(
+        term.state == "finished" && term.foreground.is_none(),
+        "terminal is not definitively finished"
+    );
+    ensure!(
+        term.managed()
+            && term.address == terminal
+            && task.pid.is_some()
+            && task.pid == term.pid
+            && task.created_ms == Some(term.created_ms)
+            && term.label("coord.task") == Some(task_id.as_str())
+            && term.label("coord.ws") == Some(task.ws.as_str()),
+        "terminal ownership identity mismatch"
+    );
+    let app = ctx.app.ls()?;
+    ensure!(
+        !app.spaces
+            .iter()
+            .flat_map(|s| &s.tabs)
+            .any(|t| t.id == tab || t.terminals.iter().any(|p| p.terminal == terminal)),
+        "terminal or recorded tab remains in app"
+    );
+    let ws = task.ws.clone();
+    let terminal = terminal.to_owned();
+    lock.append(
+        actor,
+        ctx.now(),
+        vec![(
+            Some(ws),
+            Some(task_id.clone()),
+            Kind::TaskResultReconciled {
+                source_task: source_id.clone(),
+                result: result.to_path_buf(),
+                terminal: terminal.clone(),
+            },
+        )],
+    )?;
+    Ok(json!({"task": task_id, "source_task": source_id, "result": result, "terminal": terminal}))
 }
 pub fn release_task_tab(
     ctx: &Ctx,
@@ -621,6 +727,7 @@ mod tests {
                 last_nudge: None,
                 last_activity_seq: 1,
                 reported_seq: Some(2),
+                reconciled_result_seq: None,
                 request: None,
                 follows: None,
                 role_hash: String::new(),
@@ -766,6 +873,159 @@ mod tests {
                 retained(vec![check(name, false, None)], 42).reason_code,
                 expected
             );
+        }
+    }
+    #[test]
+    fn recovered_result_requires_finished_owned_terminal_and_preserves_report_provenance() {
+        for scenario in [
+            "finished",
+            "live",
+            "unknown",
+            "missing",
+            "wrong_owner",
+            "lookup_error",
+            "visible",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let paths = super::super::paths::CoordPaths::new(temp.path());
+            let j = Journal::open(&paths).unwrap();
+            let (_, rec, mut term) = setup();
+            let ws = rec.ws.clone().unwrap();
+            let task = rec.task.clone().unwrap();
+            let source = TaskId::new(&ws, 2);
+            let result = temp.path().join("recovered.md");
+            std::fs::write(&result, "independent recovery").unwrap();
+            let mut lock = j.lock().unwrap();
+            let entries = [
+                (None, json!({"kind":"ws.opened","data":{"title":"work"}})),
+                (
+                    Some(task.clone()),
+                    json!({"kind":"task.placed","data":{"rung":2,"reason":"","rejected":[],"role":"r","harness":"omp","title":"task","brief":"/tmp/brief"}}),
+                ),
+                (
+                    Some(task.clone()),
+                    json!({"kind":"res.created","data":rec.r}),
+                ),
+                (
+                    Some(task.clone()),
+                    json!({"kind":"task.started","data":{"terminal":"t1","tab":"tb","tab_name":"tb","space":"sp","cwd":"/tmp","pid":1,"created_ms":0,"session":{"mode":"dir","id":"session"},"resumed":false}}),
+                ),
+                (
+                    Some(task.clone()),
+                    json!({"kind":"task.closed","data":{"reason":"superseded"}}),
+                ),
+                (
+                    Some(source.clone()),
+                    json!({"kind":"task.placed","data":{"rung":2,"reason":"","rejected":[],"role":"r","harness":"omp","title":"recovery","brief":"/tmp/brief"}}),
+                ),
+                (
+                    Some(source.clone()),
+                    json!({"kind":"task.started","data":{"terminal":"t2","tab_name":"source","space":"sp","cwd":"/tmp","pid":2,"created_ms":0,"resumed":false}}),
+                ),
+                (
+                    Some(source.clone()),
+                    json!({"kind":"task.reported","data":{"outcome":"done","summary":"recovered","result":result}}),
+                ),
+                (
+                    None,
+                    json!({"kind":"ws.closed","data":{"summary":"closed"}}),
+                ),
+            ];
+            for (tid, value) in entries {
+                lock.append(
+                    &Actor::Cli,
+                    1,
+                    vec![(
+                        Some(ws.clone()),
+                        tid,
+                        serde_json::from_value(value).unwrap(),
+                    )],
+                )
+                .unwrap();
+            }
+            drop(lock);
+            term.state = match scenario {
+                "live" => "live",
+                "unknown" => "unknown",
+                _ => "finished",
+            }
+            .into();
+            term.foreground = None;
+            if scenario == "wrong_owner" {
+                term.labels
+                    .insert("coord.task".into(), source.as_str().into());
+            }
+            let hc = FakeHc::default();
+            hc.gets.borrow_mut().push_back(match scenario {
+                "missing" => Ok(None),
+                "lookup_error" => Err(anyhow::anyhow!("lookup failed")),
+                _ => Ok(Some(term.clone())),
+            });
+            if scenario == "finished" {
+                for _ in 0..3 {
+                    hc.gets.borrow_mut().push_back(Ok(Some(term.clone())));
+                }
+            }
+            let app = FakeApp::default();
+            let spaces = if scenario == "visible" {
+                vec![AppSpace {
+                    id: "sp".into(),
+                    name: String::new(),
+                    folder: String::new(),
+                    machine: None,
+                    tabs: vec![AppTab {
+                        id: "tb".into(),
+                        name: String::new(),
+                        terminals: vec![],
+                    }],
+                }]
+            } else {
+                vec![]
+            };
+            app.snapshots
+                .borrow_mut()
+                .push_back(Ok(AppSnapshot { spaces }));
+            app.snapshots
+                .borrow_mut()
+                .push_back(Ok(AppSnapshot { spaces: vec![] }));
+            let mut ctx = ctx(hc);
+            ctx.root = temp.path().into();
+            ctx.paths = paths;
+            ctx.app = Box::new(app);
+            assert!(reconcile_result(&ctx, &j, &Actor::Cli, &task, &source, &result).is_err());
+            let outcome = reconcile_result(&ctx, &j, &Actor::Coordinator, &task, &source, &result);
+            if scenario != "finished" {
+                assert!(outcome.is_err(), "{scenario}");
+                assert!(
+                    j.read_state().unwrap().tasks[&task]
+                        .reconciled_result_seq
+                        .is_none()
+                );
+                continue;
+            }
+            outcome.unwrap();
+            let state = j.read_state().unwrap();
+            assert_eq!(state.tasks[&task].state, TaskState::Closed);
+            assert!(state.tasks[&task].report.is_none());
+            assert!(state.tasks[&task].reported_seq.is_none());
+            assert!(state.tasks[&task].reconciled_result_seq.is_some());
+            let hc_live = FakeHc::default();
+            let mut live = term.clone();
+            live.state = "live".into();
+            hc_live.gets.borrow_mut().push_back(Ok(Some(live)));
+            assert!(!check_tab(&self::ctx(hc_live), &state, &state.resources[0]).unwrap()[2].ok);
+            let entries = j.read_after(0).unwrap();
+            let event = entries.last().unwrap();
+            assert_eq!(event.kind, "task.result_reconciled");
+            assert_eq!(event.actor, Actor::Coordinator);
+            assert_eq!(event.data["source_task"], source.as_str());
+            assert_eq!(event.data["result"], result.to_str().unwrap());
+            assert!(
+                release_ws(&ctx, &j, &Actor::Coordinator, &ws, Mode::Command)
+                    .unwrap()
+                    .cleaned
+            );
+            assert!(j.read_state().unwrap().resources[0].released);
         }
     }
     #[test]

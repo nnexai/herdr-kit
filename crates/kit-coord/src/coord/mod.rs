@@ -218,6 +218,7 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
                     | ArtifactsCommand::Prune { .. },
             } => person,
             C::Handoff { .. } => coordinator,
+            C::ReconcileResult { .. } => coordinator,
             C::Report { .. } | C::Note { .. } => delegate,
             C::Watch => person || watcher,
             _ => person || coordinator,
@@ -330,6 +331,18 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             )?;
             json!({"ws":ws,"cleaned":outcome.cleaned,"released":outcome.released,"retained":outcome.retained})
         }
+        C::ReconcileResult {
+            task,
+            source_task,
+            result,
+        } => release::reconcile_result(
+            &ctx,
+            &ctx.journal()?,
+            &caller.actor(),
+            &TaskId::parse(&task)?,
+            &TaskId::parse(&source_task)?,
+            &result,
+        )?,
         C::Decide(a) => place::decide(&ctx, &caller, &a)?,
         C::Ask(a) => place::ask(&ctx, &caller, &a)?,
         C::Instruct(a) => place::instruct(&ctx, &caller, &a)?,
