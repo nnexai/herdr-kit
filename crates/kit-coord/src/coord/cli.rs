@@ -172,6 +172,19 @@ pub enum CoordCommand {
         /// Optional path to a longer result file.
         #[arg(long)]
         result: Option<PathBuf>,
+        /// File to stage and attach to this report (repeatable, up to 8 per report).
+        #[arg(long = "attach")]
+        attach: Vec<PathBuf>,
+        /// File to reference without copying (repeatable, up to 8 total per report).
+        #[arg(long = "attach-ref")]
+        attach_ref: Vec<PathBuf>,
+    },
+    /// Inspect, read, preview, open, reveal, or prune report attachments.
+    #[command(visible_alias = "artifact")]
+    Artifacts {
+        /// Attachment operation.
+        #[command(subcommand)]
+        command: ArtifactsCommand,
     },
     /// Add a note to the journal.
     Note {
@@ -213,6 +226,71 @@ pub enum InboxCommand {
     Ack {
         /// Journal sequence number to acknowledge.
         seq: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ArtifactsCommand {
+    /// List attachments for a workstream or task with live availability checks.
+    List {
+        /// Filter to this workstream.
+        #[arg(long)]
+        ws: Option<String>,
+        /// Filter to this task.
+        #[arg(long)]
+        task: Option<String>,
+        /// Print as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read a bounded inert plain-text slice of a log, text, markdown, or HTML attachment.
+    Read {
+        /// Attachment identifier (e.g. ws-abcdef-t1-a1).
+        id: String,
+        /// Maximum bytes to read (capped at 65536).
+        #[arg(long, default_value_t = 65536)]
+        max_bytes: usize,
+        /// Print as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate a safe raster image attachment for bounded inline preview.
+    Preview {
+        /// Attachment identifier (e.g. ws-abcdef-t1-a1).
+        id: String,
+        /// Include base64-encoded image bytes in the JSON output (for files outside HOME).
+        #[arg(long)]
+        inline_bytes: bool,
+        /// Print as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Open a validated attachment in the OS default viewer.
+    Open {
+        /// Attachment identifier.
+        id: String,
+        /// Confirm opening a local HTML attachment in an external browser.
+        #[arg(long)]
+        allow_html: bool,
+    },
+    /// Reveal a validated attachment in the OS file manager.
+    Reveal {
+        /// Attachment identifier.
+        id: String,
+    },
+    /// Explicitly delete staged file(s) for an attachment or workstream.
+    Delete {
+        /// Attachment identifier or workstream identifier.
+        target: String,
+    },
+    /// Explicitly prune staged files belonging to closed/cleaned workstreams older than a duration.
+    Prune {
+        /// Minimum age (e.g. 30d, 7d, 24h).
+        #[arg(long)]
+        older_than: String,
+        /// Show what would be pruned without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -902,7 +980,13 @@ mod tests {
             "--prompt",
             "- follow instructions",
         ]));
-        assert!(parses(&["roles", "edit", "agy-default", "--prompt-file", "-"]));
+        assert!(parses(&[
+            "roles",
+            "edit",
+            "agy-default",
+            "--prompt-file",
+            "-"
+        ]));
         assert!(parses(&["roles", "delete", "agy-fast"]));
         assert!(parses(&["roles", "reset", "agy-default"]));
         assert!(!parses(&["roles", "--defaults", "create", "agy-fast"]));

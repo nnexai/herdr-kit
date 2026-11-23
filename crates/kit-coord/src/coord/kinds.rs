@@ -127,6 +127,34 @@ string_enum!(TaskOutcome {
     Abandoned
 });
 string_enum!(RatingValue { Good, Bad });
+string_enum!(AttachmentKind {
+    Image,
+    Html,
+    Log,
+    Markdown,
+    Text,
+    File
+});
+string_enum!(AttachmentMode { Staged, Ref });
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentRef {
+    pub id: String,
+    pub label: String,
+    pub kind: AttachmentKind,
+    pub mode: AttachmentMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_path: Option<String>,
+    pub source_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256_12: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Relation {
@@ -305,9 +333,17 @@ pub enum Kind {
         summary: String,
         #[serde(default)]
         result: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<AttachmentRef>,
     },
     #[serde(rename = "task.progress")]
-    TaskProgress { summary: String },
+    TaskProgress {
+        summary: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<AttachmentRef>,
+    },
+    #[serde(rename = "artifact.pruned")]
+    ArtifactPruned { ids: Vec<String>, reason: String },
     #[serde(rename = "task.note")]
     TaskNote { text: String },
     #[serde(rename = "task.start_blocked")]
@@ -496,6 +532,7 @@ impl Kind {
             Self::TaskSent { .. } => "task.sent",
             Self::TaskReported { .. } => "task.reported",
             Self::TaskProgress { .. } => "task.progress",
+            Self::ArtifactPruned { .. } => "artifact.pruned",
             Self::TaskNote { .. } => "task.note",
             Self::TaskStartBlocked { .. } => "task.start_blocked",
             Self::TaskAttention { .. } => "task.attention",
@@ -584,6 +621,7 @@ mod tests {
             outcome: Outcome::Done,
             summary: "done".into(),
             result: None,
+            attachments: vec![],
         };
         assert_eq!(
             serde_json::to_value(&report).unwrap()["data"]["result"],

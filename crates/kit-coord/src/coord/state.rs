@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 
 use super::ids::{TaskId, WsId};
 use super::kinds::{
-    AttentionState, Check, Follows, Outcome, RatingValue, Rejected, ResourceRef, SessionRef,
-    TaskOutcome, Tier, WsOutcome,
+    AttachmentKind, AttachmentMode, AttentionState, Check, Follows, Outcome, RatingValue, Rejected,
+    ResourceRef, SessionRef, TaskOutcome, Tier, WsOutcome,
 };
 
-pub const FOLD_VERSION: u32 = 8;
+pub const FOLD_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
@@ -173,6 +173,34 @@ pub struct Task {
     pub person_turns: u64,
     #[serde(default)]
     pub working_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRec>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentRec {
+    pub id: String,
+    pub label: String,
+    pub kind: AttachmentKind,
+    pub mode: AttachmentMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_path: Option<String>,
+    pub source_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256_12: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    pub report_seq: u64,
+    pub report_kind: String,
+    pub ts_ms: u64,
+    #[serde(default)]
+    pub pruned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pruned_reason: Option<String>,
 }
 
 /// A durable open item, independent of the disposable inbox cursor.

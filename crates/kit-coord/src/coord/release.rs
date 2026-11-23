@@ -630,6 +630,7 @@ mod tests {
                 turns: 0,
                 person_turns: 0,
                 working_ms: 0,
+                attachments: vec![],
             },
         );
         let rec = ResourceRec {

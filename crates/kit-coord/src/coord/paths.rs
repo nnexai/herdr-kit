@@ -4,7 +4,7 @@ use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use super::ids::TaskId;
+use super::ids::{TaskId, WsId};
 
 #[derive(Clone, Debug)]
 pub struct CoordPaths {
@@ -18,6 +18,7 @@ pub struct CoordPaths {
     pub config: PathBuf,
     pub briefs: PathBuf,
     pub results: PathBuf,
+    pub artifacts: PathBuf,
     pub sessions: PathBuf,
     pub roles: PathBuf,
     pub extensions: PathBuf,
@@ -38,6 +39,7 @@ impl CoordPaths {
             config: dir.join("config.json"),
             briefs: dir.join("briefs"),
             results: dir.join("results"),
+            artifacts: dir.join("artifacts"),
             sessions: dir.join("sessions"),
             roles: dir.join("roles"),
             extensions: dir.join("extensions.json"),
@@ -53,6 +55,7 @@ impl CoordPaths {
             &self.journal,
             &self.briefs,
             &self.results,
+            &self.artifacts,
             &self.sessions,
             &self.roles,
             &self.home,
@@ -112,6 +115,12 @@ impl CoordPaths {
     }
     pub fn result(&self, task: &TaskId) -> PathBuf {
         self.results.join(format!("{}.md", task.as_str()))
+    }
+    pub fn artifacts_ws(&self, ws: &WsId) -> PathBuf {
+        self.artifacts.join(ws.as_str())
+    }
+    pub fn artifacts_task(&self, ws: &WsId, task: &TaskId) -> PathBuf {
+        self.artifacts_ws(ws).join(task.as_str())
     }
     pub fn session_dir(&self, name: &str) -> PathBuf {
         self.sessions.join(name)

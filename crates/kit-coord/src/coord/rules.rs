@@ -561,6 +561,7 @@ mod tests {
                         Some(id.clone()),
                         Kind::TaskProgress {
                             summary: "progress".into(),
+                            attachments: vec![],
                         },
                     ),
                 ],

@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,journalFields,
-  decodeRoles,parseCliError,filterRoles,roleSummaryLine,roleCreateArgs,roleEditArgs,roleDeleteArgs,roleResetArgs} from '../mods/kit-coord-ui/model.js';
+  decodeRoles,parseCliError,filterRoles,roleSummaryLine,roleCreateArgs,roleEditArgs,roleDeleteArgs,roleResetArgs,
+  formatBytes,attachmentKindTag,fitPreviewBox,attachmentActions,workstreamAttachments,reportAttachments} from '../mods/kit-coord-ui/model.js';
 
 const status = {enabled:true,state:'running',coordinator:{terminal:'c1'},counts:{open_workstreams:2},generated_at_ms:1000};
 const entry = (seq,kind,data,more = {}) => ({seq,ts_ms:seq*1000,kind,data,...more});
@@ -314,4 +315,42 @@ test('roles model builds CLI args for create/from/edit/delete/reset, filters rol
     '--resume','agy --conversation {session_id} -i {brief}','--clear-trust','--prompt','Updated']);
   assert.deepEqual(roleDeleteArgs('my-review'),['roles','delete','my-review']);
   assert.deepEqual(roleResetArgs('claude-opus'),['roles','reset','claude-opus']);
+});
+
+test('attachment helpers roll up workstream evidence, enforce safe actions by kind/availability, and fit image previews',() => {
+  assert.equal(formatBytes(512),'512 B');
+  assert.equal(formatBytes(18432),'18 KB');
+  assert.equal(formatBytes(26004684),'24.8 MB');
+  assert.equal(attachmentKindTag('image'),'IMG');
+  assert.equal(attachmentKindTag('html'),'HTML');
+  assert.deepEqual(fitPreviewBox(1200,800,260,156),{w:234,h:156});
+  assert.deepEqual(fitPreviewBox(40,20,260,156),{w:80,h:40});
+
+  // Safe action matrix
+  const imgAct = attachmentActions({kind:'image',label:'shot.png',availability:'available'});
+  assert.equal(imgAct.canPreview,true); assert.equal(imgAct.canOpen,true);
+  const htmlAct = attachmentActions({kind:'html',label:'mock.html',availability:'available'});
+  assert.equal(htmlAct.canView,true); assert.equal(htmlAct.viewLabel,'Source'); assert.equal(htmlAct.canBrowser,true); assert.equal(htmlAct.canOpen,false);
+  const shAct = attachmentActions({kind:'text',label:'run.sh',availability:'available'});
+  assert.equal(shAct.canView,true); assert.equal(shAct.canOpen,false);
+  const missAct = attachmentActions({kind:'image',label:'gone.png',availability:'missing'});
+  assert.equal(missAct.canPreview,false); assert.equal(missAct.canOpen,false); assert.equal(missAct.canReveal,false); assert.equal(missAct.canCopy,true);
+
+  // Workstream roll-up + journal fallback + pruned state
+  const a1 = {id:'ws-abc234-t1-a1',label:'dark.png',kind:'image',mode:'staged',source_path:'/wt/dark.png',bytes:1000};
+  const a2 = {id:'ws-abc234-t1-a2',label:'check.log',kind:'log',mode:'staged',source_path:'/wt/check.log',bytes:200};
+  const entries = [
+    entry(2,'task.progress',{summary:'Dark mode',attachments:[a1]},{ws:'ws-abc234',task:'ws-abc234-t1'}),
+    entry(3,'task.reported',{outcome:'done',summary:'Done',attachments:[a2]},{ws:'ws-abc234',task:'ws-abc234-t1'}),
+    entry(4,'artifact.pruned',{ids:['ws-abc234-t1-a1'],reason:'user_deleted'},{ws:'ws-abc234'}),
+  ];
+  const rolled = workstreamAttachments({id:'ws-abc234',tasks:[]},entries);
+  assert.equal(rolled.length,2);
+  assert.equal(rolled[0].availability,'pruned');
+  assert.equal(rolled[1].availability,'available');
+  assert.equal(reportAttachments(entries[1]).length,1);
+  // Journal filter matches attachment filenames and omits raw attachments field from key-value table
+  const jRows = journalRows({entries},{workstreams:[]},{filter:'check.log'}).filter(r => r.kind === 'event');
+  assert.equal(jRows.length,1);
+  assert.equal(journalFields(jRows[0]).some(([k]) => k === 'attachments'),false);
 });

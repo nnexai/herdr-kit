@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod artifacts;
 #[cfg(test)]
 mod blocked_tests;
 pub mod brief;
@@ -160,7 +161,10 @@ pub enum Output {
 
 pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
     use caller::Caller;
-    use cli::{ConfigCommand, CoordCommand as C, InboxCommand, RolesCommand, TaskCommand, WsCommand};
+    use cli::{
+        ArtifactsCommand, ConfigCommand, CoordCommand as C, InboxCommand, RolesCommand,
+        TaskCommand, WsCommand,
+    };
     use ids::{TaskId, WsId};
     use serde_json::json;
     use std::io::Read;
@@ -181,6 +185,11 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             }
             | C::Inbox { command: None, .. }
             | C::Stats { .. }
+            | C::Artifacts {
+                command: ArtifactsCommand::List { .. }
+                    | ArtifactsCommand::Read { .. }
+                    | ArtifactsCommand::Preview { .. },
+            }
     );
     let caller = if read_only {
         Caller::Person { terminal: None }
@@ -200,7 +209,14 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             | C::Restart { .. }
             | C::Rate { .. }
             | C::Config { .. }
-            | C::Say { .. } => person,
+            | C::Say { .. }
+            | C::Artifacts {
+                command:
+                    ArtifactsCommand::Open { .. }
+                    | ArtifactsCommand::Reveal { .. }
+                    | ArtifactsCommand::Delete { .. }
+                    | ArtifactsCommand::Prune { .. },
+            } => person,
             C::Handoff { .. } => coordinator,
             C::Report { .. } | C::Note { .. } => delegate,
             C::Watch => person || watcher,
@@ -272,7 +288,37 @@ pub async fn run(root: &Path, args: cli::CoordArgs) -> Result<Output> {
             outcome,
             summary,
             result,
-        } => place::report(&ctx, &caller, outcome, &summary, result.as_deref())?,
+            attach,
+            attach_ref,
+        } => place::report(
+            &ctx,
+            &caller,
+            outcome,
+            &summary,
+            result.as_deref(),
+            &attach,
+            &attach_ref,
+        )?,
+        C::Artifacts { command } => match command {
+            ArtifactsCommand::List { ws, task, .. } => {
+                artifacts::list(&ctx, ws.as_deref(), task.as_deref())?
+            }
+            ArtifactsCommand::Read { id, max_bytes, .. } => {
+                artifacts::read_text(&ctx, &id, max_bytes)?
+            }
+            ArtifactsCommand::Preview {
+                id, inline_bytes, ..
+            } => artifacts::preview_image(&ctx, &id, inline_bytes)?,
+            ArtifactsCommand::Open { id, allow_html } => {
+                artifacts::open_external(&ctx, &id, allow_html)?
+            }
+            ArtifactsCommand::Reveal { id } => artifacts::reveal_external(&ctx, &id)?,
+            ArtifactsCommand::Delete { target } => artifacts::delete(&ctx, &caller, &target)?,
+            ArtifactsCommand::Prune {
+                older_than,
+                dry_run,
+            } => artifacts::prune(&ctx, &caller, &older_than, dry_run)?,
+        },
         C::Note { text } => place::note(&ctx, &caller, &text)?,
         C::Release { ws } => {
             let outcome = release::release_ws(

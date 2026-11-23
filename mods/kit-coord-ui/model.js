@@ -74,6 +74,133 @@ export function decodeRoles(raw) {
   if (!value || !Array.isArray(value.roles)) throw new Error('Invalid coordinator roles response');
   return value.roles;
 }
+export function decodeArtifacts(raw) {
+  const value = JSON.parse(raw);
+  if (!value || value.schema_version !== 1 || !Array.isArray(value.attachments)) throw new Error('Invalid coordinator artifacts response');
+  return value.attachments;
+}
+export function decodeArtifactText(raw) {
+  const value = JSON.parse(raw);
+  if (!value || value.schema_version !== 1 || typeof value.text !== 'string') throw new Error('Invalid coordinator artifact text response');
+  return value;
+}
+export function decodeArtifactPreview(raw) {
+  const value = JSON.parse(raw);
+  if (!value || value.schema_version !== 1 || !Number.isFinite(value.width) || !Number.isFinite(value.height)) {
+    throw new Error('Invalid coordinator artifact preview response');
+  }
+  return value;
+}
+export function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+export function attachmentKindTag(kind) {
+  return ({ image: 'IMG', html: 'HTML', log: 'LOG', markdown: 'MD', text: 'TXT', file: 'FILE' })[kind] || 'FILE';
+}
+export function isSafeOpenTextExt(label) {
+  const m = /\.([A-Za-z0-9]+)$/.exec(String(label || ''));
+  return !!m && ['log', 'txt', 'md', 'markdown', 'json', 'toml', 'yaml', 'yml', 'csv', 'diff', 'patch', 'jsonl'].includes(m[1].toLowerCase());
+}
+export function fitPreviewBox(width, height, maxW = 260, maxH = 156) {
+  const w = Math.max(1, Number(width) || 1), h = Math.max(1, Number(height) || 1);
+  const scale = Math.min(maxW / w, maxH / h, 2);
+  return { w: Math.max(24, Math.round(w * scale)), h: Math.max(24, Math.round(h * scale)) };
+}
+export function attachmentActions(att) {
+  const avail = att?.availability || (att?.pruned ? 'pruned' : att?.machine ? 'remote' : 'available');
+  const available = avail === 'available';
+  const kind = att?.kind || 'file';
+  if (!available) return { available: false, availability: avail, canPreview: false, canView: false, viewLabel: 'View', canOpen: false, canBrowser: false, canReveal: false, canCopy: true };
+  if (kind === 'image') return { available: true, availability: avail, canPreview: true, canView: false, viewLabel: 'View', canOpen: true, canBrowser: false, canReveal: true, canCopy: true };
+  if (kind === 'html') return { available: true, availability: avail, canPreview: false, canView: true, viewLabel: 'Source', canOpen: false, canBrowser: true, canReveal: true, canCopy: true };
+  if (['log', 'markdown', 'text'].includes(kind)) {
+    return { available: true, availability: avail, canPreview: false, canView: true, viewLabel: 'View', canOpen: isSafeOpenTextExt(att.label), canBrowser: false, canReveal: true, canCopy: true };
+  }
+  return { available: true, availability: avail, canPreview: false, canView: false, viewLabel: 'View', canOpen: false, canBrowser: false, canReveal: true, canCopy: true };
+}
+export function shortTaskNum(taskId) {
+  const m = /-t(\d+)$/.exec(String(taskId || ''));
+  return m ? `t${m[1]}` : String(taskId || '');
+}
+function normalizeAttachment(raw, fallback = {}, liveById = null) {
+  const live = liveById?.get?.(raw.id);
+  const base = {
+    id: raw.id,
+    ws: raw.ws || fallback.ws || '',
+    task: raw.task || fallback.task || '',
+    task_title: raw.task_title || fallback.task_title || '',
+    label: raw.label || 'attachment',
+    kind: raw.kind || 'file',
+    mode: raw.mode || 'staged',
+    stored_path: raw.stored_path ?? null,
+    source_path: raw.source_path || '',
+    resolved_path: raw.resolved_path || raw.source_path || '',
+    bytes: raw.bytes ?? null,
+    sha256_12: raw.sha256_12 ?? null,
+    reason: raw.reason ?? null,
+    machine: raw.machine ?? null,
+    report_seq: raw.report_seq ?? fallback.report_seq ?? 0,
+    report_kind: raw.report_kind || fallback.report_kind || '',
+    ts_ms: raw.ts_ms ?? fallback.ts_ms ?? 0,
+    pruned: !!raw.pruned,
+    pruned_reason: raw.pruned_reason ?? null,
+    availability: raw.availability || (raw.pruned ? 'pruned' : raw.machine ? 'remote' : 'available'),
+    unsafe_reason: raw.unsafe_reason ?? null,
+  };
+  return live ? { ...base, ...live } : base;
+}
+export function workstreamAttachments(ws, entries = [], liveById = null) {
+  const map = new Map();
+  const prunedIds = new Set();
+  for (const e of entries) {
+    if (e.kind === 'artifact.pruned' && Array.isArray(e.data?.ids)) {
+      for (const id of e.data.ids) prunedIds.add(id);
+    }
+  }
+  for (const t of ws?.tasks || []) {
+    for (const att of t.attachments || []) {
+      if (!att?.id) continue;
+      map.set(att.id, normalizeAttachment(att, { ws: ws.id, task: t.id, task_title: t.title }, liveById));
+    }
+  }
+  for (const e of entries) {
+    if (e.ws !== ws?.id || !['task.progress', 'task.reported'].includes(e.kind)) continue;
+    const reportKind = e.kind === 'task.progress' ? 'progress' : (e.data?.outcome || 'reported');
+    for (const att of e.data?.attachments || []) {
+      if (!att?.id || map.has(att.id)) continue;
+      map.set(att.id, normalizeAttachment({ ...att, pruned: prunedIds.has(att.id) }, { ws: e.ws, task: e.task, report_seq: e.seq, report_kind: reportKind, ts_ms: e.ts_ms }, liveById));
+    }
+  }
+  if (liveById) {
+    for (const item of liveById.values()) {
+      if (item.ws === ws?.id && item.id) {
+        map.set(item.id, normalizeAttachment(item, {}, null));
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => (a.ts_ms - b.ts_ms) || (a.report_seq - b.report_seq) || a.id.localeCompare(b.id));
+}
+export function reportAttachments(entry, liveById = null) {
+  if (!entry || !['task.progress', 'task.reported'].includes(entry.kind)) return [];
+  const reportKind = entry.kind === 'task.progress' ? 'progress' : (entry.data?.outcome || 'reported');
+  return (entry.data?.attachments || []).filter(a => a?.id)
+    .map(att => normalizeAttachment(att, { ws: entry.ws, task: entry.task, report_seq: entry.seq, report_kind: reportKind, ts_ms: entry.ts_ms }, liveById));
+}
+export function needsYouAttachment(item, board, entries = [], liveById = null) {
+  if (!item?.ws) return null;
+  const ws = (board?.workstreams || []).find(w => w.id === item.ws);
+  const task = item.task ? taskFor(ws, item.task) : null;
+  const fromTask = (task?.attachments || []).filter(a => a?.id);
+  if (fromTask.length) {
+    const latest = fromTask[fromTask.length - 1];
+    return normalizeAttachment(latest, { ws: item.ws, task: task.id, task_title: task.title }, liveById);
+  }
+  const rep = [...entries].reverse().find(e => e.kind === 'task.reported' && e.ws === item.ws && (!item.task || e.task === item.task) && Array.isArray(e.data?.attachments) && e.data.attachments.length);
+  return rep ? reportAttachments(rep, liveById)[0] || null : null;
+}
 export function parseCliError(stderr, fallback = 'Command failed') {
   const raw = String(stderr || '').trim();
   if (!raw) return fallback;
@@ -180,6 +307,10 @@ export function journalEntry(e) {
     case 'task.reported':
       tone = d.outcome === 'done' ? 'done' : d.outcome === 'question' ? 'question' : 'blocked';
       text = said(d.outcome === 'done' ? 'Done' : d.outcome === 'question' ? 'Asks' : 'Blocked', s('summary')); break;
+    case 'artifact.pruned': {
+      const n = Array.isArray(d.ids) ? d.ids.length : 0;
+      text = `Pruned ${n} ${n === 1 ? 'attachment' : 'attachments'}${s('reason') ? ` (${s('reason')})` : ''}`; break;
+    }
     case 'task.closed': text = d.outcome && !['accepted','done','delivered'].includes(d.outcome) ? said('Task closed', s('reason') || s('outcome')) : 'Task closed'; break;
     case 'task.sent': text = 'Sent the agent a follow-up'; break;
     case 'task.note': text = said('Note', s('text')); break;
@@ -250,7 +381,7 @@ function traceRows(entries, ws) {
         e.kind === 'decision' ? [d.what,d.why].filter(Boolean).join(' — ') :
         e.kind === 'task.reported' ? `Reported ${d.outcome || ''}${d.summary ? ` — ${d.summary}` : ''}` :
         `Closed${d.summary || d.reason ? ` — ${d.summary || d.reason}` : ''}`;
-      return {key:`trace:${e.seq}`,ts_ms:e.ts_ms,text:sentence,source:e};
+      return {key:`trace:${e.seq}`,ts_ms:e.ts_ms,text:sentence,attachments:Array.isArray(d.attachments) ? d.attachments : [],source:e};
     }).sort(chronological);
 }
 function receiptFor(ws, entries, attention, now) {
@@ -273,9 +404,10 @@ function receiptFor(ws, entries, attention, now) {
     state === 'done' ? ws.summary || (relevant?.kind === 'ws.closed' ? relevant.data?.summary : '') || task?.summary || relevant?.data?.summary || 'Done' :
     state === 'running' ? latestProgress?.data?.summary || task?.summary || `Agent started${space ? ` in ${space}` : ''}` :
     task?.placement_reason || 'Placed';
-  return {key:`receipt:${ws.id}`,kind:'receipt',ws:ws.id,title:ws.title,text:description,state,ts_ms:ws.opened_ms ?? 0,
+  const attachments = workstreamAttachments(ws, entries);
+  return {key:`receipt:${ws.id}`,kind:'receipt',ws:ws.id,wsState:ws.state || 'open',title:ws.title,text:description,state,ts_ms:ws.opened_ms ?? 0,
     opened_ms:ws.opened_ms ?? 0,space,duration:formatAge((ws.closed_ms ?? (state === 'done' ? task?.state_since_ms ?? task?.last_event_ms : null) ?? now)-(ws.opened_ms ?? now)),
-    links:linksFor(task,ws),trace:traceRows(entries,ws),source:ws};
+    links:linksFor(task,ws),trace:traceRows(entries,ws),attachments,attachmentCount:attachments.length,source:ws};
 }
 export function railRows(log, conversation, board, now = Date.now()) {
   const entries=log?.entries || [], attention=needsYou(board,entries), messages=[];
@@ -376,11 +508,13 @@ export const journalFields = row => [
   ['When', `${dayKey(row.ts_ms)} ${clock(row.ts_ms)}`],
   ['Event', `${row.source.kind} · ${row.source.actor} · #${row.source.seq}`],
   ...(row.source.task ? [['Task', row.source.task]] : []),
-  ...Object.entries(row.source.data || {}).filter(([k]) => !['what','why'].includes(k))
+  ...Object.entries(row.source.data || {}).filter(([k]) => !['what','why','attachments'].includes(k))
     .slice(0, 12).map(([k, v]) => [k, oneLine(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 300)]),
 ];
 export function railModel({status, log, conversation, board, error = '', now = Date.now(), expandedDays = new Set()}) {
-  const entries=log?.entries || [], attention=needsYou(board,entries), questions=attention.filter(item => item.kind === 'question');
+  const entries=log?.entries || [];
+  const attention=needsYou(board,entries).map(item => ({...item, attachment: needsYouAttachment(item, board, entries)}));
+  const questions=attention.filter(item => item.kind === 'question');
   const rows=groupDays(railRows(log,conversation,board,now),now,expandedDays);
   const available = !!status?.coordinator?.terminal && status.enabled && status.state === 'running';
   const working = available && conversation?.coordinator?.status === 'working';

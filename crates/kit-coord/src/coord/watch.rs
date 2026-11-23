@@ -1123,7 +1123,7 @@ mod tests {
             task: task.clone(),
             ws: ws.clone(),
         };
-        place::report(&ctx, &caller, ReportKind::Done, "done", None).unwrap();
+        place::report(&ctx, &caller, ReportKind::Done, "done", None, &[], &[]).unwrap();
         assert!(
             prepare_heartbeat(&ctx, &j, &core, &None, &mut Default::default())
                 .unwrap()

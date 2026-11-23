@@ -24,7 +24,7 @@ function element(kind) {
 }
 globalThis.railElement = element;
 const nativeUrl = 'data:text/javascript,'+encodeURIComponent(`
-export const div=()=>globalThis.railElement('div'),svg=()=>globalThis.railElement('svg');
+export const div=()=>globalThis.railElement('div'),svg=()=>globalThis.railElement('svg'),image=p=>{const e=globalThis.railElement('image');e.src(p);return e;};
 export class View {}
 export const ScrollHandle={new:()=>({})},TextareaState={new:()=>({})},InputState={new:()=>({})};
 export const h_flex=()=>globalThis.railElement('h_flex'),v_flex=()=>globalThis.railElement('v_flex');
@@ -346,4 +346,65 @@ test('readability refinements: dark/light contrast, transparent ghost actions, n
   const narrowRoles = renderRail(view);
   assert.equal(narrowRoles.nodes[0].attributes.h, narrowStream.nodes[0].attributes.h);
   assert.equal(narrowRoles.nodes[0].attributes.px, narrowStream.nodes[0].attributes.px);
+});
+
+test('attachments render in collapsed receipt cue, open trace evidence with inline image preview, HTML confirm, missing/ref states, journal and plain-text viewer',() => {
+  const imgAtt = {id:'ws-abc234-t1-a1',ws:'ws-abc234',task:'ws-abc234-t1',task_title:'Polish',label:'card-dark.png',kind:'image',mode:'staged',bytes:231424,ts_ms:1000,report_kind:'progress',availability:'available',resolved_path:'/tmp/a1.png'};
+  const htmlAtt = {id:'ws-abc234-t1-a2',ws:'ws-abc234',task:'ws-abc234-t1',task_title:'Polish',label:'mock.html',kind:'html',mode:'staged',bytes:49152,ts_ms:2000,report_kind:'done',availability:'available',resolved_path:'/tmp/a2.html'};
+  const refAtt = {id:'ws-abc234-t1-a3',ws:'ws-abc234',task:'ws-abc234-t1',task_title:'Polish',label:'trace.log',kind:'log',mode:'ref',reason:'exceeds_stage_limit',bytes:26004684,ts_ms:2000,report_kind:'done',availability:'available',resolved_path:'/tmp/trace.log'};
+  const missAtt = {id:'ws-abc234-t1-a4',ws:'ws-abc234',task:'ws-abc234-t1',task_title:'Polish',label:'gone.png',kind:'image',mode:'ref',source_path:'/tmp/wt/gone.png',ts_ms:1500,report_kind:'progress',availability:'missing'};
+  const ws = {id:'ws-abc234',title:'Polish UI',state:'cleaned',tasks:[{id:'ws-abc234-t1',title:'Polish',attachments:[imgAtt,htmlAtt,refAtt,missAtt]}]};
+  const row = {key:'receipt:ws-abc234',kind:'receipt',ws:'ws-abc234',wsState:'cleaned',title:'Polish UI',text:'Done',state:'done',ts_ms:1000,space:'herdr-kit',duration:'14m',
+    links:[],attachmentCount:4,attachments:[imgAtt,htmlAtt,refAtt,missAtt],
+    trace:[{ts_ms:1000,text:'Progress: Dark mode',attachments:[imgAtt]}],source:ws};
+  const {view} = fixture({rows:[row],needsYou:[{kind:'attention',title:'Polish UI',text:'Contrast check failed',ts_ms:2000,attachment:refAtt}]});
+  view.store.imagePreviews = new Map();
+  view.store.wsArtifactMap = () => new Map([imgAtt,htmlAtt,refAtt,missAtt].map(a => [a.id,a]));
+  view.expandedEvidence = new Set();
+  const cx = {notify(){},stop_propagation(){}};
+
+  // Collapsed receipt preserves 2-line layout with quiet file count in fixed slot, and never renders inline image
+  let nodes = all(renderRail(view));
+  assert.ok(nodes.some(n => n.nodes?.includes('herdr-kit · 4 files  14m')));
+  assert.ok(byId(nodes,'needs-att-view-0'),'Needs You card shows compact attachment cue');
+  assert.equal(nodes.some(n => n.kind === 'image'),false,'collapsed receipts never render images');
+
+  // Expanded receipt shows Evidence roll-up, missing/ref cues, HTML inline confirm, and inline image preview
+  view.expandedReceipts.add('receipt:ws-abc234');
+  view.confirmHtmlId = 'trace-ws-abc234:ws-abc234-t1-a2';
+  view.store.imagePreviews.set(imgAtt.id,{status:'ready',relPath:'data/kit-coord-ui/preview/p-1-test.png',width:320,height:200,format:'png',bytes:231424});
+  nodes = all(renderRail(view));
+  const texts = nodes.flatMap(n => n.nodes || []).filter(x => typeof x === 'string');
+  assert.ok(texts.includes('Evidence · 4'));
+  assert.ok(texts.includes('worktree cleaned · 2 staged'));
+  assert.ok(texts.some(t => t.includes('Attached: card-dark.png')));
+  assert.ok(texts.some(t => t.includes('Not staged (>10 MB limit)')));
+  assert.ok(texts.some(t => t.includes('Missing on disk')));
+  assert.ok(texts.some(t => t.includes('Opens local HTML in your browser; scripts can run.')));
+  const imgNode = nodes.find(n => n.kind === 'image');
+  assert.ok(imgNode,'renders native GPUI image element inside open preview');
+  assert.equal(imgNode.attributes.src,'data/kit-coord-ui/preview/p-1-test.png');
+
+  // Narrow width (< 460px): collapsed receipt keeps count + duration inside 132px, selected row reveals wrapped actions
+  view.width = 380;
+  view.expandedReceipts.clear();
+  nodes = all(renderRail(view));
+  assert.ok(nodes.some(n => n.nodes?.includes('4 files  14m')));
+  view.expandedReceipts.add('receipt:ws-abc234');
+  view.selectedAttachment = 'trace-ws-abc234:ws-abc234-t1-a1';
+  nodes = all(renderRail(view));
+  assert.ok(byId(nodes,'att-n-preview-trace-ws-abc234:ws-abc234-t1-a1'));
+  assert.ok(byId(nodes,'att-n-copy-trace-ws-abc234:ws-abc234-t1-a1'));
+
+  // Plain-text viewer subpage has top actions only (no bottom bar) and inert text lines
+  view.width = 680;
+  view.page = 'artifact';
+  view.store.artifactViewer = {attachment:htmlAtt,loading:false,text:'<html>\n<script>alert(1)</script>\n</html>',truncated:false,total_bytes:41,shown_bytes:41,cap_bytes:65536,error:''};
+  const viewerRoot = renderRail(view);
+  const viewerNodes = all(viewerRoot);
+  assert.ok(byId(viewerNodes,'artifact-back'));
+  assert.ok(byId(viewerNodes,'artifact-viewer-browser'));
+  assert.ok(byId(viewerNodes,'artifact-viewer-copy'));
+  assert.equal(viewerRoot.nodes[1].nodes.at(-1).attributes.id,'artifact-viewer-body','no bottom action bar in viewer');
+  assert.ok(viewerNodes.some(n => n.nodes?.includes('<script>alert(1)</script>')));
 });

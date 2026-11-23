@@ -52,6 +52,7 @@ coord/
   lock                    flock for appends and state rebuilds
   briefs/<task>.md        the exact brief each delegate received
   results/<task>.md       long results written by delegates
+  artifacts/<ws>/<task>/  bounded atomic local copies staged from delegate report attachments (0o600)
   sessions/<task>/        harness session storage, where the harness allows it
   config.json             watcher timings and the coordinator role (local)
   roles/<name>.md         this machine's roles and built-in overrides (local)
@@ -71,7 +72,7 @@ Every entry has `seq`, `ts`, `actor` (`coordinator`, `task:<id>`, `watcher`,
 | Resource | `res.intent`, `res.created`, `res.adopted`, `res.release_checked` (each check and its result), `res.released` |
 | Watcher | `nudge.sent`, `task.stalled`, `reconcile.finding`, `watcher.started`, `watcher.stopped` |
 | Coordinator | `coord.session_started`, `coord.session_ended` (reason), `inbox.drained` (cursor), `decision` (what, why, tier), `question.asked`, `question.answered`, `scout.result` |
-| Person | `instruction.set` (standing instruction), `thread.opened`, `thread.closed`, `correction` (what the person overrode and why) |
+| Person | `instruction.set` (standing instruction), `thread.opened`, `thread.closed`, `correction` (what the person overrode and why), `artifact.pruned` (explicit deletion/pruning of staged report attachments) |
 
 `res.intent` is written before a resource is created and `res.created` after,
 so a crash in between leaves a recorded intent that reconcile can resolve.
@@ -87,9 +88,9 @@ decide, and the CLI executes and records in one step.
 
 | Caller | Verbs |
 |---|---|
-| Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>`, `roles [--guidance]`, `ext [name]` |
-| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff`, `roles`, `ext [name]` |
-| Delegate | `report done\|blocked\|question\|progress [--result <file>]`, `note` |
+| Person / mod | `up`, `down`, `status`, `restart`, `board --json`, `log [--since] [--ws] [--task]`, `explain <task\|ws>`, `artifacts list\|read\|preview\|open\|reveal\|delete\|prune`, `roles [--guidance]`, `ext [name]` |
+| Coordinator | `inbox` (events after the cursor), `inbox ack <seq>`, `ws open\|close\|list`, `task start`, `task send`, `task close`, `release <ws>`, `decide`, `ask`, `instruct`, `thread`, `handoff`, `artifacts list\|read\|preview`, `roles`, `ext [name]` |
+| Delegate | `report done\|blocked\|question\|progress [--result <file>] [--attach <file>]... [--attach-ref <file>]...`, `note` |
 | Watcher | `watch` |
 
 Caller identity comes from `$HC_TERMINAL_ID` and that terminal's labels

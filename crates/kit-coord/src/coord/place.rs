@@ -960,8 +960,10 @@ fn send_to_terminal(
         .status
         .as_ref()
         .and_then(|status| status.app.as_deref());
-    let role_allows_steering = role::load(&ctx.paths, &t.role)
-        .map_or_else(|_| role::harness_supports_steering(&t.harness), |r| r.supports_steering());
+    let role_allows_steering = role::load(&ctx.paths, &t.role).map_or_else(
+        |_| role::harness_supports_steering(&t.harness),
+        |r| r.supports_steering(),
+    );
     let steered = working_ready && role::app_supports_steering(app) && role_allows_steering;
     if working_ready && !steered {
         let harness = app.unwrap_or(&t.harness);
@@ -1241,6 +1243,8 @@ pub fn report(
     outcome: cli::ReportKind,
     summary: &str,
     result: Option<&Path>,
+    attach: &[PathBuf],
+    attach_ref: &[PathBuf],
 ) -> Result<Value> {
     let result = result
         .map(|p| -> Result<PathBuf> {
@@ -1254,9 +1258,25 @@ pub fn report(
     let t = delegate(l.state(), c)?;
     let ws = t.ws.clone();
     let id = t.id.clone();
+    let next_att_index = t.attachments.len() + 1;
+    let remote_machine = t
+        .terminal
+        .as_deref()
+        .and_then(|addr| addr.split_once('/').map(|(m, _)| m.to_owned()));
+    let staged = super::artifacts::stage_for_report(
+        &ctx.paths,
+        &ws,
+        &id,
+        next_att_index,
+        attach,
+        attach_ref,
+        remote_machine.as_deref(),
+    )?;
+    let attached_meta = staged.attachments.clone();
     let kind = match outcome {
         cli::ReportKind::Progress => Kind::TaskProgress {
             summary: summary.into(),
+            attachments: staged.attachments,
         },
         _ => Kind::TaskReported {
             outcome: match outcome {
@@ -1267,10 +1287,18 @@ pub fn report(
             },
             summary: summary.into(),
             result,
+            attachments: staged.attachments,
         },
     };
     let entries = l.append(&c.actor(), ctx.now(), vec![(Some(ws), Some(id), kind)])?;
-    Ok(json!({"seq":entries[0].seq}))
+    let mut response = json!({"seq": entries[0].seq});
+    if !attached_meta.is_empty() {
+        response["attachments"] = json!(attached_meta);
+    }
+    if !staged.warnings.is_empty() {
+        response["warnings"] = json!(staged.warnings);
+    }
+    Ok(response)
 }
 pub fn note(ctx: &Ctx, c: &Caller, text: &str) -> Result<Value> {
     let j = ctx.journal()?;
@@ -1561,7 +1589,16 @@ mod tests {
         );
         assert_eq!(
             error::exit_of(
-                &report(&ctx, &person(), cli::ReportKind::Done, "done", None).unwrap_err()
+                &report(
+                    &ctx,
+                    &person(),
+                    cli::ReportKind::Done,
+                    "done",
+                    None,
+                    &[],
+                    &[]
+                )
+                .unwrap_err()
             ),
             ("not_a_delegate", 3)
         );
@@ -1895,6 +1932,8 @@ mod placement_acceptance_tests {
                     cli::ReportKind::Done,
                     "early",
                     None,
+                    &[],
+                    &[],
                 )?;
             }
             Ok(json!({}))

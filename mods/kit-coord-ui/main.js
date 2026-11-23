@@ -6,6 +6,7 @@ import { railModel, focusAction, clock, HARNESS_DEFAULTS, roleCreateArgs, roleEd
 import { RailStore } from './store.js';
 import { renderRail } from './render.js';
 import { systemReducedMotion } from './motion.js';
+import { cleanupStalePreviews } from './preview.js';
 
 const MOTION_KEY = 'herdr-kit.coord-ui.reduced-motion';
 let dialog = null;
@@ -26,6 +27,9 @@ export default class CoordinatorDialog extends View {
     this.page = p.page || 'stream'; this.expandedDays = new Set(); this.expandedReceipts = new Set();
     this.expandedQuestions = new Set(); this.clampedQuestions = new Set(); this.expandedJournal = new Set(); this.needsAll = false;
     this.hoveredReceipt = null;
+    this.hoveredAttachment = null; this.selectedAttachment = null; this.confirmHtmlId = null;
+    this.expandedEvidence = new Set(); this.artifactReturnPage = 'stream';
+    cx.spawn(async () => { await cleanupStalePreviews(); });
     this.showSystem = false; this.filter = InputState.new({placeholder:'Filter journal',value:''});
     this.filter.on('change',(_event,cx) => cx.notify());
     this.rolesMode = p.rolesMode || 'list'; this.selectedRole = p.selectedRole || null; this.hoveredRole = p.hoveredRole || null;
@@ -68,7 +72,11 @@ export default class CoordinatorDialog extends View {
     cx.timer.every(2000,cx => { if (!this.closed) this.store.refresh(cx,this); });
     cx.timer.every(1000,cx => { if (!this.closed && this.model().working) cx.notify(); });
   }
-  close() { this.closed = true; if (this.details && dialog === this.overlayId) dialog = null; }
+  async close() {
+    this.closed = true;
+    if (this.details && dialog === this.overlayId) dialog = null;
+    await this.store?.disposePreviews?.();
+  }
   open() { if (!dialog) dialog = openOverlay({mod:MOD_NAME,props:{view:'log'},kind:'dialog',width:680,height:760}); }
   dismiss() { if (this.overlayId) closeOverlay(this.overlayId); }
   model() { return railModel({...this.store,now:Date.now(),expandedDays:this.expandedDays}); }
@@ -130,9 +138,23 @@ export default class CoordinatorDialog extends View {
     this.toggle(this.expandedReceipts,key,cx);
     if (!opening) return;
     const rows = this.model().rows, index = rows.findIndex(row => row.key === key);
+    const row = index >= 0 ? rows[index] : null;
+    if (row?.ws && row.attachmentCount > 0) this.store.loadWorkstreamArtifacts(cx,this,row.ws);
     // The newest receipts open below the fold: follow the bottom as the trace grows.
     if (index >= rows.length-2) this.latest(cx);
     else if (index >= 0) { this.follow = false; this.scroll.scroll_to_item(index-this.windowStart+(this.windowStart > 0 ? 1 : 0)); }
+  }
+  toggleJournalRow(row,cx) {
+    const opening = !this.expandedJournal.has(row.key);
+    this.toggle(this.expandedJournal,row.key,cx);
+    if (opening && row?.ws && Array.isArray(row.source?.data?.attachments) && row.source.data.attachments.length) {
+      this.store.loadWorkstreamArtifacts(cx,this,row.ws);
+    }
+  }
+  closeArtifactViewer(cx) {
+    this.confirmHtmlId = null;
+    this.page = this.artifactReturnPage || 'stream';
+    cx.notify();
   }
   focusLink(link,_cx) { this.dismiss(); for (const action of focusAction(link)) run(action.name,action.args); }
   showCoordinator(_cx) {
@@ -275,10 +297,12 @@ export default class CoordinatorDialog extends View {
   key(event,cx) {
     if (event.modifiers?.control || event.modifiers?.alt || event.modifiers?.platform) return;
     if (event.key === 'escape') {
-      if (this.fromMenuOpen) this.fromMenuOpen = false;
+      if (this.confirmHtmlId) this.confirmHtmlId = null;
+      else if (this.fromMenuOpen) this.fromMenuOpen = false;
       else if (this.confirmRoleAction) this.confirmRoleAction = null;
       else if (this.confirmRestart) this.confirmRestart = false;
       else if (this.menuOpen) { this.menuOpen = false; this.menuFocus.focus(); }
+      else if (this.page === 'artifact') { this.closeArtifactViewer(cx); cx.stop_propagation(); return; }
       else this.dismiss();
       cx.stop_propagation(); cx.notify();
     }

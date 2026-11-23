@@ -170,6 +170,9 @@ fn task_json(t: &Task) -> Value {
     if let Some(effort) = &t.effort {
         obj["effort"] = json!(effort);
     }
+    if !t.attachments.is_empty() {
+        obj["attachments"] = json!(t.attachments);
+    }
     obj
 }
 

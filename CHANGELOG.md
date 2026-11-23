@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- Add lightweight worker report attachments across `kit-coord` and `kit-coord-ui`:
+  - Support repeatable `--attach <path>` and `--attach-ref <path>` on both
+    `kit-coord report progress` (still non-waking) and terminal reports
+    (`done|blocked|question`, still waking), preserving `--result` compatibility
+    and authenticated task/workstream provenance with metadata-only journal
+    entries and a folded task-to-workstream roll-up (`FOLD_VERSION = 9`).
+  - Atomically stage bounded local regular files (`≤ 10 MiB` per file, `50 MiB`
+    per workstream, `500 MiB` total, `0o600` non-executable) under
+    `<data-dir>/coord/artifacts/<ws>/<task>/` with symlink, non-regular file and
+    sensitive-path refusals; oversized or remote items degrade cleanly to
+    clearly labeled `ref` records with warnings instead of blocking reports.
+  - Decouple artifact retention from `kit-coord release` so staged evidence
+    survives worktree cleanup, with explicit person-only `kit-coord artifacts
+    delete <id|ws>` and `prune --older-than <dur> [--dry-run]` (`artifact.pruned`),
+    lazy `lstat` availability checks (`artifacts list`), bounded inert
+    plain-text reading (`artifact read`), bounded raster image validation
+    (`artifact preview`), and argv-only safe `artifact open` (with `--allow-html`
+    gate and script/SVG/binary refusals) and `artifact reveal`.
+  - Surface quiet `<N> files` cues in collapsed receipts and journal rows,
+    contextual `Evidence` roll-ups in open receipt traces and expanded journal
+    entries, optional single-line blocker evidence cues in Needs You, an inert
+    plain-text/HTML-source viewer subpage with top actions only, inline HTML
+    browser confirmation, and explicit bounded native GPUI inline previews for
+    safe raster images (`PNG`, `JPEG`, `WebP`, `GIF`) staged ephemerally in
+    mod-scoped `data/<mod>/preview/` and cleaned on hide/close.
 - Redesign the usage statusbar hover treatment and Subscription limits details
   overlay (`kit-usage`, `herdr-kit-bar`): replace the giant single-line hover
   tooltip listing every limit with a concise, trigger-anchored `HoverCard`

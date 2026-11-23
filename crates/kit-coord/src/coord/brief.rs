@@ -10,6 +10,7 @@ Reporting (fixed by the coordinator system):
   {cli} report blocked --summary "<what blocks you>"
   {cli} report question --summary "<your question>"
   Long results go into {result}; add --result {result} to the report.
+  Attach evidence files (screenshots, mocks, logs) with repeatable --attach <path> (or --attach-ref <path> for large/external references) on progress or final reports.
 - Use `{cli} report progress --summary "<milestone>"` only for milestones; it never interrupts anyone.
 - If the person changes the scope with you directly, record it with `{cli} note "<what changed>"`.
 - Do not start other agents, create spaces or worktrees, or close anything. Do not report with `hc send`.
@@ -59,7 +60,7 @@ pub fn coordinator_first(role: &Role, cli: &str, guidance: &str, startup_read: &
 
 {notes}## Commands
 `kit` is: {cli}
-Read commands: kit board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | roles [NAME] | ext [NAME] | stats --json [--since DURATION]
+Read commands: kit board | inbox | log [--ws WS] [--task TASK] | explain <ws|task> | artifacts list [--ws WS] [--task TASK] --json | roles [NAME] | ext [NAME] | stats --json [--since DURATION]
 Coordinator commands (optional global --cause SEQ): kit inbox ack <SEQ> | ws open --title TEXT --target TEXT [--request TEXT] [--repo PATH] [--delivery-branch REF] [--purpose TEXT] | ws close <WS> --summary TEXT [--outcome delivered|partial|abandoned] | ws list [--all] | task start --ws WS --rung 1..5 --reason TEXT --brief FILE [--request TEXT] [--follows TASK --relation follow_up|rework|escalation] [--role NAME] [--reject N=REASON]... [--title TEXT] [--session-of TASK] [--space ID] [--branch NAME] [--base REF] [--folder PATH] | task send <TASK> (--text TEXT | --file FILE) | task close <TASK> --reason TEXT --outcome accepted|rejected|superseded|abandoned | release <WS> | decide --what TEXT --why TEXT --tier silent|digest|ask [--ws WS] [--task TASK] [--…
 
 ## Startup read

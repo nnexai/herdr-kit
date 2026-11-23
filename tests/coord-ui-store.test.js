@@ -1,8 +1,23 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {registerHooks} from 'node:module';
-const hostUrl = 'data:text/javascript,' + encodeURIComponent('export const exec = (...args) => globalThis.railHost(...args);');
-registerHooks({resolve(specifier,context,next) { return specifier === 'herdr' ? {url:hostUrl,shortCircuit:true} : next(specifier,context); }});
+const hostUrl = 'data:text/javascript,' + encodeURIComponent(`
+  export const exec = (...args) => globalThis.railHost(...args);
+  export const appHome = () => globalThis.railAppHome || '/tmp/fake-app-home';
+  export const checking = () => false;
+`);
+const fsUrl = 'data:text/javascript,' + encodeURIComponent(`
+  export const mkdir = async () => {};
+  export const readFile = async p => globalThis.railFsRead ? globalThis.railFsRead(p) : new Uint8Array([137,80,78,71]);
+  export const writeFile = async (p, b) => { globalThis.railFsWrites?.push({path:p, len:b.length}); };
+  export const readdir = async () => [];
+  export const unlink = async p => { globalThis.railFsUnlinks?.push(p); };
+`);
+registerHooks({resolve(specifier,context,next) {
+  if (specifier === 'herdr') return {url:hostUrl,shortCircuit:true};
+  if (specifier === 'fs/promises') return {url:fsUrl,shortCircuit:true};
+  return next(specifier,context);
+}});
 const {RailStore} = await import('../mods/kit-coord-ui/store.js');
 function setup(value = '  exact\n\tmessage  ') {
   const store = new RailStore(), queue = [], calls = [];
@@ -103,4 +118,55 @@ test('roles load and mutations go exclusively through kit-coord CLI and surface 
   await h.drain();
   assert.equal(h.store.rolesError,'role start command must reference {brief}');
   assert.equal(h.store.savingRole,false);
+});
+
+test('artifacts list, text viewer, inline image preview, open/reveal and cleanup stay lazy and bounded',async () => {
+  const h = setup();
+  globalThis.railFsWrites = [];
+  globalThis.railFsUnlinks = [];
+  globalThis.railFsRead = () => new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
+  const pngAtt = {id:'ws-abc234-t1-a1',ws:'ws-abc234',task:'ws-abc234-t1',label:'shot.png',kind:'image',mode:'staged',bytes:1234,availability:'available',resolved_path:'/data/herdr-kit/coord/artifacts/ws-abc234/ws-abc234-t1/a1-shot.png'};
+  const logAtt = {id:'ws-abc234-t1-a2',ws:'ws-abc234',task:'ws-abc234-t1',label:'check.log',kind:'log',mode:'staged',bytes:42,availability:'available',resolved_path:'/data/herdr-kit/coord/artifacts/ws-abc234/ws-abc234-t1/a2-check.log'};
+  globalThis.railHost = async (_binary,args) => {
+    h.calls.push(args);
+    if (args[0] === 'artifacts' && args[1] === 'list') {
+      return {code:0,stdout:JSON.stringify({schema_version:1,attachments:[pngAtt,logAtt]})};
+    }
+    if (args[0] === 'artifact' && args[1] === 'read') {
+      return {code:0,stdout:JSON.stringify({schema_version:1,id:logAtt.id,text:'ok line 1\nok line 2',total_bytes:42,shown_bytes:42,cap_bytes:65536,truncated:false,resolved_path:logAtt.resolved_path})};
+    }
+    if (args[0] === 'artifact' && args[1] === 'preview') {
+      return {code:0,stdout:JSON.stringify({schema_version:1,id:pngAtt.id,label:'shot.png',format:'png',ext:'png',width:320,height:200,bytes:1234,cache_key:'ws-abc234-t1-a1-deadbeef',resolved_path:pngAtt.resolved_path})};
+    }
+    if (args[0] === 'artifact' && args[1] === 'open') {
+      return {code:0,stdout:JSON.stringify({action:'opened',id:pngAtt.id})};
+    }
+    return {code:0,stdout:JSON.stringify({action:'ok'})};
+  };
+
+  // Lazy list
+  h.store.loadWorkstreamArtifacts(h.cx,h.view,'ws-abc234');
+  await h.drain();
+  assert.deepEqual(h.calls[0],['artifacts','list','--ws','ws-abc234','--json']);
+  assert.equal(h.store.wsArtifactMap('ws-abc234').get(pngAtt.id).label,'shot.png');
+
+  // Inert plain-text viewer
+  h.view.page = 'stream';
+  h.store.openTextViewer(h.cx,h.view,logAtt);
+  await h.drain();
+  assert.equal(h.view.page,'artifact');
+  assert.equal(h.view.artifactReturnPage,'stream');
+  assert.equal(h.store.artifactViewer.text,'ok line 1\nok line 2');
+
+  // Inline image preview stages ephemeral mod-data file and cleans up on toggle/dispose
+  h.store.toggleImagePreview(h.cx,h.view,pngAtt);
+  await h.drain();
+  const prev = h.store.imagePreviews.get(pngAtt.id);
+  assert.equal(prev.status,'ready');
+  assert.match(prev.relPath,/^data\/kit-coord-ui\/preview\/p-\d+-ws-abc234-t1-a1-deadbeef\.png$/);
+  assert.equal(globalThis.railFsWrites.length,1);
+
+  await h.store.disposePreviews();
+  assert.equal(h.store.imagePreviews.size,0);
+  assert.equal(globalThis.railFsUnlinks.length,1);
 });

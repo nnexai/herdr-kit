@@ -281,6 +281,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                     turns: 0,
                     person_turns: 0,
                     working_ms: 0,
+                    attachments: Vec::new(),
                 },
             );
         }
@@ -385,6 +386,7 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
             outcome,
             summary,
             result,
+            attachments,
         } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
                 anomaly(s, e, "unknown task");
@@ -393,6 +395,30 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
             if !matches!(t.state, TaskState::Running | TaskState::Reported) {
                 anomaly(s, e, "invalid task report");
                 return;
+            }
+            let report_kind = match outcome {
+                super::kinds::Outcome::Done => "done",
+                super::kinds::Outcome::Blocked => "blocked",
+                super::kinds::Outcome::Question => "question",
+            };
+            for att in attachments {
+                t.attachments.push(AttachmentRec {
+                    id: att.id,
+                    label: att.label,
+                    kind: att.kind,
+                    mode: att.mode,
+                    stored_path: att.stored_path,
+                    source_path: att.source_path,
+                    bytes: att.bytes,
+                    sha256_12: att.sha256_12,
+                    reason: att.reason,
+                    machine: att.machine,
+                    report_seq: e.seq,
+                    report_kind: report_kind.to_owned(),
+                    ts_ms: e.ts_ms,
+                    pruned: false,
+                    pruned_reason: None,
+                });
             }
             t.state = TaskState::Reported;
             t.state_since_ms = e.ts_ms;
@@ -414,7 +440,10 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                 t.blocked = None;
             }
         }
-        Kind::TaskProgress { summary } => {
+        Kind::TaskProgress {
+            summary,
+            attachments,
+        } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
                 anomaly(s, e, "unknown task");
                 return;
@@ -423,7 +452,29 @@ fn project(s: &mut State, e: &Entry, kind: Kind) {
                 anomaly(s, e, "invalid task progress");
                 return;
             }
+            for att in attachments {
+                t.attachments.push(AttachmentRec {
+                    id: att.id,
+                    label: att.label,
+                    kind: att.kind,
+                    mode: att.mode,
+                    stored_path: att.stored_path,
+                    source_path: att.source_path,
+                    bytes: att.bytes,
+                    sha256_12: att.sha256_12,
+                    reason: att.reason,
+                    machine: att.machine,
+                    report_seq: e.seq,
+                    report_kind: "progress".to_owned(),
+                    ts_ms: e.ts_ms,
+                    pruned: false,
+                    pruned_reason: None,
+                });
+            }
             t.summary = Some(summary);
+        }
+        Kind::ArtifactPruned { ids, reason } => {
+            super::artifacts::mark_pruned(s, &ids, &reason);
         }
         Kind::TaskDormant { .. } => {
             let Some(t) = e.task.as_ref().and_then(|id| s.tasks.get_mut(id)) else {
