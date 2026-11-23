@@ -13,7 +13,7 @@ export class RailStore {
     this.roles = null; this.loadingRoles = false; this.savingRole = false;
     this.rolesError = ''; this.rolesNotice = ''; this.rolesNoticeUntil = 0;
     this.wsArtifacts = new Map();
-    this.artifactViewer = null;
+    this.textPreviews = new Map();
     this.imagePreviews = new Map();
   }
   async read(kind, beforeSeq = null) {
@@ -141,44 +141,37 @@ export class RailStore {
       } finally { if (!view.closed) cx.notify(); }
     });
   }
-  openTextViewer(cx, view, att) {
+  loadTextPreview(cx, view, att) {
     if (!att?.id || view.closed) return;
-    if (view.page !== 'artifact') view.artifactReturnPage = view.page;
-    view.page = 'artifact';
-    view.confirmHtmlId = null;
-    this.artifactViewer = {
-      attachment: att, loading: true, text: '', truncated: false,
-      total_bytes: att.bytes || 0, shown_bytes: 0, cap_bytes: 65536,
-      resolved_path: att.resolved_path || att.source_path || '', error: '',
-    };
+    const existing = this.textPreviews.get(att.id);
+    if (existing && (existing.status === 'ready' || existing.status === 'loading')) return;
+    while (this.textPreviews.size >= 8) {
+      const oldest = this.textPreviews.keys().next().value;
+      this.textPreviews.delete(oldest);
+    }
+    this.textPreviews.set(att.id, { status: 'loading' });
     cx.notify();
     cx.spawn(async cx => {
       try {
         const result = await exec(BINARY, [...prefix(), 'artifact', 'read', att.id, '--max-bytes', '65536', '--json'], { timeout: 15000 });
-        if (view.closed || this.artifactViewer?.attachment?.id !== att.id) return;
+        if (view.closed || this.textPreviews.get(att.id)?.status !== 'loading') return;
         if (result.code !== 0) throw new Error(parseCliError(result.stderr, 'Could not read attachment'));
         const payload = decodeArtifactText(result.stdout);
-        this.artifactViewer = {
-          attachment: { ...att, resolved_path: payload.resolved_path || att.resolved_path },
-          loading: false, text: payload.text, truncated: !!payload.truncated,
+        this.textPreviews.set(att.id, {
+          status: 'ready', text: payload.text, truncated: !!payload.truncated,
           total_bytes: payload.total_bytes ?? 0, shown_bytes: payload.shown_bytes ?? 0,
-          cap_bytes: payload.cap_bytes ?? 65536, resolved_path: payload.resolved_path || att.resolved_path || '', error: '',
-        };
+          cap_bytes: payload.cap_bytes ?? 65536, resolved_path: payload.resolved_path || att.resolved_path || '',
+        });
       } catch (error) {
-        if (view.closed || this.artifactViewer?.attachment?.id !== att.id) return;
-        this.artifactViewer = { ...this.artifactViewer, loading: false, error: firstLine(error) };
+        if (view.closed) return;
+        this.textPreviews.set(att.id, { status: 'error', error: firstLine(error) });
       } finally { if (!view.closed) cx.notify(); }
     });
   }
-  toggleImagePreview(cx, view, att) {
+  loadImagePreview(cx, view, att) {
     if (!att?.id || view.closed) return;
     const existing = this.imagePreviews.get(att.id);
-    if (existing && (existing.status === 'ready' || existing.status === 'loading')) {
-      this.imagePreviews.delete(att.id);
-      if (existing.cacheKey) cx.spawn(async () => { await evictPreview(existing.cacheKey); });
-      cx.notify();
-      return;
-    }
+    if (existing && (existing.status === 'ready' || existing.status === 'loading')) return;
     this.imagePreviews.set(att.id, { status: 'loading' });
     cx.notify();
     cx.spawn(async cx => {
@@ -205,6 +198,12 @@ export class RailStore {
         this.imagePreviews.set(att.id, { status: 'error', error: firstLine(error) });
       } finally { if (!view.closed) cx.notify(); }
     });
+  }
+  clearImagePreview(cx, attId) {
+    const existing = this.imagePreviews.get(attId);
+    if (!existing) return;
+    this.imagePreviews.delete(attId);
+    if (existing.cacheKey) cx?.spawn?.(async () => { await evictPreview(existing.cacheKey); });
   }
   openAttachment(cx, view, att, { allowHtml = false } = {}) {
     if (!att?.id || view.closed) return;
@@ -242,7 +241,8 @@ export class RailStore {
     });
   }
   copyAttachmentPath(cx, view, att) {
-    const path = att?.resolved_path || att?.source_path || '';
+    const txt = att?.id ? this.textPreviews.get(att.id) : null;
+    const path = txt?.resolved_path || att?.resolved_path || att?.source_path || '';
     if (!path) return;
     cx.write_to_clipboard?.(path);
     this.notice = `Copied path for ${att.label || 'attachment'}.`;
@@ -251,6 +251,7 @@ export class RailStore {
   }
   disposePreviews() {
     this.imagePreviews.clear();
+    this.textPreviews.clear();
     return cleanupAllPreviews();
   }
 }

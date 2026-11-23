@@ -150,23 +150,27 @@ test('artifacts list, text viewer, inline image preview, open/reveal and cleanup
   assert.deepEqual(h.calls[0],['artifacts','list','--ws','ws-abc234','--json']);
   assert.equal(h.store.wsArtifactMap('ws-abc234').get(pngAtt.id).label,'shot.png');
 
-  // Inert plain-text viewer
+  // Inline inert plain-text preview (no nested page switch)
   h.view.page = 'stream';
-  h.store.openTextViewer(h.cx,h.view,logAtt);
+  h.store.loadTextPreview(h.cx,h.view,logAtt);
   await h.drain();
-  assert.equal(h.view.page,'artifact');
-  assert.equal(h.view.artifactReturnPage,'stream');
-  assert.equal(h.store.artifactViewer.text,'ok line 1\nok line 2');
+  assert.equal(h.view.page,'stream');
+  assert.equal(h.store.textPreviews.get(logAtt.id).status,'ready');
+  assert.equal(h.store.textPreviews.get(logAtt.id).text,'ok line 1\nok line 2');
 
-  // Inline image preview stages ephemeral mod-data file and cleans up on toggle/dispose
-  h.store.toggleImagePreview(h.cx,h.view,pngAtt);
+  // Inline image preview stages ephemeral mod-data file and cleans up on clear/dispose
+  h.store.loadImagePreview(h.cx,h.view,pngAtt);
   await h.drain();
   const prev = h.store.imagePreviews.get(pngAtt.id);
   assert.equal(prev.status,'ready');
   assert.match(prev.relPath,/^data\/kit-coord-ui\/preview\/p-\d+-ws-abc234-t1-a1-deadbeef\.png$/);
   assert.equal(globalThis.railFsWrites.length,1);
 
-  await h.store.disposePreviews();
+  h.store.clearImagePreview(h.cx,pngAtt.id);
+  await h.drain();
   assert.equal(h.store.imagePreviews.size,0);
   assert.equal(globalThis.railFsUnlinks.length,1);
+
+  await h.store.disposePreviews();
+  assert.equal(h.store.textPreviews.size,0);
 });

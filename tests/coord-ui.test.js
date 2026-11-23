@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {railRows,railModel,quickReply,sayArgs,focusAction,groupDays,dayLabel,journalRows,journalFields,
   decodeRoles,parseCliError,filterRoles,roleSummaryLine,roleCreateArgs,roleEditArgs,roleDeleteArgs,roleResetArgs,
-  formatBytes,attachmentKindTag,fitPreviewBox,attachmentActions,workstreamAttachments,reportAttachments} from '../mods/kit-coord-ui/model.js';
+  formatBytes,attachmentKindTag,fitPreviewBox,attachmentActions,workstreamAttachments,receiptAttachments,reportAttachments} from '../mods/kit-coord-ui/model.js';
 
 const status = {enabled:true,state:'running',coordinator:{terminal:'c1'},counts:{open_workstreams:2},generated_at_ms:1000};
 const entry = (seq,kind,data,more = {}) => ({seq,ts_ms:seq*1000,kind,data,...more});
@@ -349,6 +349,14 @@ test('attachment helpers roll up workstream evidence, enforce safe actions by ki
   assert.equal(rolled[0].availability,'pruned');
   assert.equal(rolled[1].availability,'available');
   assert.equal(reportAttachments(entries[1]).length,1);
+  // Receipt attachment ordering prioritizes latest distinct deliverables before earlier duplicate filenames
+  const dupOrdered = receiptAttachments([
+    {id:'a1',label:'probe.png',kind:'image',report_seq:10,ts_ms:1000},
+    {id:'a2',label:'probe.txt',kind:'text',report_seq:10,ts_ms:1000},
+    {id:'a3',label:'probe.png',kind:'image',report_seq:20,ts_ms:2000},
+    {id:'a4',label:'shot.png',kind:'image',report_seq:20,ts_ms:2000},
+  ]);
+  assert.deepEqual(dupOrdered.map(a => a.id),['a3','a4','a2','a1']);
   // Journal filter matches attachment filenames and omits raw attachments field from key-value table
   const jRows = journalRows({entries},{workstreams:[]},{filter:'check.log'}).filter(r => r.kind === 'event');
   assert.equal(jRows.length,1);

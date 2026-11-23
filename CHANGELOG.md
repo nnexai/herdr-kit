@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Redesign Coordinator report attachment presentation and interaction
+  (`kit-coord-ui`) for direct discoverability, low click count, and uncluttered
+  receipt readability:
+  - Surface compact, width-bounded filename chips directly beneath the summary
+    line of receipts with attachments, prioritizing the latest distinct report
+    deliverables first (up to 4 visible immediately with a quiet inline
+    `+N more` toggle for additional/earlier items), while keeping
+    attachment-free receipts and the fixed-slot hover layout unchanged.
+  - Replace the nested plain-text viewer subpage (`page = 'artifact'`) and the
+    trace-nested `Evidence` section with a unified, on-demand inline preview
+    drawer shared across receipts, Needs You cards, and expanded journal
+    entries: a single click at normal or narrow width previews safe raster
+    images on a centered stage or exposes bounded scrollable inert plain text
+    (`64 KiB` cap), lets you flip between multiple files in place via chips or
+    a `‹ i/N ›` header stepper without open/back loops, and keeps secondary
+    actions (`Open`, `Browser…` with inline HTML confirmation, `Reveal`,
+    `Copy`, `×`) and unavailable/reference states quiet in the preview header.
 - Add lightweight worker report attachments across `kit-coord` and `kit-coord-ui`:
   - Support repeatable `--attach <path>` and `--attach-ref <path>` on both
     `kit-coord report progress` (still non-waking) and terminal reports

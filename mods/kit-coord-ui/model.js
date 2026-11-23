@@ -91,6 +91,7 @@ export function decodeArtifactPreview(raw) {
   }
   return value;
 }
+export const INLINE_ATTACHMENT_LIMIT = 4;
 export function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -182,6 +183,28 @@ export function workstreamAttachments(ws, entries = [], liveById = null) {
     }
   }
   return [...map.values()].sort((a, b) => (a.ts_ms - b.ts_ms) || (a.report_seq - b.report_seq) || a.id.localeCompare(b.id));
+}
+export function receiptAttachments(attachments = []) {
+  if (!Array.isArray(attachments) || attachments.length <= 1) return attachments || [];
+  // Group by report (newest report first), preserving attachment order within each report.
+  const groups = new Map();
+  for (const att of attachments) {
+    const key = `${att.report_seq || 0}:${att.ts_ms || 0}`;
+    if (!groups.has(key)) groups.set(key, { seq: att.report_seq || 0, ts: att.ts_ms || 0, items: [] });
+    groups.get(key).items.push(att);
+  }
+  const ordered = [...groups.values()]
+    .sort((a, b) => (b.ts - a.ts) || (b.seq - a.seq))
+    .flatMap(g => g.items);
+  // Show the newest copy of each distinct (label, kind) first so earlier duplicates never crowd out new files.
+  const seen = new Set();
+  const primary = [], earlier = [];
+  for (const att of ordered) {
+    const sig = `${att.kind || 'file'}:${att.label || ''}`;
+    if (!seen.has(sig)) { seen.add(sig); primary.push(att); }
+    else earlier.push(att);
+  }
+  return [...primary, ...earlier];
 }
 export function reportAttachments(entry, liveById = null) {
   if (!entry || !['task.progress', 'task.reported'].includes(entry.kind)) return [];

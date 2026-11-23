@@ -2,7 +2,7 @@ import { View, div } from 'gpui-kit';
 import { ScrollHandle, TextareaState, InputState } from 'gpui-base';
 import { props, shared, setShared, run, openOverlay, closeOverlay, nextCommand } from 'herdr';
 import { MOD_NAME, DEPENDENCY_MOD } from './runtime.js';
-import { railModel, focusAction, clock, HARNESS_DEFAULTS, roleCreateArgs, roleEditArgs, roleDeleteArgs, roleResetArgs } from './model.js';
+import { railModel, focusAction, clock, HARNESS_DEFAULTS, roleCreateArgs, roleEditArgs, roleDeleteArgs, roleResetArgs, attachmentActions } from './model.js';
 import { RailStore } from './store.js';
 import { renderRail } from './render.js';
 import { systemReducedMotion } from './motion.js';
@@ -27,8 +27,7 @@ export default class CoordinatorDialog extends View {
     this.page = p.page || 'stream'; this.expandedDays = new Set(); this.expandedReceipts = new Set();
     this.expandedQuestions = new Set(); this.clampedQuestions = new Set(); this.expandedJournal = new Set(); this.needsAll = false;
     this.hoveredReceipt = null;
-    this.hoveredAttachment = null; this.selectedAttachment = null; this.confirmHtmlId = null;
-    this.expandedEvidence = new Set(); this.artifactReturnPage = 'stream';
+    this.activeAttachments = new Map(); this.expandedAttachments = new Set(); this.confirmHtmlId = null;
     cx.spawn(async () => { await cleanupStalePreviews(); });
     this.showSystem = false; this.filter = InputState.new({placeholder:'Filter journal',value:''});
     this.filter.on('change',(_event,cx) => cx.notify());
@@ -139,7 +138,9 @@ export default class CoordinatorDialog extends View {
     if (!opening) return;
     const rows = this.model().rows, index = rows.findIndex(row => row.key === key);
     const row = index >= 0 ? rows[index] : null;
-    if (row?.ws && row.attachmentCount > 0) this.store.loadWorkstreamArtifacts(cx,this,row.ws);
+    if (row?.ws && row.attachmentCount > 0 && !this.store.wsArtifacts?.has?.(row.ws)) {
+      this.store.loadWorkstreamArtifacts(cx,this,row.ws);
+    }
     // The newest receipts open below the fold: follow the bottom as the trace grows.
     if (index >= rows.length-2) this.latest(cx);
     else if (index >= 0) { this.follow = false; this.scroll.scroll_to_item(index-this.windowStart+(this.windowStart > 0 ? 1 : 0)); }
@@ -147,14 +148,42 @@ export default class CoordinatorDialog extends View {
   toggleJournalRow(row,cx) {
     const opening = !this.expandedJournal.has(row.key);
     this.toggle(this.expandedJournal,row.key,cx);
-    if (opening && row?.ws && Array.isArray(row.source?.data?.attachments) && row.source.data.attachments.length) {
+    if (opening && row?.ws && Array.isArray(row.source?.data?.attachments) && row.source.data.attachments.length && !this.store.wsArtifacts?.has?.(row.ws)) {
       this.store.loadWorkstreamArtifacts(cx,this,row.ws);
     }
   }
-  closeArtifactViewer(cx) {
+  selectAttachment(scope,att,cx) {
+    if (!att?.id) return;
+    const prevId = this.activeAttachments.get(scope) || null;
     this.confirmHtmlId = null;
-    this.page = this.artifactReturnPage || 'stream';
+    if (prevId === att.id) {
+      this.activeAttachments.delete(scope);
+      this.evictUnusedImagePreview(cx, prevId);
+      cx.notify();
+      return;
+    }
+    this.activeAttachments.set(scope, att.id);
+    if (prevId) this.evictUnusedImagePreview(cx, prevId);
+    if (att.ws && !this.store.wsArtifacts?.has?.(att.ws)) {
+      this.store.loadWorkstreamArtifacts(cx, this, att.ws);
+    }
+    const act = attachmentActions(att);
+    if (act.canPreview) this.store.loadImagePreview(cx, this, att);
+    else if (act.canView) this.store.loadTextPreview(cx, this, att);
     cx.notify();
+  }
+  closeAttachment(scope,cx) {
+    const prevId = this.activeAttachments.get(scope) || null;
+    if (!prevId) return;
+    this.activeAttachments.delete(scope);
+    if (this.confirmHtmlId === `${scope}:${prevId}`) this.confirmHtmlId = null;
+    this.evictUnusedImagePreview(cx, prevId);
+    cx.notify();
+  }
+  evictUnusedImagePreview(cx,attId) {
+    if (!attId) return;
+    for (const id of this.activeAttachments.values()) if (id === attId) return;
+    this.store.clearImagePreview?.(cx, attId);
   }
   focusLink(link,_cx) { this.dismiss(); for (const action of focusAction(link)) run(action.name,action.args); }
   showCoordinator(_cx) {
@@ -302,7 +331,11 @@ export default class CoordinatorDialog extends View {
       else if (this.confirmRoleAction) this.confirmRoleAction = null;
       else if (this.confirmRestart) this.confirmRestart = false;
       else if (this.menuOpen) { this.menuOpen = false; this.menuFocus.focus(); }
-      else if (this.page === 'artifact') { this.closeArtifactViewer(cx); cx.stop_propagation(); return; }
+      else if (this.activeAttachments.size) {
+        const ids = [...this.activeAttachments.values()];
+        this.activeAttachments.clear();
+        for (const id of ids) this.store.clearImagePreview?.(cx, id);
+      }
       else this.dismiss();
       cx.stop_propagation(); cx.notify();
     }

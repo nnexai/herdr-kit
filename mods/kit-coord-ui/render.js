@@ -3,7 +3,7 @@ import { h_flex, v_flex, Button, Checkbox, Textarea, TextView, Popover, Input } 
 import { theme, settings } from 'herdr';
 import { MOD_NAME } from './runtime.js';
 import { clock, dayLabel, journalRows, journalFields, filterRoles, roleSummaryLine, ROLE_HARNESSES, ROLE_SESSIONS,
-  formatBytes, attachmentKindTag, fitPreviewBox, attachmentActions, shortTaskNum, workstreamAttachments, reportAttachments } from './model.js';
+  INLINE_ATTACHMENT_LIMIT, formatBytes, attachmentKindTag, fitPreviewBox, attachmentActions, workstreamAttachments, receiptAttachments, reportAttachments } from './model.js';
 
 const TRANSPARENT = '#00000000';
 const hex6 = color => {
@@ -115,189 +115,245 @@ function menu(view, vm, t) {
   return panel;
 }
 
-function kindPill(kind, t) {
-  const tag = attachmentKindTag(kind);
-  const color = kind === 'image' ? t.accent : kind === 'html' ? t.working : (kind === 'log' || kind === 'markdown') ? t.done : t.secondary;
-  return mono(h_flex().h(18).px(5).flex_shrink_0().items_center().justify_center().rounded(4).border(1)
-    .border_color(tint(color, '4c')).bg(tint(color, '14')).text_size(10.5).font_semibold().text_color(color).child(tag));
+const MAX_INLINE_TEXT_LINES = 400;
+
+const kindColor = (kind, available, t) => !available ? t.muted
+  : kind === 'image' ? t.accent
+  : kind === 'html' ? t.working
+  : (kind === 'log' || kind === 'markdown') ? t.done
+  : t.muted;
+
+function attachmentRefNote(att) {
+  return att.reason === 'exceeds_stage_limit' ? 'Not staged (>10 MB limit) · lives at source path'
+    : att.reason === 'budget_exceeded' ? 'Not staged (staging budget) · lives at source path'
+    : 'Reference only · lives at source path';
 }
 
-function attachmentRow(view, att, t, scope = 'trace') {
-  const narrow = isNarrow(view);
-  const rowKey = `${scope}:${att.id}`;
+function attachmentChip(view, att, t, scope, { onRecessed = false, narrow = false } = {}) {
   const act = attachmentActions(att);
-  const preview = view.store.imagePreviews?.get?.(att.id) || null;
-  const previewOpen = !!preview;
-  const confirmHtml = view.confirmHtmlId === rowKey;
-  const hovered = view.hoveredAttachment === rowKey;
-  const selected = view.selectedAttachment === rowKey;
-  const active = hovered || selected || confirmHtml || previewOpen;
+  const active = view.activeAttachments?.get?.(scope) === att.id;
   const sizeText = formatBytes(att.bytes);
-  const statusLabel = act.availability === 'missing' ? 'Missing'
-    : act.availability === 'pruned' ? 'Pruned'
-    : act.availability === 'remote' ? 'Remote'
-    : act.availability === 'unsafe' ? 'Blocked'
-    : att.mode === 'ref' ? (sizeText ? `${sizeText} · ref` : 'ref')
-    : (sizeText ? `${sizeText} · staged` : 'staged');
-  const statusColor = !act.available ? t.muted : att.mode === 'ref' ? t.working : t.muted;
-  const row = v_flex().id(`att-${rowKey}`).px(8).py(3).rounded(6).gap(4).border(1)
-    .border_color(confirmHtml ? tint(t.working, '70') : active ? t.borderStrong : t.transparent)
-    .bg(confirmHtml ? tint(t.working, '10') : active ? t.card : t.transparent)
-    .on_hover((h, cx) => {
-      const next = h ? rowKey : view.hoveredAttachment === rowKey ? null : view.hoveredAttachment;
-      if (next !== view.hoveredAttachment) { view.hoveredAttachment = next; cx.notify(); }
-    });
-  if (act.available && att.resolved_path && !att.machine && typeof row.drag_paths === 'function') {
-    row.drag_paths([att.resolved_path]);
-  }
-  const onRowClick = cx => {
-    if (narrow) {
-      view.selectedAttachment = selected ? null : rowKey;
-      cx.notify();
-    } else if (act.canPreview) {
-      view.store.toggleImagePreview(cx, view, att);
-    } else if (act.canView) {
-      view.store.openTextViewer(cx, view, att);
-    } else {
-      view.selectedAttachment = selected ? null : rowKey;
-      cx.notify();
-    }
-  };
-  const top = h_flex().gap(7).items_center().min_w(0);
-  const left = h_flex().gap(7).items_center().min_w(0).w_full()
-    .child(kindPill(att.kind, t))
-    .child(div().flex_1().min_w(0).truncate().text_size(12.5)
+  const unavailableTag = act.availability === 'missing' ? 'missing'
+    : act.availability === 'pruned' ? 'pruned'
+    : act.availability === 'remote' ? 'remote'
+    : act.availability === 'unsafe' ? 'blocked'
+    : '';
+  const refTag = act.available && att.mode === 'ref' ? 'ref' : '';
+  const actionHint = !act.available ? act.availability
+    : active ? 'hide preview'
+    : act.canPreview ? 'preview image'
+    : act.canView ? 'view text'
+    : 'details';
+  const label = `${att.label || 'attachment'}, ${attachmentKindTag(att.kind)}${sizeText ? `, ${sizeText}` : ''}, ${actionHint}`;
+  const content = h_flex().gap(6).items_center().min_w(0)
+    .child(mono(div().flex_shrink_0().text_size(10).font_semibold()
+      .text_color(active && act.available ? t.accent : kindColor(att.kind, act.available, t)).child(attachmentKindTag(att.kind))))
+    .child(div().min_w(0).truncate().text_size(12)
       .text_color(act.available ? t.foreground : t.muted).child(att.label || 'attachment'));
-  if (!narrow) {
-    const prov = [shortTaskNum(att.task), att.ts_ms ? clock(att.ts_ms) : ''].filter(Boolean).join(' · ');
-    if (prov) left.child(mono(div().flex_shrink_0().text_size(11).text_color(t.muted).child(prov)));
+  if (unavailableTag) {
+    content.child(mono(div().flex_shrink_0().text_size(10)
+      .text_color(act.availability === 'unsafe' ? t.blocked : t.muted).child(`· ${unavailableTag}`)));
+  } else if (refTag) {
+    content.child(mono(div().flex_shrink_0().text_size(10).text_color(t.working).child('· ref')));
   }
-  top.child(Button.new(`att-select-${rowKey}`).flex_1().min_w(0).h(26).justify_start()
-    .accessibility_label(`${att.label}, ${attachmentKindTag(att.kind)}${sizeText ? `, ${sizeText}` : ''}, ${act.availability}`)
-    .on_click((_e, cx) => { cx.stop_propagation(); onRowClick(cx); })
-    .child(left));
+  if (active) {
+    content.child(div().flex_shrink_0().text_size(10).text_color(t.accent).child('▾'));
+  }
+  const chip = Button.new(`att-chip-${scope}-${att.id}`).tab_index(3).h(24).px(8).rounded(6).border(1)
+    .flex_shrink_0().max_w(narrow ? 196 : 244)
+    .border_color(active ? t.accent : t.border)
+    .bg(active ? tint(t.accent, '20') : (onRecessed ? t.card : t.recessed))
+    .hover(s => s.bg(active ? tint(t.accent, '28') : t.hover))
+    .accessibility_label(label)
+    .on_click((_e, cx) => { cx.stop_propagation(); view.selectAttachment?.(scope, att, cx); })
+    .child(content);
+  if (act.available && att.resolved_path && !att.machine && typeof chip.drag_paths === 'function') {
+    chip.drag_paths([att.resolved_path]);
+  }
+  return chip;
+}
 
-  if (!narrow) {
-    const slot = h_flex().w(208).h(22).flex_shrink_0().gap(3).items_center().justify_end().overflow_hidden();
-    if (!active) {
-      slot.child(mono(div().min_w(0).truncate().text_size(11).text_color(statusColor).child(statusLabel)));
-    } else {
-      if (act.canPreview) {
-        slot.child(button(`att-preview-btn-${rowKey}`, previewOpen ? 'Hide' : 'Preview',
-          cx => view.store.toggleImagePreview(cx, view, att), t,
-          { size: 11.5, px: 7, height: 22, color: previewOpen ? t.secondary : t.accent, ghost: previewOpen }));
-      }
-      if (act.canView) {
-        slot.child(button(`att-view-btn-${rowKey}`, act.viewLabel,
-          cx => view.store.openTextViewer(cx, view, att), t,
-          { ghost: true, size: 11.5, px: 6, height: 22, color: t.accent }));
-      }
-      if (act.canOpen) {
-        slot.child(button(`att-open-btn-${rowKey}`, 'Open',
-          cx => view.store.openAttachment(cx, view, att), t,
-          { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
-      }
-      if (act.canBrowser) {
-        slot.child(button(`att-browser-btn-${rowKey}`, 'Browser…',
-          cx => { view.confirmHtmlId = confirmHtml ? null : rowKey; cx.notify(); }, t,
-          { ghost: true, size: 11.5, px: 6, height: 22, color: t.working }));
-      }
-      if (act.canReveal) {
-        slot.child(button(`att-reveal-btn-${rowKey}`, 'Reveal',
-          cx => view.store.revealAttachment(cx, view, att), t,
-          { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
-      }
-      slot.child(button(`att-copy-btn-${rowKey}`, act.available ? 'Copy' : 'Copy path',
-        cx => view.store.copyAttachmentPath(cx, view, att), t,
-        { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
-    }
-    top.child(slot);
+function attachmentPreviewPanel(view, att, attachments, t, scope, { onRecessed = false, narrow = false } = {}) {
+  const act = attachmentActions(att);
+  const confirmKey = `${scope}:${att.id}`;
+  const confirmHtml = view.confirmHtmlId === confirmKey;
+  const img = act.canPreview ? (view.store.imagePreviews?.get?.(att.id) || null) : null;
+  const txt = act.canView ? (view.store.textPreviews?.get?.(att.id) || null) : null;
+  const sizeText = formatBytes(att.bytes);
+  const activeIdx = attachments.findIndex(a => a.id === att.id);
+  const hasMultiple = attachments.length > 1 && activeIdx >= 0;
+  let metaText = '';
+  let metaColor = t.muted;
+  if (!act.available) {
+    metaText = act.availability === 'missing' ? 'Missing'
+      : act.availability === 'pruned' ? 'Pruned'
+      : act.availability === 'remote' ? 'Remote'
+      : 'Blocked';
+    if (act.availability === 'unsafe') metaColor = t.blocked;
+  } else if (img?.status === 'ready') {
+    metaText = [String(img.format || '').toUpperCase(), `${img.width}×${img.height}`,
+      img.bytes ? formatBytes(img.bytes) : sizeText, att.mode === 'ref' ? 'ref' : ''].filter(Boolean).join(' · ');
+    if (att.mode === 'ref') metaColor = t.working;
+  } else if (txt?.status === 'ready') {
+    metaText = [formatBytes(txt.total_bytes || att.bytes), att.mode === 'ref' ? 'ref' : ''].filter(Boolean).join(' · ');
+    if (att.mode === 'ref') metaColor = t.working;
   } else {
-    const compactStatus = !act.available ? statusLabel : att.mode === 'ref' ? (sizeText ? `${sizeText} · ref` : 'Ref') : sizeText || 'staged';
-    top.child(mono(div().flex_shrink_0().text_size(11).text_color(statusColor).child(compactStatus)));
-  }
-  row.child(top);
-
-  if (narrow && selected) {
-    const prov = [shortTaskNum(att.task), att.report_kind, att.ts_ms ? clock(att.ts_ms) : '', att.mode].filter(Boolean).join(' · ');
-    if (prov) row.child(mono(div().text_size(11).text_color(t.muted).child(prov)));
-    const bar = h_flex().gap(6).flex_wrap().pt(2);
-    if (act.canPreview) bar.child(button(`att-n-preview-${rowKey}`, previewOpen ? 'Hide preview' : 'Preview',
-      cx => view.store.toggleImagePreview(cx, view, att), t, { size: 11.5, px: 8, height: 24, primary: !previewOpen }));
-    if (act.canView) bar.child(button(`att-n-view-${rowKey}`, act.viewLabel,
-      cx => view.store.openTextViewer(cx, view, att), t, { size: 11.5, px: 8, height: 24, primary: true }));
-    if (act.canOpen) bar.child(button(`att-n-open-${rowKey}`, 'Open',
-      cx => view.store.openAttachment(cx, view, att), t, { size: 11.5, px: 8, height: 24 }));
-    if (act.canBrowser) bar.child(button(`att-n-browser-${rowKey}`, 'Browser…',
-      cx => { view.confirmHtmlId = confirmHtml ? null : rowKey; cx.notify(); }, t, { size: 11.5, px: 8, height: 24, color: t.working }));
-    if (act.canReveal) bar.child(button(`att-n-reveal-${rowKey}`, 'Reveal',
-      cx => view.store.revealAttachment(cx, view, att), t, { size: 11.5, px: 8, height: 24 }));
-    bar.child(button(`att-n-copy-${rowKey}`, 'Copy path',
-      cx => view.store.copyAttachmentPath(cx, view, att), t, { size: 11.5, px: 8, height: 24 }));
-    row.child(bar);
+    metaText = [sizeText, att.mode === 'ref' ? 'ref' : ''].filter(Boolean).join(' · ');
+    if (att.mode === 'ref') metaColor = t.working;
   }
 
+  const panel = v_flex().id(`att-preview-${scope}`).mt(5).min_w(0).rounded(7).border(1).overflow_hidden()
+    .border_color(t.borderStrong).bg(onRecessed ? t.card : t.recessed);
+
+  const kindTag = mono(div().flex_shrink_0().text_size(10).font_semibold()
+    .text_color(kindColor(att.kind, act.available, t)).child(attachmentKindTag(att.kind)));
+  const titleNode = div().min_w(0).truncate().text_size(12).font_semibold()
+    .text_color(act.available ? t.foreground : t.muted).child(att.label || 'attachment');
+  const metaNode = mono(div().min_w(0).truncate().text_size(11).text_color(metaColor).child(metaText));
+  const closeBtn = button(`att-close-${scope}-${att.id}`, '×',
+    cx => view.closeAttachment?.(scope, cx), t, { ghost: true, size: 13, px: 5, height: 22, color: t.muted, label: 'Close preview' });
+
+  const pager = hasMultiple ? h_flex().gap(1).items_center().flex_shrink_0()
+    .child(button(`att-prev-${scope}`, '‹', cx => {
+      const prev = attachments[(activeIdx - 1 + attachments.length) % attachments.length];
+      view.selectAttachment?.(scope, prev, cx);
+    }, t, { ghost: true, size: 13, px: 5, height: 22, color: t.secondary, label: 'Previous attachment' }))
+    .child(mono(div().px(2).text_size(10.5).text_color(t.muted).child(`${activeIdx + 1}/${attachments.length}`)))
+    .child(button(`att-next-${scope}`, '›', cx => {
+      const next = attachments[(activeIdx + 1) % attachments.length];
+      view.selectAttachment?.(scope, next, cx);
+    }, t, { ghost: true, size: 13, px: 5, height: 22, color: t.secondary, label: 'Next attachment' })) : null;
+
+  const actions = h_flex().gap(2).items_center().flex_shrink_0();
+  if (act.canOpen) {
+    actions.child(button(`att-open-${scope}-${att.id}`, 'Open',
+      cx => view.store.openAttachment(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
+  }
+  if (act.canBrowser) {
+    actions.child(button(`att-browser-${scope}-${att.id}`, 'Browser…',
+      cx => { view.confirmHtmlId = confirmHtml ? null : confirmKey; cx.notify(); }, t,
+      { ghost: true, size: 11.5, px: 6, height: 22, color: t.working }));
+  }
+  if (act.canReveal) {
+    actions.child(button(`att-reveal-${scope}-${att.id}`, 'Reveal',
+      cx => view.store.revealAttachment(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
+  }
+  actions.child(button(`att-copy-${scope}-${att.id}`, act.available ? 'Copy' : 'Copy path',
+    cx => view.store.copyAttachmentPath(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
+
+  const headerBar = v_flex().px(10).py(6).gap(4).min_w(0).border_b(1).border_color(t.border);
+  if (narrow) {
+    const line1 = h_flex().gap(6).items_center().min_w(0)
+      .child(kindTag)
+      .child(titleNode.flex_1());
+    if (pager) line1.child(pager);
+    line1.child(closeBtn);
+    headerBar.child(line1)
+      .child(h_flex().gap(6).items_center().flex_wrap().min_w(0)
+        .child(metaNode)
+        .child(div().flex_1())
+        .child(actions));
+  } else {
+    const right = h_flex().gap(4).items_center().flex_shrink_0();
+    if (pager) right.child(pager).child(div().w(1).h(12).bg(t.border));
+    right.child(actions).child(closeBtn);
+    headerBar.child(h_flex().gap(8).items_center().min_w(0)
+      .child(h_flex().flex_1().min_w(0).gap(6).items_center().overflow_hidden()
+        .child(kindTag)
+        .child(titleNode)
+        .child(metaNode.flex_shrink_0()))
+      .child(right));
+  }
   if (confirmHtml) {
-    row.child(h_flex().gap(8).items_center().flex_wrap().pt(3).border_t(1).border_color(t.border)
+    headerBar.child(h_flex().gap(8).items_center().flex_wrap().mt(2).px(8).py(5).rounded(5).border(1)
+      .border_color(tint(t.working, '70')).bg(tint(t.working, '10'))
       .child(div().flex_1().min_w(140).text_size(11.5).text_color(t.working).child('Opens local HTML in your browser; scripts can run.'))
-      .child(button(`att-html-confirm-${rowKey}`, 'Open in browser',
+      .child(button(`att-html-confirm-${scope}-${att.id}`, 'Open in browser',
         cx => view.store.openAttachment(cx, view, att, { allowHtml: true }), t,
         { size: 11.5, px: 8, height: 22, color: t.working }))
-      .child(button(`att-html-cancel-${rowKey}`, 'Cancel',
+      .child(button(`att-html-cancel-${scope}-${att.id}`, 'Cancel',
         cx => { view.confirmHtmlId = null; cx.notify(); }, t,
         { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary })));
   }
+  panel.child(headerBar);
 
-  if (previewOpen) {
-    const box = v_flex().id(`att-preview-box-${rowKey}`).mt(2).p(8).gap(6).rounded(6).border(1).border_color(t.border).bg(t.recessed);
-    if (preview.status === 'loading') {
-      box.child(div().text_size(11.5).text_color(t.muted).child('Loading inline preview…'));
-    } else if (preview.status === 'ready' && preview.relPath) {
-      const fit = fitPreviewBox(preview.width, preview.height, narrow ? 220 : 280, narrow ? 132 : 168);
-      box.child(div().w(fit.w).h(fit.h).rounded(4).overflow_hidden().border(1).border_color(t.borderStrong).bg(t.popover)
-        .child(image(preview.relPath).w(fit.w).h(fit.h)));
-      const metaLine = h_flex().gap(6).items_center().flex_wrap()
-        .child(mono(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted)
-          .child(`${String(preview.format || '').toUpperCase()} · ${preview.width}×${preview.height}${preview.bytes ? ` · ${formatBytes(preview.bytes)}` : ''} · ${att.mode}`)));
-      if (narrow) {
-        metaLine.child(button(`att-prev-hide-${rowKey}`, 'Hide',
-          cx => view.store.toggleImagePreview(cx, view, att), t, { ghost: true, size: 11, px: 6, height: 22, color: t.secondary }));
+  const stage = v_flex().p(10).gap(6).min_w(0);
+  if (!act.available) {
+    const reason = act.availability === 'missing'
+      ? `Missing on disk${att.source_path ? ` · was ${att.source_path}` : ''}`
+      : act.availability === 'pruned' ? 'Pruned · removed from staged store'
+      : act.availability === 'remote' ? `Remote host (${att.machine || 'remote'}) · Copy path only`
+      : `Unavailable${att.unsafe_reason ? ` · ${att.unsafe_reason}` : ''}`;
+    stage.child(div().min_w(0).truncate().text_size(11.5).line_height(1.4)
+      .text_color(act.availability === 'unsafe' ? t.blocked : t.muted).child(reason));
+  } else if (act.canPreview) {
+    if (!img || img.status === 'loading') {
+      stage.child(div().text_size(11.5).text_color(t.muted).child('Loading preview…'));
+    } else if (img.status === 'ready' && img.relPath) {
+      const fit = fitPreviewBox(img.width, img.height, narrow ? 300 : 480, narrow ? 190 : 260);
+      stage.child(h_flex().w_full().justify_center().py(6).px(6).rounded(5).bg(t.popover)
+        .child(div().w(fit.w).h(fit.h).rounded(4).overflow_hidden().border(1).border_color(t.border)
+          .child(image(img.relPath).w(fit.w).h(fit.h))));
+      if (att.mode === 'ref') {
+        stage.child(div().min_w(0).truncate().text_size(11).text_color(t.working).child(attachmentRefNote(att)));
       }
-      box.child(metaLine);
     } else {
-      box.child(div().text_size(11.5).line_height(1.4).text_color(t.working).child(`Preview unavailable: ${preview.error || 'Cannot render image'}`));
-      const fallback = h_flex().gap(6).flex_wrap();
-      if (act.canOpen) fallback.child(button(`att-prev-err-open-${rowKey}`, 'Open',
-        cx => view.store.openAttachment(cx, view, att), t, { size: 11, px: 7, height: 22 }));
-      if (act.canReveal) fallback.child(button(`att-prev-err-reveal-${rowKey}`, 'Reveal',
-        cx => view.store.revealAttachment(cx, view, att), t, { size: 11, px: 7, height: 22 }));
-      fallback.child(button(`att-prev-err-copy-${rowKey}`, 'Copy path',
-        cx => view.store.copyAttachmentPath(cx, view, att), t, { ghost: true, size: 11, px: 6, height: 22, color: t.secondary }));
-      fallback.child(button(`att-prev-err-close-${rowKey}`, 'Dismiss',
-        cx => { view.store.imagePreviews.delete(att.id); cx.notify(); }, t, { ghost: true, size: 11, px: 6, height: 22, color: t.muted }));
-      box.child(fallback);
+      stage.child(div().text_size(11.5).line_height(1.4).text_color(t.working)
+        .child(`Preview unavailable: ${img.error || 'Cannot render image'}`));
     }
-    row.child(box);
+  } else if (act.canView) {
+    if (!txt || txt.status === 'loading') {
+      stage.child(div().text_size(11.5).text_color(t.muted).child('Loading text…'));
+    } else if (txt.status === 'error') {
+      stage.child(div().text_size(11.5).line_height(1.4).text_color(t.blocked).child(txt.error || 'Could not read attachment'));
+    } else {
+      if (txt.truncated) {
+        stage.child(div().text_size(11).line_height(1.35).text_color(t.working)
+          .child(`Showing first ${formatBytes(txt.shown_bytes)} of ${formatBytes(txt.total_bytes)} — use Open or Reveal for full file`));
+      } else if (att.mode === 'ref') {
+        stage.child(div().min_w(0).truncate().text_size(11).text_color(t.working).child(attachmentRefNote(att)));
+      }
+      const rawText = String(txt.text || '').replace(/\r?\n$/, '');
+      const lines = rawText.length ? rawText.split('\n') : [''];
+      const shownLines = lines.slice(0, MAX_INLINE_TEXT_LINES);
+      const code = v_flex().id(`att-text-${scope}`).max_h(narrow ? 190 : 240).overflow_y_scrollbar()
+        .px(8).py(6).rounded(5).bg(onRecessed ? t.recessed : t.input).gap(1);
+      shownLines.forEach((line, i) => {
+        code.child(h_flex().gap(8).items_start().min_w(0)
+          .child(mono(div().w(24).flex_shrink_0().text_right().text_size(11).line_height(1.48).text_color(t.muted).child(String(i + 1))))
+          .child(mono(div().flex_1().min_w(0).text_size(11.5).line_height(1.48).text_color(t.foreground).child(line || ' '))));
+      });
+      if (lines.length > MAX_INLINE_TEXT_LINES) {
+        code.child(div().pt(4).text_size(11).text_color(t.muted)
+          .child(`… ${lines.length - MAX_INLINE_TEXT_LINES} more lines omitted — use Open or Reveal for full file`));
+      }
+      stage.child(code);
+    }
+  } else {
+    stage.child(div().text_size(11.5).line_height(1.4).text_color(t.muted)
+      .child(att.mode === 'ref' ? attachmentRefNote(att) : 'No inline preview for this file type · use Reveal or Copy path'));
   }
+  panel.child(stage);
+  return panel;
+}
 
-  if (act.availability === 'missing') {
-    row.child(div().text_size(11).line_height(1.35).truncate().text_color(t.muted)
-      .child(`Missing on disk${att.source_path ? ` · was ${att.source_path}` : ''}`));
-  } else if (act.availability === 'pruned') {
-    row.child(div().text_size(11).line_height(1.35).text_color(t.muted).child('Pruned · removed from staged store'));
-  } else if (act.availability === 'remote') {
-    row.child(div().text_size(11).line_height(1.35).text_color(t.muted).child(`Remote host (${att.machine || 'remote'}) · Copy path only`));
-  } else if (act.availability === 'unsafe') {
-    row.child(div().text_size(11).line_height(1.35).truncate().text_color(t.blocked)
-      .child(`Unavailable${att.unsafe_reason ? ` · ${att.unsafe_reason}` : ''}`));
-  } else if (att.mode === 'ref') {
-    const why = att.reason === 'exceeds_stage_limit' ? 'Not staged (>10 MB limit)'
-      : att.reason === 'budget_exceeded' ? 'Not staged (staging budget)'
-      : 'Reference only';
-    row.child(div().text_size(11).line_height(1.35).truncate().text_color(t.working)
-      .child(`${why} · lives at source path`));
+function attachmentStrip(view, attachments, t, scope, { onRecessed = false, limit = INLINE_ATTACHMENT_LIMIT } = {}) {
+  if (!attachments?.length) return null;
+  const narrow = isNarrow(view);
+  const showAll = !!view.expandedAttachments?.has?.(scope);
+  const shown = showAll || attachments.length <= limit ? attachments : attachments.slice(0, limit);
+  const chips = h_flex().id(`att-strip-${scope}`).gap(5).flex_wrap().items_center().min_w(0);
+  for (const att of shown) chips.child(attachmentChip(view, att, t, scope, { onRecessed, narrow }));
+  if (attachments.length > limit) {
+    chips.child(button(`att-more-${scope}`, showAll ? 'Less' : `+${attachments.length - limit} more`,
+      cx => view.toggle(view.expandedAttachments, scope, cx), t,
+      { ghost: true, size: 11.5, px: 6, height: 24, color: t.muted, hoverColor: t.foreground }));
   }
-  return row;
+  const wrap = v_flex().min_w(0).child(chips);
+  const activeId = view.activeAttachments?.get?.(scope);
+  const activeAtt = activeId ? attachments.find(a => a.id === activeId) : null;
+  if (activeAtt) wrap.child(attachmentPreviewPanel(view, activeAtt, attachments, t, scope, { onRecessed, narrow }));
+  return wrap;
 }
 
 function needs(view, vm, t) {
@@ -321,19 +377,9 @@ function needs(view, vm, t) {
     if (view.clampedQuestions.has(key)) card.child(button(`needs-more-text-${index}`, expanded ? 'less' : 'more',
       cx => view.toggle(view.expandedQuestions, key, cx), t, { ghost: true, size: 11.5, px: 4, height: 22, color: t.accent }).self_start());
     if (row.attachment) {
-      const att = row.attachment;
-      const act = attachmentActions(att);
-      const cue = h_flex().gap(7).items_center().min_w(0).px(8).py(4).rounded(5).border(1).border_color(t.border).bg(t.recessed)
-        .child(kindPill(att.kind, t))
-        .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(att.label));
-      if (att.bytes) cue.child(mono(div().flex_shrink_0().text_size(11).text_color(t.muted).child(formatBytes(att.bytes))));
-      if (act.canView) cue.child(button(`needs-att-view-${index}`, act.viewLabel,
-        cx => view.store.openTextViewer(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.accent }));
-      else if (act.canPreview) cue.child(button(`needs-att-open-${index}`, 'Open',
-        cx => view.store.openAttachment(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.accent }));
-      if (act.canReveal) cue.child(button(`needs-att-reveal-${index}`, 'Reveal',
-        cx => view.store.revealAttachment(cx, view, att), t, { ghost: true, size: 11.5, px: 6, height: 22, color: t.secondary }));
-      card.child(cue);
+      const liveAtt = view.store.wsArtifactMap?.(row.ws)?.get?.(row.attachment.id) || row.attachment;
+      const strip = attachmentStrip(view, [liveAtt], t, `needs:${index}`, { onRecessed: true, limit: 1 });
+      if (strip) card.child(strip);
     }
     if (row.kind === 'question') {
       const actions = h_flex().gap(6).pt(2).flex_wrap();
@@ -353,6 +399,10 @@ function receipt(view, row, t) {
   const narrow = isNarrow(view);
   const open = view.expandedReceipts.has(row.key), active = open || view.hoveredReceipt === row.key;
   const terminal = (row.links || []).find(link => link.kind === 'terminal');
+  const liveMap = view.store.wsArtifactMap?.(row.ws) || null;
+  const attachments = receiptAttachments(row.source
+    ? workstreamAttachments(row.source, view.store.log?.entries || [], liveMap)
+    : (row.attachments || []));
   const railColor = open ? t.accent
     : row.state === 'question' ? t.blocked
     : row.state === 'blocked' || row.state === 'running' ? tint(t.working, 'b8')
@@ -373,11 +423,7 @@ function receipt(view, row, t) {
   // One fixed-size slot holds either the meta or the actions, so hovering never moves the row.
   const slot = h_flex().w(narrow ? 132 : 172).h(24).flex_shrink_0().gap(4).items_center().justify_end().overflow_hidden();
   if (!active) {
-    const fileCue = row.attachmentCount > 0 ? `${row.attachmentCount} ${row.attachmentCount === 1 ? 'file' : 'files'}` : '';
-    const meta = narrow
-      ? (fileCue ? [fileCue, row.duration].filter(Boolean).join('  ') : [row.space, row.duration].filter(Boolean).join('  '))
-      : [[row.space, fileCue].filter(Boolean).join(' · '), row.duration].filter(Boolean).join('  ');
-    slot.child(mono(div().min_w(0).truncate().text_size(11.5).text_color(t.muted).child(meta)));
+    slot.child(mono(div().min_w(0).truncate().text_size(11.5).text_color(t.muted).child([row.space, row.duration].filter(Boolean).join('  '))));
   } else {
     if (terminal) slot.child(button(`terminal-${row.key}`, narrow ? 'Terminal' : 'Open terminal',
       cx => view.focusLink(terminal, cx), t, { ghost: true, size: 11.5, px: 5, height: 22, color: t.secondary }));
@@ -388,6 +434,10 @@ function receipt(view, row, t) {
   box.child(top).child(div().pl(23).min_w(0).truncate().text_size(12.5).line_height(1.38)
     .text_color(row.state === 'question' ? t.blocked : row.state === 'blocked' ? t.working : t.secondary)
     .child(row.text || ''));
+  if (attachments.length) {
+    box.child(div().pl(23).pt(4).min_w(0)
+      .child(attachmentStrip(view, attachments, t, `receipt:${row.key}`, { onRecessed: open })));
+  }
   if (open) {
     const trace = v_flex().ml(23).mt(4).pt(6).pb(2).border_t(1).border_color(t.border).gap(4);
     let day = null;
@@ -406,28 +456,6 @@ function receipt(view, row, t) {
     }
     if (row.text && !(row.trace || []).some(line => line.text?.includes(row.text)))
       trace.child(div().pl(52).text_size(12).line_height(1.4).text_color(t.muted).child(row.text));
-    const liveMap = view.store.wsArtifactMap?.(row.ws) || null;
-    const evidence = workstreamAttachments(row.source || { id: row.ws, tasks: [] }, view.store.log?.entries || [], liveMap);
-    if (evidence.length) {
-      const stagedCount = evidence.filter(a => a.mode === 'staged' && a.availability === 'available').length;
-      const summaryNote = row.wsState === 'cleaned'
-        ? `worktree cleaned · ${stagedCount} staged`
-        : `${stagedCount} staged`;
-      const showAll = view.expandedEvidence?.has?.(row.ws);
-      const shown = showAll ? evidence : evidence.slice(0, 6);
-      const section = v_flex().id(`evidence-${row.ws}`).mt(6).pt(6).border_t(1).border_color(t.border).gap(4);
-      section.child(h_flex().gap(8).items_center().min_w(0).pb(2)
-        .child(div().text_size(11.5).font_semibold().text_color(t.secondary).child(`Evidence · ${evidence.length}`))
-        .child(div().flex_1())
-        .child(mono(div().flex_shrink_0().text_size(11).text_color(t.muted).child(summaryNote))));
-      for (const att of shown) section.child(attachmentRow(view, att, t, `trace-${row.ws}`));
-      if (evidence.length > 6) {
-        section.child(button(`evidence-more-${row.ws}`, showAll ? 'Show fewer' : `Show ${evidence.length - 6} more`,
-          cx => view.toggle(view.expandedEvidence, row.ws, cx), t,
-          { ghost: true, size: 11.5, px: 6, height: 22, color: t.accent }).self_start());
-      }
-      trace.child(section);
-    }
     const links = h_flex().gap(6).pt(4).flex_wrap();
     (row.links || []).forEach((link, i) => links.child(button(`receipt-link-${row.key}-${i}`,
       link.kind === 'terminal' ? 'Open terminal' : 'Show space',
@@ -516,10 +544,8 @@ function journalEvent(view, row, t) {
   const liveMap = view.store.wsArtifactMap?.(row.ws) || null;
   const atts = reportAttachments(row.source, liveMap);
   if (atts.length) {
-    const attWrap = v_flex().mt(4).pt(6).border_t(1).border_color(t.border).gap(4)
-      .child(div().text_size(11.5).font_semibold().text_color(t.secondary).child(`Attachments (${atts.length})`));
-    for (const att of atts) attWrap.child(attachmentRow(view, att, t, `journal-${row.source.seq}`));
-    fields.child(attWrap);
+    const strip = attachmentStrip(view, atts, t, `journal:${row.source.seq}`, { onRecessed: true });
+    if (strip) fields.child(div().mt(4).pt(6).border_t(1).border_color(t.border).child(strip));
   }
   return item.child(fields);
 }
@@ -545,12 +571,15 @@ function journal(view, t) {
   const indicator = h_flex().size(15).items_center().justify_center().rounded(3).border(1).border_color(view.showSystem ? t.accent : t.borderStrong)
     .bg(view.showSystem ? t.accent : t.input).flex_shrink_0();
   if (view.showSystem) indicator.child(div().size(7).rounded(1).bg(t.accent_foreground));
-  return v_flex().flex_1().min_h(0).child(h_flex().gap(10).items_center().flex_wrap().px(pad).py(9).border_b(1).border_color(t.border)
+  const root = v_flex().flex_1().min_h(0).child(h_flex().gap(10).items_center().flex_wrap().px(pad).py(9).border_b(1).border_color(t.border)
     .child(h_flex().flex_1().min_w(160).h(30).px(10).items_center().rounded(6).border(1).border_color(t.borderStrong).bg(t.input).child(Input.new(view.filter).w_full()))
     .child(Checkbox.new('journal-system').checked(!!view.showSystem).accessibility_label('Show system events')
       .on_change((checked, cx) => { view.showSystem = checked; view.journalStart = 0; cx.notify(); })
       .child(h_flex().gap(7).items_center().text_size(12).text_color(t.secondary).child(indicator).child('System events'))))
     .child(body);
+  const notice = view.store.noticeUntil && Date.now() > view.store.noticeUntil ? '' : view.store.notice;
+  if (notice) root.child(div().px(pad).pb(8).text_size(12).text_color(t.muted).child(notice));
+  return root;
 }
 
 const roleSourceColor = (source, t) => source === 'override' ? t.working : source === 'file' ? t.accent : t.muted;
@@ -773,83 +802,15 @@ function rolesView(view, t) {
   return roleList(view, t);
 }
 
-function artifactViewer(view, t) {
-  const pad = pagePad(view);
-  const v = view.store.artifactViewer;
-  if (!v?.attachment) return div().p(pad).text_size(13).text_color(t.muted).child('No attachment selected.');
-  const att = v.attachment;
-  const act = attachmentActions(att);
-  const confirmKey = `viewer:${att.id}`;
-  const confirmHtml = view.confirmHtmlId === confirmKey;
-  const prov = [att.task, att.report_kind ? `Reported ${att.report_kind}` : '', att.ts_ms ? clock(att.ts_ms) : '',
-    formatBytes(v.total_bytes || att.bytes), att.mode].filter(Boolean).join(' · ');
-  const topbar = v_flex().px(pad).py(9).gap(6).border_b(1).border_color(t.border);
-  const topRow = h_flex().gap(8).items_center().flex_wrap()
-    .child(v_flex().flex_1().min_w(160).gap(2)
-      .child(h_flex().gap(7).items_center().min_w(0)
-        .child(kindPill(att.kind, t))
-        .child(div().flex_1().min_w(0).truncate().text_size(13).font_semibold().text_color(t.foreground).child(att.task_title || att.label)))
-      .child(mono(div().truncate().text_size(11).text_color(t.muted).child(prov))));
-  if (act.canOpen) topRow.child(button('artifact-viewer-open', 'Open',
-    cx => view.store.openAttachment(cx, view, att), t, { height: 26, size: 12 }));
-  if (act.canBrowser) topRow.child(button('artifact-viewer-browser', 'Browser…',
-    cx => { view.confirmHtmlId = confirmHtml ? null : confirmKey; cx.notify(); }, t, { height: 26, size: 12, color: t.working }));
-  if (act.canReveal) topRow.child(button('artifact-viewer-reveal', 'Reveal',
-    cx => view.store.revealAttachment(cx, view, att), t, { height: 26, size: 12 }));
-  topRow.child(button('artifact-viewer-copy', 'Copy path',
-    cx => view.store.copyAttachmentPath(cx, view, att), t, { height: 26, size: 12 }));
-  topbar.child(topRow);
-  if (confirmHtml) {
-    topbar.child(h_flex().gap(8).items_center().flex_wrap().px(8).py(6).rounded(6).border(1).border_color(tint(t.working, '70')).bg(tint(t.working, '10'))
-      .child(div().flex_1().min_w(140).text_size(11.5).text_color(t.working).child('Opens local HTML in your browser; scripts can run.'))
-      .child(button('artifact-viewer-html-confirm', 'Open in browser',
-        cx => view.store.openAttachment(cx, view, att, { allowHtml: true }), t, { height: 24, size: 11.5, color: t.working }))
-      .child(button('artifact-viewer-html-cancel', 'Cancel',
-        cx => { view.confirmHtmlId = null; cx.notify(); }, t, { ghost: true, height: 24, size: 11.5, color: t.secondary })));
-  }
-  const body = v_flex().id('artifact-viewer-body').flex_1().min_h(0).overflow_y_scrollbar().px(pad).py(10).gap(8);
-  const bannerColor = v.truncated ? t.working : t.muted;
-  const bannerText = v.truncated
-    ? `Showing first ${formatBytes(v.shown_bytes)} of ${formatBytes(v.total_bytes)} — Reveal or Open for full file`
-    : 'Read-only plain text (ANSI & control characters stripped)';
-  body.child(h_flex().gap(8).items_center().px(10).py(6).rounded(6).border(1).border_color(t.border).bg(t.recessed)
-    .child(div().flex_1().min_w(0).text_size(11.5).text_color(bannerColor).child(bannerText))
-    .child(mono(div().flex_shrink_0().text_size(11).text_color(t.muted).child(`${formatBytes(v.shown_bytes || 0)} / 64 KB cap`))));
-  if (v.loading) {
-    body.child(div().p(10).text_size(12.5).text_color(t.muted).child('Reading plain text…'));
-  } else if (v.error) {
-    body.child(div().p(10).text_size(12.5).text_color(t.blocked).child(v.error));
-  } else {
-    const lines = String(v.text || '').split('\n');
-    const shownLines = lines.slice(0, 1200);
-    const code = v_flex().px(10).py(8).rounded(6).border(1).border_color(t.borderStrong).bg(t.recessed).gap(1);
-    shownLines.forEach((line, i) => {
-      code.child(h_flex().gap(10).items_start().min_w(0)
-        .child(mono(div().w(30).flex_shrink_0().text_right().text_size(11.5).line_height(1.5).text_color(t.muted).child(String(i + 1))))
-        .child(mono(div().flex_1().min_w(0).text_size(12).line_height(1.5).text_color(t.foreground).child(line || ' '))));
-    });
-    if (lines.length > 1200) {
-      code.child(div().pt(6).text_size(11.5).text_color(t.muted).child(`… ${lines.length - 1200} more lines omitted`));
-    }
-    body.child(code);
-  }
-  const notice = view.store.noticeUntil && Date.now() > view.store.noticeUntil ? '' : view.store.notice;
-  const root = v_flex().flex_1().min_h(0).child(topbar).child(body);
-  if (notice) root.child(div().px(pad).pb(8).text_size(12).text_color(t.muted).child(notice));
-  return root;
-}
-
 export function renderRail(view) {
-  const t = palette(), vm = view.model(), pad = pagePad(view), isJournal = view.page === 'journal', isRoles = view.page === 'roles', isArtifact = view.page === 'artifact';
+  const t = palette(), vm = view.model(), pad = pagePad(view), isJournal = view.page === 'journal', isRoles = view.page === 'roles';
   const state = vm.working ? `Working · ${vm.elapsed}` : vm.status === 'off' ? 'Off' : vm.available ? 'Idle' : 'Degraded';
   const stateColor = vm.working ? t.working : vm.status === 'off' ? t.muted : vm.available ? t.done : t.blocked;
   const header = h_flex().h(40).flex_shrink_0().px(pad).gap(8).items_center().border_b(1).border_color(t.border);
   if (isJournal) header.child(button('journal-back', '←', cx => { view.page = 'stream'; view.follow = true; view.latest(cx); }, t, { ghost: true, px: 5, height: 26, size: 13.5, color: t.secondary, label: 'Back to stream' }));
   if (isRoles) header.child(button('roles-back', '←', cx => view.rolesBack(cx), t, { ghost: true, px: 5, height: 26, size: 13.5, color: t.secondary, label: view.rolesMode === 'list' ? 'Back to stream' : 'Back to roles' }));
-  if (isArtifact) header.child(button('artifact-back', '←', cx => view.closeArtifactViewer ? view.closeArtifactViewer(cx) : (view.page = 'stream', cx.notify()), t, { ghost: true, px: 5, height: 26, size: 13.5, color: t.secondary, label: 'Back' }));
-  const headerTitle = isJournal ? 'Journal' : isRoles ? 'Roles' : isArtifact ? (view.store.artifactViewer?.attachment?.label || 'Attachment') : 'Coordinator';
-  header.child(div().text_size(14).font_semibold().truncate().text_color(t.foreground).child(headerTitle));
-  if (!isJournal && !isRoles && !isArtifact) {
+  header.child(div().text_size(14).font_semibold().truncate().text_color(t.foreground).child(isJournal ? 'Journal' : isRoles ? 'Roles' : 'Coordinator'));
+  if (!isJournal && !isRoles) {
     header.child(h_flex().gap(6).items_center().px(8).h(22).rounded(11)
       .bg(vm.working ? tint(t.working, '20') : t.hover)
       .child(div().size(6).rounded(3).bg(stateColor))
@@ -867,7 +828,6 @@ export function renderRail(view) {
     .role('dialog').accessibility_label('Coordinator').track_focus(view.rootFocus).on_key_down((event, cx) => view.key(event, cx)).child(header);
   if (isJournal) return root.child(journal(view, t));
   if (isRoles) return root.child(rolesView(view, t));
-  if (isArtifact) return root.child(artifactViewer(view, t));
   if (vm.needsYou?.length) root.child(div().px(pad).pt(8).pb(2).child(needs(view, vm, t)));
   const body = v_flex().id('rail-log').flex_1().min_h(0).min_w(0).overflow_y_scrollbar().track_scroll(view.scroll)
     .track_focus(view.logFocus).tab_index(1).role('log').accessibility_label('Coordinator stream').px(pad).pt(10)
