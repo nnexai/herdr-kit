@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Let `herdr-kit omp restart --force` also restart eligible current-image
+  sessions to load changed extensions, without relaxing safety checks; sessions
+  without a loaded bridge are skipped.
+
 - Add `herdr-kit omp status|restart` (Linux) and the opt-in `omp-plugin/` OMP
   plugin to restart live personal OMP sessions in place after an `omp` upgrade
   without typing into terminals: a read-only census, then a serial run over named

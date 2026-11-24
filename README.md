@@ -365,7 +365,7 @@ ratings and outcomes; `kit-coord stats --json` summarizes them. See
 [the coordinator specification](docs/coordinator-spec.md) for the full model
 and safety rules.
 
-## Restarting live OMP sessions after an upgrade
+## Restarting live OMP sessions
 
 After `omp` is upgraded, sessions that are already running keep the old (often
 deleted) executable. `herdr-kit omp` finds them and restarts them in place with
@@ -378,7 +378,14 @@ omp plugin link /path/to/herdr-kit/omp-plugin
 herdr-kit omp status            # read-only census, the preview of a run
 herdr-kit omp restart t3 docs   # named terminals (address or name)
 herdr-kit omp restart --all     # every eligible personal OMP session
+herdr-kit omp restart --all --force # also current images, to load changed extensions
 ```
+
+Without `--force`, current images are left alone. With `--force`, named targets
+or `--all` also consider current images; it does not override any safety check.
+Sessions that started without the plugin cannot reload it this way: they are
+skipped as `no_bridge` and need a new session or a manual restart first.
+`omp status` previews the default (upgrade-only) behavior.
 
 Nothing is typed into terminals. The plugin in each session takes a request
 addressed to its exact process (pid, start time, loaded image) through a
@@ -405,7 +412,8 @@ is asked; afterwards the same process must run the target image with the same
 terminal, session, model and thinking, and must not have started work on its
 own. The first failure, Ctrl-C or a target change stops the run; the JSON
 result lists `restarted`, `skipped` (with the reason), `failed`, `current` and
-`not_attempted` sessions, and running it again only touches what is still old.
+`not_attempted` sessions. A plain rerun only touches what is still old; a
+forced rerun can restart eligible current sessions again.
 Skipped: remote, coordinator-managed and calling terminals, sessions without
 the plugin, busy, drafting or `--restore`-unsafe sessions, sessions sharing a
 session file, and launchers that do not resolve to the target (for example a

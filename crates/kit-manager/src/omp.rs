@@ -1,5 +1,5 @@
-//! `herdr-kit omp`: find live personal OMP sessions still running an executable that an
-//! upgrade replaced, and restart them in place, one at a time.
+//! `herdr-kit omp`: find and restart eligible live personal OMP sessions in place,
+//! including current images when explicitly requested.
 //!
 //! The restart itself is OMP's own `/restart`, submitted from inside the session by the
 //! herdr-kit OMP plugin (`omp-plugin/`). The plugin alone can see whether the composer is
@@ -197,6 +197,8 @@ pub struct Census<'a> {
     pub caller: Option<&'a str>,
     /// Sessions open in more than one process: a restart there could fork the transcript.
     pub shared: BTreeSet<String>,
+    /// Include current images in restart eligibility, without changing safety checks.
+    force: bool,
 }
 
 impl<'a> Census<'a> {
@@ -225,6 +227,7 @@ impl<'a> Census<'a> {
             target,
             caller,
             shared,
+            force: false,
         }
     }
 }
@@ -271,13 +274,13 @@ pub fn assess(host: &dyn Host, term: &Terminal, census: &Census) -> Row {
         return skip(row, "exe_unreadable");
     };
     row.exe = Some(image.path.clone());
-    if image.id == target.id && !image.deleted {
-        row.image = Some("current");
+    let current = image.id == target.id && !image.deleted;
+    row.image = Some(if current { "current" } else { "old" });
+    if current && !census.force {
         row.action = "none";
         row.reason = Some("current".into());
         return row;
     }
-    row.image = Some("old");
     let Some(presence) = host
         .presence(fg.pid)
         .filter(|p| p.protocol == PROTOCOL && p.pid == fg.pid)
@@ -422,14 +425,14 @@ struct Outcome {
 }
 
 /// Restart the selected sessions serially; stops at the first failure, on cancel, or when
-/// the target executable changes. Every answer is derived from live state, so running it
-/// again only touches what is still old.
+/// the target executable changes. Without force, a rerun only touches what is still old.
 pub fn restart(
     host: &dyn Host,
     target: &Target,
     scope: &Scope,
     me: Option<&str>,
     cancel: &AtomicBool,
+    force: bool,
 ) -> Result<Value> {
     let terms = host.terminals()?;
     caller(&terms, me)?;
@@ -441,7 +444,8 @@ pub fn restart(
             RESTORE_VERIFIED.join(", ")
         );
     }
-    let census = Census::new(host, &terms, target, me);
+    let mut census = Census::new(host, &terms, target, me);
+    census.force = force;
     let order: Vec<&Terminal> = match scope {
         // Terminals that are not OMP are only reported when named explicitly.
         Scope::All => terms
@@ -601,6 +605,9 @@ fn one(host: &dyn Host, target: &Target, term: &Terminal, before: Presence) -> O
     match &after {
         None => problems.push("bridge_gone"),
         Some(a) => {
+            if a.instance == before.instance || a.start_time != before.start_time {
+                problems.push("bridge_changed");
+            }
             if a.session_file != before.session_file || a.session_id != before.session_id {
                 problems.push("session_changed");
             }

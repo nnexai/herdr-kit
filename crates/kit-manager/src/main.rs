@@ -52,7 +52,7 @@ enum Command {
         #[arg(long = "component", global = true, value_delimiter = ',')]
         components: Vec<String>,
     },
-    /// Restart live OMP sessions still running an executable an upgrade replaced.
+    /// Restart eligible live OMP sessions, including current images with --force.
     Omp {
         #[command(subcommand)]
         action: OmpAction,
@@ -78,6 +78,10 @@ enum OmpAction {
         terminals: Vec<String>,
         #[arg(long)]
         all: bool,
+        /// Also restart eligible sessions already running the target image, to load
+        /// changed extensions. All safety checks still apply; a loaded bridge is required.
+        #[arg(long)]
+        force: bool,
         #[arg(long)]
         omp: Option<PathBuf>,
     },
@@ -142,6 +146,7 @@ fn omp_command(action: OmpAction) -> Result<serde_json::Value> {
         OmpAction::Restart {
             terminals,
             all,
+            force,
             omp,
         } => {
             let target = omp::target(omp)?;
@@ -157,7 +162,7 @@ fn omp_command(action: OmpAction) -> Result<serde_json::Value> {
                 signal_hook::flag::register_conditional_shutdown(signal, 130, cancel.clone())?;
                 signal_hook::flag::register(signal, cancel.clone())?;
             }
-            omp::restart(&host, &target, &scope, me.as_deref(), &cancel)
+            omp::restart(&host, &target, &scope, me.as_deref(), &cancel, force)
         }
     }
 }

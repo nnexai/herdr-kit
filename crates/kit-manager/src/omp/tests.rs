@@ -144,7 +144,7 @@ impl Fake {
     }
     fn run(&self, scope: Scope) -> Value {
         self.in_flight.set(false);
-        restart(self, &self.target(), &scope, None, &self.cancel).unwrap()
+        restart(self, &self.target(), &scope, None, &self.cancel, false).unwrap()
     }
     /// The plugin and kernel catch up with the clock.
     fn advance(&self) {
@@ -185,7 +185,7 @@ impl Fake {
                 }
                 s.exe = Some(self.target_id.get());
                 s.deleted = false;
-                s.presence.instance = format!("{}-b", s.pid);
+                s.presence.instance.push_str("-b");
                 match s.bridge {
                     Some(Bridge::LosesModel) => s.presence.model = Some("fallback/model".into()),
                     Some(Bridge::Resumes) => s.presence.unprompted_runs = 1,
@@ -427,6 +427,7 @@ fn named_terminals_are_the_only_ones_asked() {
         &Scope::Only(vec!["t99".into()]),
         None,
         &fake.cancel,
+        false,
     );
     assert!(
         unknown
@@ -435,6 +436,67 @@ fn named_terminals_are_the_only_ones_asked() {
             .contains("terminal_not_found")
     );
     assert_eq!(fake.asked().len(), 2);
+}
+
+#[test]
+fn force_admits_current_named_and_all_without_bypassing_safety() {
+    let current = |n| {
+        with(old(n), |s| {
+            s.exe = Some(NEW);
+            s.deleted = false;
+        })
+    };
+    let fake = Fake::new(vec![
+        current(1),
+        current(2),
+        with(current(3), |s| s.bridge = None),
+        with(current(4), |s| s.presence.composer_empty = false),
+        with(current(5), |s| {
+            s.term.status.as_mut().unwrap().state = "working".into()
+        }),
+        with(current(6), |s| s.presence.queued = true),
+        with(current(7), |s| {
+            s.presence.replay_risk = Some("restorable_tail".into())
+        }),
+        with(current(8), |s| {
+            s.presence.launcher.as_mut().unwrap().ino = 999
+        }),
+        with(current(9), |s| {
+            s.bridge = Some(Bridge::Refuses("composer_not_focused"))
+        }),
+        with(current(10), |s| {
+            s.term.labels.insert("coord.managed".into(), "1".into());
+        }),
+    ]);
+    assert_eq!(count(&fake.run(Scope::All), "current"), 9);
+    assert!(fake.asked().is_empty());
+    let named = restart(
+        &fake,
+        &fake.target(),
+        &Scope::Only(vec!["s1".into()]),
+        None,
+        &fake.cancel,
+        true,
+    )
+    .unwrap();
+    assert_eq!(count(&named, "restarted"), 1);
+    assert_eq!(fake.asked(), ["t1"]);
+    let all = restart(&fake, &fake.target(), &Scope::All, None, &fake.cancel, true).unwrap();
+    assert_eq!(
+        outcomes(&all),
+        [
+            ("t1".into(), "restarted".into(), "".into()),
+            ("t2".into(), "restarted".into(), "".into()),
+            ("t3".into(), "skipped".into(), "no_bridge".into()),
+            ("t4".into(), "skipped".into(), "draft".into()),
+            ("t5".into(), "skipped".into(), "busy".into()),
+            ("t6".into(), "skipped".into(), "queued_messages".into()),
+            ("t7".into(), "skipped".into(), "restorable_tail".into()),
+            ("t8".into(), "skipped".into(), "launcher_not_target".into()),
+            ("t9".into(), "skipped".into(), "composer_not_focused".into()),
+            ("t10".into(), "skipped".into(), "managed".into()),
+        ]
+    );
 }
 
 #[test]
@@ -550,9 +612,25 @@ fn coordinator_managed_callers_are_refused_before_anything_is_asked() {
             s.term.labels.insert("coord.managed".into(), "1".into());
         }),
     ]);
-    let err = restart(&fake, &fake.target(), &Scope::All, Some("t2"), &fake.cancel).unwrap_err();
+    let err = restart(
+        &fake,
+        &fake.target(),
+        &Scope::All,
+        Some("t2"),
+        &fake.cancel,
+        true,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("forbidden_caller"));
-    let err = restart(&fake, &fake.target(), &Scope::All, Some("t9"), &fake.cancel).unwrap_err();
+    let err = restart(
+        &fake,
+        &fake.target(),
+        &Scope::All,
+        Some("t9"),
+        &fake.cancel,
+        true,
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("caller_unknown"));
     assert!(fake.asked().is_empty());
 }
@@ -562,7 +640,7 @@ fn a_target_whose_restore_was_not_checked_gets_the_census_but_no_restart() {
     let fake = Fake::new((1..=3).map(old).collect());
     let mut target = fake.target();
     target.version = "omp/99.0.0".into();
-    let err = restart(&fake, &target, &Scope::All, None, &fake.cancel).unwrap_err();
+    let err = restart(&fake, &target, &Scope::All, None, &fake.cancel, true).unwrap_err();
     assert!(err.to_string().starts_with("target_unverified: omp/99.0.0"));
     assert!(fake.asked().is_empty());
     let report = status(&fake, &target, &[], None).unwrap();
