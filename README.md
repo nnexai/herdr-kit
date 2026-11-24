@@ -384,8 +384,13 @@ herdr-kit omp restart --all --force # also current images, to load changed exten
 Without `--force`, current images are left alone. With `--force`, named targets
 or `--all` also consider current images; it does not override any safety check.
 Sessions that started without the plugin cannot reload it this way: they are
-skipped as `no_bridge` and need a new session or a manual restart first.
-`omp status` previews the default (upgrade-only) behavior.
+skipped as `no_bridge`, and rerunning or scheduling the command never changes
+that. OMP 19.1.1 gives a running session no way to load a plugin or restart
+except input typed into its own terminal, so each of them needs one restart by
+the person (`/restart` when its last turn finished and nothing runs, or `/exit` and
+`omp --resume <session>` in a shell) or a new session; after that it has the
+bridge and later runs reach it. `omp status` previews the default
+(upgrade-only) behavior.
 
 Nothing is typed into terminals. The plugin in each session takes a request
 addressed to its exact process (pid, start time, loaded image) through a
