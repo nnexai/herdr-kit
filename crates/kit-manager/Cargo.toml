@@ -19,6 +19,7 @@ fs2.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 rustix.workspace = true
+signal-hook.workspace = true
 
 [lints]
 workspace = true

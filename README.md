@@ -4,8 +4,9 @@ A local Rust workspace with native JavaScript mods and a personal layout for
 [Herdr](https://herdr.dev). Standalone coordinator and usage/limits mods share
 the `kit-core` Rust crate and work together or alone. `kit-coord` and `kit-usage`
 each own their CLI and native mod; optional `kit-manager` produces the
-`herdr-kit` installer. The layout composes them. Dependencies point into
-`kit-core`, never from it into a capability or the manager.
+`herdr-kit` installer and the `herdr-kit omp` upgrade restart. The layout
+composes them. Dependencies point into `kit-core`, never from it into a
+capability or the manager.
 This is not a Herdr fork or browser frontend.
 
 ![Herdr kit usage](preview.png)
@@ -364,11 +365,66 @@ ratings and outcomes; `kit-coord stats --json` summarizes them. See
 [the coordinator specification](docs/coordinator-spec.md) for the full model
 and safety rules.
 
+## Restarting live OMP sessions after an upgrade
+
+After `omp` is upgraded, sessions that are already running keep the old (often
+deleted) executable. `herdr-kit omp` finds them and restarts them in place with
+OMP's own `/restart`: same terminal, process id, session file, model and
+thinking level. Linux only.
+
+```sh
+# once per machine; sessions pick it up when they next start or /restart
+omp plugin link /path/to/herdr-kit/omp-plugin
+herdr-kit omp status            # read-only census, the preview of a run
+herdr-kit omp restart t3 docs   # named terminals (address or name)
+herdr-kit omp restart --all     # every eligible personal OMP session
+```
+
+Nothing is typed into terminals. The plugin in each session takes a request
+addressed to its exact process (pid, start time, loaded image) through a
+private `$XDG_RUNTIME_DIR/herdr-kit/omp` directory and decides in one
+synchronous step on OMP's own event loop: idle, nothing queued, no background
+job, an empty composer that has keyboard focus (no dialog or picker open), a
+saved transcript, at least 30 s since it loaded, and its launcher now names
+the target executable. Only then does it submit `/restart`.
+
+`/restart` always relaunches with `--restore`, which goes on with any turn or
+subagent it considers unfinished, and that cannot be switched off. So the
+plugin also refuses (`restorable_tail`, `restorable_subagent`) unless the
+session's branch and every subagent transcript below it end in a finished
+answer or a recorded normal exit, a rule stricter than OMP's own. Because the
+new image runs that `--restore`, `restart` only runs for targets whose
+`--restore` rules were checked against this guard (`RESTORE_VERIFIED` in
+`crates/kit-manager/src/omp.rs`, currently `omp/19.1.1`); any other target
+fails with `target_unverified` and `status` reports `restart_available:
+false`. Re-check `session/exit-diagnostics.ts` and `task/restore.ts` of a new
+release before adding it.
+
+Runs are serial and hold a lock. Every session is re-checked right before it
+is asked; afterwards the same process must run the target image with the same
+terminal, session, model and thinking, and must not have started work on its
+own. The first failure, Ctrl-C or a target change stops the run; the JSON
+result lists `restarted`, `skipped` (with the reason), `failed`, `current` and
+`not_attempted` sessions, and running it again only touches what is still old.
+Skipped: remote, coordinator-managed and calling terminals, sessions without
+the plugin, busy, drafting or `--restore`-unsafe sessions, sessions sharing a
+session file, and launchers that do not resolve to the target (for example a
+versioned path). Stopped sessions are Revive's job; the coordinator restarts
+through `kit-coord`; OMP's shared worker daemon is left alone.
+
+The submit uses `TUI.injectDebugInput`, which OMP documents for debug and test
+input; the plugin checks it exists and refuses otherwise. It is meant to be
+replaced by an extension restart API
+([can1357/oh-my-pi#15236](https://github.com/can1357/oh-my-pi/issues/15236))
+that can also relaunch with `--resume` instead of `--restore`.
+
 ## Structure and extension boundary
 
 - `Cargo.toml`: workspace, shared dependency versions and lockfile; no kit-core.
 - `kit-packages.json`: explicit packages, binary/mod/layout ownership and bundle.
 - `crates/kit-manager/src/main.rs`: optional installation/update CLI only.
+- `crates/kit-manager/src/omp.rs`: `herdr-kit omp` census and serial restart.
+- `omp-plugin/`: opt-in OMP plugin answering `herdr-kit omp restart`.
 - `crates/kit-coord/`: independent coordinator CLI, engine, roles and fixtures.
 - `mods/kit-coord/`: independent native status source and strip.
 - `crates/kit-usage/`: independent usage CLI, bounded OMP and Antigravity

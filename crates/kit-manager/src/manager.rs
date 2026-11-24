@@ -159,7 +159,10 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     }
     Ok(())
 }
-fn bounded(cmd: &mut Command, seconds: u64) -> std::io::Result<std::process::ExitStatus> {
+pub(crate) fn bounded(
+    cmd: &mut Command,
+    seconds: u64,
+) -> std::io::Result<std::process::ExitStatus> {
     let mut child = cmd.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(seconds);
     loop {

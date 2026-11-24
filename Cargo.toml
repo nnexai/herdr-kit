@@ -18,6 +18,7 @@ sha2 = "0.10"
 tempfile = "3"
 rustix = { version = "1", features = ["fs", "process"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "process", "io-util"] }
+signal-hook = "0.3"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

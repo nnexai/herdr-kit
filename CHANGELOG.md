@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add `herdr-kit omp status|restart` (Linux) and the opt-in `omp-plugin/` OMP
+  plugin to restart live personal OMP sessions in place after an `omp` upgrade
+  without typing into terminals: a read-only census, then a serial run over named
+  terminals or `--all`. Each session's plugin decides atomically on its own event
+  loop (idle, nothing queued or running, empty focused composer, launcher names
+  the target) and refuses when `/restart`'s unavoidable `--restore` could resume
+  its turn or any subagent (a rule stricter than OMP's). Mutation runs only for
+  targets whose `--restore` was checked (`omp/19.1.1`), and every restart is
+  verified afterwards; the first failure or Ctrl-C stops the run and a rerun
+  touches only what is still old.
+
 - Allow the coordinator to journal a separately reported recovered result for a
   closed task only when its exact owned terminal is finished and its tab is gone;
   ordinary resource release remains separately guarded.

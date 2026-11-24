@@ -1,0 +1,13 @@
+{
+  "name": "herdr-kit-omp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lets `herdr-kit omp restart` restart this OMP session in place, only when it is idle with an empty composer",
+  "license": "MIT",
+  "type": "module",
+  "omp": {
+    "name": "herdr-kit-omp",
+    "description": "Guarded in-place restart for herdr-kit batch restarts after an OMP upgrade",
+    "extensions": ["./extension.ts"]
+  }
+}
